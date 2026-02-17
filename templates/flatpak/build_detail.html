@@ -86,6 +86,13 @@
                     <dt class="col-sm-3">Architecture:</dt>
                     <dd class="col-sm-9">{{ build.arch }}</dd>
                     
+                    <dt class="col-sm-3">Installation Type:</dt>
+                    <dd class="col-sm-9">
+                        <span class="badge bg-{% if build.installation_type == 'system' %}primary{% else %}info{% endif %}">
+                            {{ build.installation_type|capfirst }}
+                        </span>
+                    </dd>
+                    
                     <dt class="col-sm-3">Commit:</dt>
                     <dd class="col-sm-9"><code>{{ build.commit_hash|default:"N/A" }}</code></dd>
                     

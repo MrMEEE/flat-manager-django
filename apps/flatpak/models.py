@@ -117,6 +117,12 @@ class Build(models.Model):
     # Build configuration
     branch = models.CharField(max_length=100, default='stable', help_text="Flatpak branch (stable/beta/etc)")
     arch = models.CharField(max_length=50, default='x86_64')
+    installation_type = models.CharField(
+        max_length=10,
+        choices=[('system', 'System'), ('user', 'User')],
+        default='system',
+        help_text="Install dependencies as system or user"
+    )
     
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     commit_hash = models.CharField(max_length=64, blank=True, help_text="OSTree commit hash")

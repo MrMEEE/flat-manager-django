@@ -110,6 +110,18 @@
                         {% endif %}
                     </div>
                     
+                    <div class="mb-3">
+                        <label for="id_installation_type" class="form-label">Installation Type *</label>
+                        <select class="form-select" id="id_installation_type" name="installation_type" required>
+                            <option value="system" {% if form.installation_type.value == 'system' or not form.installation_type.value %}selected{% endif %}>System (requires sudo)</option>
+                            <option value="user" {% if form.installation_type.value == 'user' %}selected{% endif %}>User (no sudo required)</option>
+                        </select>
+                        <div class="form-text">Where to install Flatpak dependencies for this build</div>
+                        {% if form.installation_type.errors %}
+                        <div class="text-danger">{{ form.installation_type.errors }}</div>
+                        {% endif %}
+                    </div>
+                    
                     <hr class="my-4">
                     
                     <div class="d-flex justify-content-between">

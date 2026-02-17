@@ -606,9 +606,11 @@ def parse_manifest_dependencies(build, manifest_file):
         
         # 2. If not found, look for version in modules (common pattern for main app)
         if not version and 'modules' in manifest:
+            import re
             # Find the module that matches the app name (usually the last module is the main app)
             app_name = build.app_id.split('.')[-1].lower() if build.app_id else None
             
+            # Try to find matching modules (check in reverse - last modules are usually the app)
             for module in reversed(manifest['modules']):  # Start from last module
                 # Skip string modules (file references like "shared-modules/libsecret/libsecret.json")
                 if isinstance(module, str):
@@ -616,23 +618,100 @@ def parse_manifest_dependencies(build, manifest_file):
                     
                 module_name = module.get('name', '').lower()
                 
-                # Check if this is likely the main app module
-                if app_name and app_name in module_name:
+                # Check if this is likely the main app module (flexible matching)
+                # Check if app_name is in module_name OR module_name is in app_name
+                is_likely_match = False
+                if app_name:
+                    is_likely_match = (app_name in module_name or module_name in app_name or 
+                                      module_name.replace('-', '') == app_name or
+                                      module_name.replace('_', '') == app_name)
+                
+                if is_likely_match:
+                    log_build(build, 'info', f"Checking module '{module.get('name')}' for version...")
                     # Look for version in sources
                     if 'sources' in module:
                         for source in module['sources']:
-                            if source.get('type') == 'git':
+                            if isinstance(source, str):
+                                continue
+                                
+                            source_type = source.get('type', '')
+                            
+                            if source_type == 'git':
                                 # Check for tag field
                                 tag = source.get('tag', '')
                                 if tag:
                                     # Strip 'v' prefix if present
                                     version = tag.lstrip('v')
+                                    log_build(build, 'info', f"Found version in git tag: {version}")
                                     break
                                 # Also check branch if it looks like a version
                                 branch = source.get('branch', '')
                                 if branch and branch[0].isdigit():
                                     version = branch
+                                    log_build(build, 'info', f"Found version in git branch: {version}")
                                     break
+                            
+                            elif source_type == 'archive':
+                                # Extract version from archive URL or filename
+                                url = source.get('url', '')
+                                if url:
+                                    # Try to extract version from URL
+                                    # Patterns: app-1.2.3.tar.gz, app_v1.2.3.zip, app-version-1.2.3.tar.xz
+                                    patterns = [
+                                        r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)',  # Most common: -1.2.3 or -v1.2.3
+                                        r'/(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/',        # Version in path: /1.2.3/
+                                    ]
+                                    for pattern in patterns:
+                                        match = re.search(pattern, url)
+                                        if match:
+                                            version = match.group(1)
+                                            log_build(build, 'info', f"Extracted version from archive URL: {version}")
+                                            break
+                                if version:
+                                    break
+                            
+                            elif source_type == 'file':
+                                # Check filename
+                                path = source.get('path', '')
+                                if path:
+                                    match = re.search(r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', path)
+                                    if match:
+                                        version = match.group(1)
+                                        log_build(build, 'info', f"Extracted version from file path: {version}")
+                                        break
+                    if version:
+                        break
+            
+            # 3. If still not found, try all modules' sources (not just main app)
+            if not version:
+                for module in manifest.get('modules', []):
+                    if isinstance(module, str):
+                        continue
+                    
+                    for source in module.get('sources', []):
+                        if isinstance(source, str):
+                            continue
+                        
+                        source_type = source.get('type', '')
+                        
+                        # Check git tags
+                        if source_type == 'git':
+                            tag = source.get('tag', '')
+                            if tag and re.match(r'v?\d+\.\d+', tag):
+                                version = tag.lstrip('v')
+                                log_build(build, 'info', f"Found version in git tag: {version}")
+                                break
+                        
+                        # Check archive URLs
+                        elif source_type == 'archive':
+                            url = source.get('url', '')
+                            if url:
+                                match = re.search(r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', url)
+                                if match:
+                                    version = match.group(1)
+                                    log_build(build, 'info', f"Found version in archive URL: {version}")
+                                    break
+                    
                     if version:
                         break
         
@@ -708,50 +787,60 @@ def install_flatpak_dependencies(build, dependencies):
         log_build(build, 'warning', "No dependencies found to install")
         return True
     
-    log_build(build, 'info', f"Installing {len(refs_to_install)} dependencies from flathub...")
+    # Determine installation scope from build settings
+    install_scope = f"--{build.installation_type}" if hasattr(build, 'installation_type') and build.installation_type else '--system'
+    scope_name = build.installation_type if hasattr(build, 'installation_type') and build.installation_type else 'system'
+    
+    log_build(build, 'info', f"Installing {len(refs_to_install)} dependencies from flathub to {scope_name}...")
     
     for ref in refs_to_install:
         log_build(build, 'info', f"Checking/installing: {ref}")
         
         try:
-            # Check if already installed (check both system and user installations)
-            check_system = subprocess.run(
-                ['flatpak', 'info', '--system', ref],
+            # Check if already installed in the target scope
+            check_result = subprocess.run(
+                ['flatpak', 'info', install_scope, ref],
                 capture_output=True,
                 text=True,
                 timeout=30
             )
             
-            check_user = subprocess.run(
-                ['flatpak', 'info', '--user', ref],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-            
-            if check_system.returncode == 0 or check_user.returncode == 0:
-                installation = 'system' if check_system.returncode == 0 else 'user'
-                log_build(build, 'info', f"✓ {ref} is already installed ({installation})")
+            if check_result.returncode == 0:
+                log_build(build, 'info', f"✓ {ref} is already installed ({scope_name})")
                 continue
             
-            # Try to install to system first, then user if that fails
-            log_build(build, 'info', f"Installing {ref} to system...")
+            # If not in target scope, check the other scope
+            other_scope = '--user' if scope_name == 'system' else '--system'
+            other_scope_name = 'user' if scope_name == 'system' else 'system'
+            check_other = subprocess.run(
+                ['flatpak', 'info', other_scope, ref],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if check_other.returncode == 0:
+                log_build(build, 'info', f"✓ {ref} is already installed in {other_scope_name} (will use that)")
+                continue
+            
+            # Install to the specified scope
+            log_build(build, 'info', f"Installing {ref} to {scope_name}...")
             install_result = subprocess.run(
-                ['flatpak', 'install', '-y', '--system', '--noninteractive', 'flathub', ref],
+                ['flatpak', 'install', '-y', install_scope, '--noninteractive', 'flathub', ref],
                 capture_output=True,
                 text=True,
                 timeout=600
             )
             
             if install_result.returncode == 0:
-                log_build(build, 'info', f"✓ Successfully installed {ref} to system")
+                log_build(build, 'info', f"✓ Successfully installed {ref} to {scope_name}")
             else:
                 error_msg = install_result.stderr.strip()
                 if 'already installed' in error_msg.lower():
                     log_build(build, 'info', f"✓ {ref} is already installed")
-                elif 'insufficient permissions' in error_msg.lower() or 'permission denied' in error_msg.lower():
+                elif scope_name == 'system' and ('insufficient permissions' in error_msg.lower() or 'permission denied' in error_msg.lower()):
                     # Try installing to user space instead
-                    log_build(build, 'warning', f"Cannot install to system, trying user installation...")
+                    log_build(build, 'warning', f"Cannot install to system (permission denied), trying user installation...")
                     user_install = subprocess.run(
                         ['flatpak', 'install', '-y', '--user', '--noninteractive', 'flathub', ref],
                         capture_output=True,

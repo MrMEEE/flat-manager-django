@@ -24,4 +24,5 @@ urlpatterns = [
     path('builds/<int:pk>/edit/', views.BuildUpdateView.as_view(), name='build_edit'),
     path('builds/<int:pk>/delete/', views.BuildDeleteView.as_view(), name='build_delete'),
     path('builds/<int:pk>/retry/', views.BuildRetryView.as_view(), name='build_retry'),
+    path('dependencies/', views.dependencies_list, name='dependencies_list'),
 ]

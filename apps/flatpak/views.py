@@ -468,17 +468,40 @@ class BuildDeleteView(LoginRequiredMixin, DeleteView):
         return context
     
     def delete(self, request, *args, **kwargs):
+        import logging
+        logger = logging.getLogger(__name__)
+        
         build = self.get_object()
         build_id = build.build_id
+        current_status = build.status
         
-        # If build is in progress, just cancel it
+        logger.info(f"Delete method called for build {build_id} with status {current_status} by user {request.user.username}")
+        
+        # If build is in progress, just cancel it (don't delete)
         if build.status in ['pending', 'building', 'committing', 'publishing']:
             build.status = 'cancelled'
             build.save()
-            messages.success(request, f'Build {build_id} cancelled successfully.')
+            
+            # Log the cancellation
+            from apps.flatpak.models import BuildLog
+            BuildLog.objects.create(
+                build=build,
+                level='warning',
+                message=f'Build cancelled by user {request.user.username}'
+            )
+            
+            logger.info(f"Build {build_id} cancelled successfully (not deleted)")
+            messages.success(request, f'Build {build_id} has been cancelled (status changed from {current_status} to cancelled).')
             return HttpResponseRedirect(self.success_url)
         
-        # Otherwise, actually delete it
+        # Only delete if build is in a terminal state
+        if build.status not in ['failed', 'cancelled', 'published']:
+            logger.warning(f"Attempted to delete build {build_id} with invalid status {current_status}")
+            messages.error(request, f'Cannot delete build with status: {build.status}')
+            return HttpResponseRedirect(reverse('flatpak:build_detail', kwargs={'pk': build.pk}))
+        
+        # Actually delete the build
+        logger.info(f"Deleting build {build_id} from database")
         messages.success(request, f'Build {build_id} deleted successfully.')
         # TODO: Clean up build artifacts from build-repo
         return super().delete(request, *args, **kwargs)
@@ -517,3 +540,84 @@ class BuildRetryView(LoginRequiredMixin, View):
         )
         
         return redirect('flatpak:build_detail', pk=pk)
+
+
+@login_required
+def dependencies_list(request):
+    """List all installed Flatpak dependencies (SDKs, runtimes, extensions)."""
+    import subprocess
+    import re
+    
+    dependencies = {
+        'system': [],
+        'user': [],
+        'errors': []
+    }
+    
+    # Get system installations
+    try:
+        result = subprocess.run(
+            ['flatpak', 'list', '--system', '--columns=name,application,version,branch,origin'],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().split('\n'):
+                if line:
+                    parts = line.split('\t')
+                    if len(parts) >= 5:
+                        dependencies['system'].append({
+                            'name': parts[0],
+                            'id': parts[1],
+                            'version': parts[2],
+                            'branch': parts[3],
+                            'origin': parts[4],
+                            'type': 'SDK' if 'Sdk' in parts[1] else 'Runtime' if 'Platform' in parts[1] or 'runtime' in parts[1].lower() else 'Extension' if 'Extension' in parts[1] else 'App'
+                        })
+    except subprocess.TimeoutExpired:
+        dependencies['errors'].append('Timeout listing system flatpaks')
+    except Exception as e:
+        dependencies['errors'].append(f'Error listing system flatpaks: {str(e)}')
+    
+    # Get user installations
+    try:
+        result = subprocess.run(
+            ['flatpak', 'list', '--user', '--columns=name,application,version,branch,origin'],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().split('\n'):
+                if line:
+                    parts = line.split('\t')
+                    if len(parts) >= 5:
+                        dependencies['user'].append({
+                            'name': parts[0],
+                            'id': parts[1],
+                            'version': parts[2],
+                            'branch': parts[3],
+                            'origin': parts[4],
+                            'type': 'SDK' if 'Sdk' in parts[1] else 'Runtime' if 'Platform' in parts[1] or 'runtime' in parts[1].lower() else 'Extension' if 'Extension' in parts[1] else 'App'
+                        })
+    except subprocess.TimeoutExpired:
+        dependencies['errors'].append('Timeout listing user flatpaks')
+    except Exception as e:
+        dependencies['errors'].append(f'Error listing user flatpaks: {str(e)}')
+    
+    # Filter to only show SDKs, Runtimes, and Extensions (not apps)
+    dependencies['system'] = [d for d in dependencies['system'] if d['type'] in ['SDK', 'Runtime', 'Extension']]
+    dependencies['user'] = [d for d in dependencies['user'] if d['type'] in ['SDK', 'Runtime', 'Extension']]
+    
+    # Sort by type, then name
+    dependencies['system'].sort(key=lambda x: (x['type'], x['name']))
+    dependencies['user'].sort(key=lambda x: (x['type'], x['name']))
+    
+    context = {
+        'dependencies': dependencies,
+        'total_system': len(dependencies['system']),
+        'total_user': len(dependencies['user']),
+    }
+    
+    return render(request, 'flatpak/dependencies_list.html', context)

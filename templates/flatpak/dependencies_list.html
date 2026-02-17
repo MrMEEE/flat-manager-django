@@ -1,0 +1,160 @@
+{% extends 'base.html' %}
+
+{% block title %}Flatpak Dependencies{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>
+        <i class="bi bi-box-seam"></i> Flatpak Dependencies
+    </h2>
+    <div>
+        <span class="badge bg-primary">System: {{ total_system }}</span>
+        <span class="badge bg-info">User: {{ total_user }}</span>
+    </div>
+</div>
+
+{% if dependencies.errors %}
+<div class="alert alert-warning">
+    <strong>Errors:</strong>
+    <ul class="mb-0">
+        {% for error in dependencies.errors %}
+        <li>{{ error }}</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+<div class="row">
+    <!-- System Dependencies -->
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-hdd"></i> System Dependencies ({{ total_system }})
+                </h5>
+            </div>
+            <div class="card-body p-0">
+                {% if dependencies.system %}
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Type</th>
+                                <th>Version</th>
+                                <th>Branch</th>
+                                <th>Origin</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for dep in dependencies.system %}
+                            <tr>
+                                <td>
+                                    <strong>{{ dep.name }}</strong><br>
+                                    <small class="text-muted">{{ dep.id }}</small>
+                                </td>
+                                <td>
+                                    {% if dep.type == 'SDK' %}
+                                    <span class="badge bg-success">SDK</span>
+                                    {% elif dep.type == 'Runtime' %}
+                                    <span class="badge bg-info">Runtime</span>
+                                    {% elif dep.type == 'Extension' %}
+                                    <span class="badge bg-warning">Extension</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">{{ dep.type }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ dep.version|default:"—" }}</td>
+                                <td><code>{{ dep.branch }}</code></td>
+                                <td>{{ dep.origin }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="p-3 text-center text-muted">
+                    <i class="bi bi-inbox" style="font-size: 2rem;"></i>
+                    <p class="mb-0 mt-2">No system dependencies installed</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- User Dependencies -->
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-header bg-info text-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-person"></i> User Dependencies ({{ total_user }})
+                </h5>
+            </div>
+            <div class="card-body p-0">
+                {% if dependencies.user %}
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Type</th>
+                                <th>Version</th>
+                                <th>Branch</th>
+                                <th>Origin</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for dep in dependencies.user %}
+                            <tr>
+                                <td>
+                                    <strong>{{ dep.name }}</strong><br>
+                                    <small class="text-muted">{{ dep.id }}</small>
+                                </td>
+                                <td>
+                                    {% if dep.type == 'SDK' %}
+                                    <span class="badge bg-success">SDK</span>
+                                    {% elif dep.type == 'Runtime' %}
+                                    <span class="badge bg-info">Runtime</span>
+                                    {% elif dep.type == 'Extension' %}
+                                    <span class="badge bg-warning">Extension</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">{{ dep.type }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ dep.version|default:"—" }}</td>
+                                <td><code>{{ dep.branch }}</code></td>
+                                <td>{{ dep.origin }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="p-3 text-center text-muted">
+                    <i class="bi bi-inbox" style="font-size: 2rem;"></i>
+                    <p class="mb-0 mt-2">No user dependencies installed</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <h5 class="card-title">About Dependencies</h5>
+        <p class="card-text">
+            This page shows all Flatpak SDKs, runtimes, and extensions installed on this system. 
+            These dependencies are used when building Flatpak applications.
+        </p>
+        <ul>
+            <li><strong>SDKs</strong>: Development kits containing compilers, libraries, and tools for building applications</li>
+            <li><strong>Runtimes</strong>: Platform libraries required to run applications</li>
+            <li><strong>Extensions</strong>: Additional tools and libraries that extend SDKs (e.g., programming language runtimes)</li>
+        </ul>
+        <p class="card-text">
+            <strong>System</strong> dependencies are available to all users, while <strong>User</strong> dependencies are only available to the current user.
+        </p>
+    </div>
+</div>
+{% endblock %}
