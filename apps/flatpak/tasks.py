@@ -610,6 +610,10 @@ def parse_manifest_dependencies(build, manifest_file):
             app_name = build.app_id.split('.')[-1].lower() if build.app_id else None
             
             for module in reversed(manifest['modules']):  # Start from last module
+                # Skip string modules (file references like "shared-modules/libsecret/libsecret.json")
+                if isinstance(module, str):
+                    continue
+                    
                 module_name = module.get('name', '').lower()
                 
                 # Check if this is likely the main app module
@@ -710,19 +714,28 @@ def install_flatpak_dependencies(build, dependencies):
         log_build(build, 'info', f"Checking/installing: {ref}")
         
         try:
-            # Check if already installed
-            check_result = subprocess.run(
-                ['flatpak', 'info', ref],
+            # Check if already installed (check both system and user installations)
+            check_system = subprocess.run(
+                ['flatpak', 'info', '--system', ref],
                 capture_output=True,
                 text=True,
                 timeout=30
             )
             
-            if check_result.returncode == 0:
-                log_build(build, 'info', f"✓ {ref} is already installed")
+            check_user = subprocess.run(
+                ['flatpak', 'info', '--user', ref],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if check_system.returncode == 0 or check_user.returncode == 0:
+                installation = 'system' if check_system.returncode == 0 else 'user'
+                log_build(build, 'info', f"✓ {ref} is already installed ({installation})")
                 continue
             
-            # Install from flathub (use --system to specify system remote)
+            # Try to install to system first, then user if that fails
+            log_build(build, 'info', f"Installing {ref} to system...")
             install_result = subprocess.run(
                 ['flatpak', 'install', '-y', '--system', '--noninteractive', 'flathub', ref],
                 capture_output=True,
@@ -731,13 +744,30 @@ def install_flatpak_dependencies(build, dependencies):
             )
             
             if install_result.returncode == 0:
-                log_build(build, 'info', f"✓ Successfully installed {ref}")
+                log_build(build, 'info', f"✓ Successfully installed {ref} to system")
             else:
                 error_msg = install_result.stderr.strip()
                 if 'already installed' in error_msg.lower():
                     log_build(build, 'info', f"✓ {ref} is already installed")
+                elif 'insufficient permissions' in error_msg.lower() or 'permission denied' in error_msg.lower():
+                    # Try installing to user space instead
+                    log_build(build, 'warning', f"Cannot install to system, trying user installation...")
+                    user_install = subprocess.run(
+                        ['flatpak', 'install', '-y', '--user', '--noninteractive', 'flathub', ref],
+                        capture_output=True,
+                        text=True,
+                        timeout=600
+                    )
+                    if user_install.returncode == 0:
+                        log_build(build, 'info', f"✓ Successfully installed {ref} to user")
+                    else:
+                        log_build(build, 'error', f"✗ Failed to install {ref}: {user_install.stderr.strip()}")
+                        return False
                 else:
                     log_build(build, 'error', f"✗ Failed to install {ref}: {error_msg}")
+                    # Log additional details for debugging
+                    if install_result.stdout.strip():
+                        log_build(build, 'info', f"Install output: {install_result.stdout.strip()}")
                     return False
                     
         except subprocess.TimeoutExpired:
