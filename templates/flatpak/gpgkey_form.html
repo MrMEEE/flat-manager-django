@@ -1,0 +1,118 @@
+{% extends 'base.html' %}
+
+{% block title %}Create GPG Key - Flat Manager{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'flatpak:gpgkey_list' %}">GPG Keys</a></li>
+        <li class="breadcrumb-item active">Create</li>
+    </ol>
+</nav>
+
+<h2 class="mb-4"><i class="bi bi-key"></i> Create GPG Key</h2>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+                    
+                    <div class="mb-3">
+                        <label for="id_name" class="form-label">Name *</label>
+                        <input type="text" class="form-control" id="id_name" name="name" required>
+                        <div class="form-text">Descriptive name for this key (e.g., "Production Signing Key")</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="id_email" class="form-label">Email *</label>
+                        <input type="email" class="form-control" id="id_email" name="email" required>
+                        <div class="form-text">Email associated with this GPG key</div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="id_key_id" class="form-label">Key ID *</label>
+                                <input type="text" class="form-control" id="id_key_id" name="key_id" maxlength="16" required placeholder="ABCD1234EFGH5678">
+                                <div class="form-text">Short GPG key ID (8-16 characters)</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="id_fingerprint" class="form-label">Fingerprint *</label>
+                                <input type="text" class="form-control" id="id_fingerprint" name="fingerprint" maxlength="40" required placeholder="ABCD1234EFGH5678IJKL9012MNOP3456QRST7890">
+                                <div class="form-text">Full 40-character fingerprint</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="id_public_key" class="form-label">Public Key (ASCII Armored) *</label>
+                        <textarea class="form-control" id="id_public_key" name="public_key" rows="10" required placeholder="-----BEGIN PGP PUBLIC KEY BLOCK-----
+...
+-----END PGP PUBLIC KEY BLOCK-----"></textarea>
+                        <div class="form-text">Paste the ASCII armored public key</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="id_private_key" class="form-label">Private Key (ASCII Armored) *</label>
+                        <textarea class="form-control" id="id_private_key" name="private_key" rows="10" required placeholder="-----BEGIN PGP PRIVATE KEY BLOCK-----
+...
+-----END PGP PRIVATE KEY BLOCK-----"></textarea>
+                        <div class="form-text text-danger">
+                            <i class="bi bi-exclamation-triangle"></i> Private key will be stored encrypted. Never share this key!
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="id_passphrase_hint" class="form-label">Passphrase Hint</label>
+                        <input type="text" class="form-control" id="id_passphrase_hint" name="passphrase_hint" placeholder="Optional hint for the passphrase">
+                        <div class="form-text">Optional hint (not the actual passphrase)</div>
+                    </div>
+                    
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-save"></i> Create GPG Key
+                        </button>
+                        <a href="{% url 'flatpak:gpgkey_list' %}" class="btn btn-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-info-circle"></i> How to Generate Keys</h5>
+            </div>
+            <div class="card-body">
+                <h6>Using GPG command line:</h6>
+                <pre style="background: #f5f5f5; padding: 0.5rem; border-radius: 4px; font-size: 0.85rem;"><code># Generate new key
+gpg --full-generate-key
+
+# Export public key
+gpg --armor --export KEY_ID
+
+# Export private key
+gpg --armor --export-secret-key KEY_ID
+
+# Get fingerprint
+gpg --fingerprint KEY_ID</code></pre>
+                
+                <hr>
+                
+                <h6>Security Best Practices:</h6>
+                <ul class="small">
+                    <li>Use strong passphrases</li>
+                    <li>Keep private keys secure</li>
+                    <li>Backup keys safely</li>
+                    <li>Rotate keys periodically</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

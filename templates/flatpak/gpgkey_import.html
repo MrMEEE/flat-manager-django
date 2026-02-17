@@ -1,0 +1,115 @@
+{% extends 'base.html' %}
+
+{% block title %}Import GPG Key{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">Import GPG Key</h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <a href="{% url 'flatpak:gpgkey_list' %}" class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to List
+        </a>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+                    
+                    <div class="alert alert-warning">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        <strong>Import an existing GPG key.</strong>
+                        Provide both public and private keys in ASCII armored format. If the private key is encrypted, enter the passphrase to decrypt it during import.
+                    </div>
+                    
+                    {% if form.non_field_errors %}
+                        <div class="alert alert-danger">
+                            {{ form.non_field_errors }}
+                        </div>
+                    {% endif %}
+                    
+                    <div class="mb-3">
+                        <label for="{{ form.name.id_for_label }}" class="form-label">Name *</label>
+                        {{ form.name }}
+                        {% if form.name.errors %}
+                            <div class="invalid-feedback d-block">{{ form.name.errors }}</div>
+                        {% endif %}
+                        <div class="form-text">A descriptive name for this key</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="{{ form.email.id_for_label }}" class="form-label">Email *</label>
+                        {{ form.email }}
+                        {% if form.email.errors %}
+                            <div class="invalid-feedback d-block">{{ form.email.errors }}</div>
+                        {% endif %}
+                        <div class="form-text">Email address associated with the key</div>
+                    </div>
+                    
+                    <hr class="my-4">
+                    
+                    <div class="mb-3">
+                        <label for="{{ form.public_key.id_for_label }}" class="form-label">Public Key *</label>
+                        {{ form.public_key }}
+                        {% if form.public_key.errors %}
+                            <div class="invalid-feedback d-block">{{ form.public_key.errors }}</div>
+                        {% endif %}
+                        <div class="form-text">{{ form.public_key.help_text }}</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="{{ form.private_key.id_for_label }}" class="form-label">Private Key *</label>
+                        {{ form.private_key }}
+                        {% if form.private_key.errors %}
+                            <div class="invalid-feedback d-block">{{ form.private_key.errors }}</div>
+                        {% endif %}
+                        <div class="form-text">{{ form.private_key.help_text }}</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="{{ form.passphrase.id_for_label }}" class="form-label">Passphrase</label>
+                        {{ form.passphrase }}
+                        {% if form.passphrase.errors %}
+                            <div class="invalid-feedback d-block">{{ form.passphrase.errors }}</div>
+                        {% endif %}
+                        <div class="form-text">{{ form.passphrase.help_text }}</div>
+                    </div>
+                    
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
+                        <a href="{% url 'flatpak:gpgkey_list' %}" class="btn btn-outline-secondary">Cancel</a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-upload"></i> Import Key
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">How to Export Keys</h5>
+                <p class="card-text text-muted">
+                    To export keys from an existing GPG keyring:
+                </p>
+                <div class="bg-light p-2 rounded">
+                    <code class="text-dark">
+                        # Export public key<br>
+                        gpg --armor --export KEY_ID<br><br>
+                        # Export private key<br>
+                        gpg --armor --export-secret-key KEY_ID
+                    </code>
+                </div>
+                <p class="card-text text-muted mt-3">
+                    <strong>Security:</strong> If your private key is encrypted, the passphrase will be used to decrypt it during import. 
+                    The decrypted key is stored in the database (passphrases are not stored).
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,261 @@
+#!/usr/bin/env python3
+"""
+fmdc - Flat-Manager Django Client
+
+A command-line client for interacting with flat-manager-django API.
+Compatible with flat-manager-client workflow.
+"""
+
+import argparse
+import asyncio
+import json
+import os
+import sys
+from urllib.parse import urljoin
+import aiohttp
+
+
+class FMDCClient:
+    """Flat-Manager Django Client"""
+    
+    def __init__(self, base_url, token):
+        self.base_url = base_url
+        self.token = token
+        self.session = None
+    
+    async def __aenter__(self):
+        self.session = aiohttp.ClientSession(
+            headers={'Authorization': f'Bearer {self.token}'}
+        )
+        return self
+    
+    async def __aexit__(self, exc_type, exc, tb):
+        if self.session:
+            await self.session.close()
+    
+    async def create_build(self, repo, app_id=None):
+        """Create a new build."""
+        url = urljoin(self.base_url, 'api/v1/builds/')
+        data = {'repository': repo}
+        if app_id:
+            data['app_id'] = app_id
+        
+        async with self.session.post(url, json=data) as resp:
+            if resp.status == 201:
+                result = await resp.json()
+                build_url = urljoin(self.base_url, f"api/v1/builds/{result['id']}/")
+                return build_url, result
+            else:
+                error = await resp.text()
+                raise Exception(f"Failed to create build: {resp.status} {error}")
+    
+    async def get_build(self, build_url):
+        """Get build details."""
+        async with self.session.get(build_url) as resp:
+            if resp.status == 200:
+                return await resp.json()
+            else:
+                error = await resp.text()
+                raise Exception(f"Failed to get build: {resp.status} {error}")
+    
+    async def list_builds(self, repo=None, status=None):
+        """List builds."""
+        url = urljoin(self.base_url, 'api/v1/builds/')
+        params = {}
+        if repo:
+            params['repository'] = repo
+        if status:
+            params['status'] = status
+        
+        async with self.session.get(url, params=params) as resp:
+            if resp.status == 200:
+                return await resp.json()
+            else:
+                error = await resp.text()
+                raise Exception(f"Failed to list builds: {resp.status} {error}")
+    
+    async def commit_build(self, build_url):
+        """Commit a build."""
+        commit_url = urljoin(build_url, 'commit/')
+        async with self.session.post(commit_url, json={}) as resp:
+            if resp.status == 200:
+                return await resp.json()
+            else:
+                error = await resp.text()
+                raise Exception(f"Failed to commit build: {resp.status} {error}")
+    
+    async def publish_build(self, build_url):
+        """Publish a build."""
+        publish_url = urljoin(build_url, 'publish/')
+        async with self.session.post(publish_url, json={}) as resp:
+            if resp.status == 200:
+                return await resp.json()
+            else:
+                error = await resp.text()
+                raise Exception(f"Failed to publish build: {resp.status} {error}")
+    
+    async def cancel_build(self, build_url):
+        """Cancel a build."""
+        cancel_url = urljoin(build_url, 'cancel/')
+        async with self.session.post(cancel_url, json={}) as resp:
+            if resp.status == 200:
+                return await resp.json()
+            else:
+                error = await resp.text()
+                raise Exception(f"Failed to cancel build: {resp.status} {error}")
+
+
+async def create_command(args):
+    """Create a new build."""
+    async with FMDCClient(args.manager_url, args.token) as client:
+        build_url, build_data = await client.create_build(args.repo, args.app_id)
+        if args.print_output:
+            print(json.dumps(build_data, indent=2))
+        else:
+            print(build_url)
+        return build_data
+
+
+async def list_command(args):
+    """List builds."""
+    async with FMDCClient(args.manager_url, args.token) as client:
+        builds = await client.list_builds(args.repo, args.status)
+        if args.print_output:
+            print(json.dumps(builds, indent=2))
+        else:
+            for build in builds.get('results', []):
+                print(f"{build['build_id']}: {build['app_id']} ({build['status']})")
+        return builds
+
+
+async def commit_command(args):
+    """Commit a build."""
+    async with FMDCClient(args.manager_url, args.token) as client:
+        result = await client.commit_build(args.build_url)
+        print(f"Build committed: {result['status']}")
+        return result
+
+
+async def publish_command(args):
+    """Publish a build."""
+    async with FMDCClient(args.manager_url, args.token) as client:
+        result = await client.publish_build(args.build_url)
+        print(f"Build publishing: {result['status']}")
+        return result
+
+
+async def cancel_command(args):
+    """Cancel a build."""
+    async with FMDCClient(args.manager_url, args.token) as client:
+        result = await client.cancel_build(args.build_url)
+        print(f"Build cancelled: {result['status']}")
+        return result
+
+
+async def push_command(args):
+    """Push to build (upload packages)."""
+    print("Push command not yet implemented.")
+    print("This would upload OSTree objects from a local repository.")
+    print("For now, use the web UI to manage builds.")
+    return {}
+
+
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        description='fmdc - Flat-Manager Django Client',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  # Create a new build
+  fmdc create http://localhost:8000 stable org.example.App
+  
+  # List builds
+  fmdc list http://localhost:8000
+  
+  # Commit a build
+  fmdc commit <build_url>
+  
+  # Publish a build
+  fmdc publish <build_url>
+  
+  # Cancel a build
+  fmdc cancel <build_url>
+
+Environment Variables:
+  FMDC_TOKEN    - API token (alternative to --token)
+'''
+    )
+    
+    parser.add_argument('-v', '--verbose', action='store_true',
+                        help='Enable verbose output')
+    parser.add_argument('--print-output', action='store_true',
+                        help='Print full JSON output')
+    parser.add_argument('--token', help='API token')
+    
+    subparsers = parser.add_subparsers(dest='command', help='Commands')
+    
+    # Create command
+    create_parser = subparsers.add_parser('create', help='Create new build')
+    create_parser.add_argument('manager_url', help='Manager URL')
+    create_parser.add_argument('repo', help='Repository name')
+    create_parser.add_argument('app_id', nargs='?', help='Application ID')
+    create_parser.set_defaults(func=create_command)
+    
+    # List command
+    list_parser = subparsers.add_parser('list', help='List builds')
+    list_parser.add_argument('manager_url', help='Manager URL')
+    list_parser.add_argument('--repo', help='Filter by repository')
+    list_parser.add_argument('--status', help='Filter by status')
+    list_parser.set_defaults(func=list_command)
+    
+    # Push command
+    push_parser = subparsers.add_parser('push', help='Push to build')
+    push_parser.add_argument('build_url', help='Build URL')
+    push_parser.add_argument('repo_path', help='Local repository path')
+    push_parser.add_argument('branches', nargs='*', help='Branches to push')
+    push_parser.add_argument('--commit', action='store_true',
+                             help='Commit after pushing')
+    push_parser.add_argument('--publish', action='store_true',
+                             help='Publish after committing')
+    push_parser.set_defaults(func=push_command)
+    
+    # Commit command
+    commit_parser = subparsers.add_parser('commit', help='Commit build')
+    commit_parser.add_argument('build_url', help='Build URL')
+    commit_parser.set_defaults(func=commit_command)
+    
+    # Publish command
+    publish_parser = subparsers.add_parser('publish', help='Publish build')
+    publish_parser.add_argument('build_url', help='Build URL')
+    publish_parser.set_defaults(func=publish_command)
+    
+    # Cancel command
+    cancel_parser = subparsers.add_parser('cancel', help='Cancel build')
+    cancel_parser.add_argument('build_url', help='Build URL')
+    cancel_parser.set_defaults(func=cancel_command)
+    
+    args = parser.parse_args()
+    
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+    
+    # Get token
+    if not args.token:
+        args.token = os.environ.get('FMDC_TOKEN')
+        if not args.token:
+            print("Error: No token provided. Use --token or set FMDC_TOKEN environment variable.")
+            sys.exit(1)
+    
+    # Run command
+    try:
+        result = asyncio.run(args.func(args))
+        sys.exit(0)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

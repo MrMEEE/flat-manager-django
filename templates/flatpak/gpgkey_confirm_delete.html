@@ -1,0 +1,53 @@
+{% extends 'base.html' %}
+
+{% block title %}Delete GPG Key - Flat Manager{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'flatpak:gpgkey_list' %}">GPG Keys</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'flatpak:gpgkey_detail' gpgkey.pk %}">{{ gpgkey.name }}</a></li>
+        <li class="breadcrumb-item active">Delete</li>
+    </ol>
+</nav>
+
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card border-danger">
+            <div class="card-header bg-danger text-white">
+                <h5 class="mb-0"><i class="bi bi-exclamation-triangle"></i> Confirm Deletion</h5>
+            </div>
+            <div class="card-body">
+                <h5>Delete GPG Key: {{ gpgkey.name }}</h5>
+                <p><strong>Key ID:</strong> <code>{{ gpgkey.key_id }}</code></p>
+                <p><strong>Fingerprint:</strong> <code>{{ gpgkey.fingerprint }}</code></p>
+                
+                {% if gpgkey.repositories.all %}
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle"></i> <strong>Warning:</strong> This key is currently used by the following repositories:
+                    <ul class="mb-0 mt-2">
+                        {% for repo in gpgkey.repositories.all %}
+                        <li><a href="{% url 'flatpak:repo_detail' repo.pk %}">{{ repo.name }}</a></li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
+                
+                <div class="alert alert-danger">
+                    <strong>This action cannot be undone!</strong> The GPG key will be permanently deleted from the database.
+                </div>
+                
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-danger">
+                            <i class="bi bi-trash"></i> Yes, Delete This Key
+                        </button>
+                        <a href="{% url 'flatpak:gpgkey_detail' gpgkey.pk %}" class="btn btn-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

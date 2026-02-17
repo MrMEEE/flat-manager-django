@@ -1,0 +1,102 @@
+{% extends 'base.html' %}
+
+{% block title %}Generate GPG Key{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">Generate GPG Key</h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <a href="{% url 'flatpak:gpgkey_list' %}" class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to List
+        </a>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+                    
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle"></i>
+                        <strong>Generate a new GPG key pair.</strong>
+                        The application will create an unencrypted key pair for signing flatpak repositories.
+                        Keys are stored securely in the database.
+                    </div>
+                    
+                    {% if form.non_field_errors %}
+                        <div class="alert alert-danger">
+                            {{ form.non_field_errors }}
+                        </div>
+                    {% endif %}
+                    
+                    <div class="mb-3">
+                        <label for="{{ form.name.id_for_label }}" class="form-label">Name *</label>
+                        {{ form.name }}
+                        {% if form.name.errors %}
+                            <div class="invalid-feedback d-block">{{ form.name.errors }}</div>
+                        {% endif %}
+                        <div class="form-text">Real name for the key (e.g., "Flatpak Builder")</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="{{ form.email.id_for_label }}" class="form-label">Email *</label>
+                        {{ form.email }}
+                        {% if form.email.errors %}
+                            <div class="invalid-feedback d-block">{{ form.email.errors }}</div>
+                        {% endif %}
+                        <div class="form-text">Email address for the key</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="{{ form.comment.id_for_label }}" class="form-label">Comment</label>
+                        {{ form.comment }}
+                        {% if form.comment.errors %}
+                            <div class="invalid-feedback d-block">{{ form.comment.errors }}</div>
+                        {% endif %}
+                        <div class="form-text">Optional comment field</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="{{ form.key_length.id_for_label }}" class="form-label">Key Length *</label>
+                        {{ form.key_length }}
+                        {% if form.key_length.errors %}
+                            <div class="invalid-feedback d-block">{{ form.key_length.errors }}</div>
+                        {% endif %}
+                        <div class="form-text">4096 bits recommended for better security</div>
+                    </div>
+                    
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
+                        <a href="{% url 'flatpak:gpgkey_list' %}" class="btn btn-outline-secondary">Cancel</a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-key"></i> Generate Key
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">About GPG Key Generation</h5>
+                <p class="card-text text-muted">
+                    The application will use GPG to generate a new unencrypted key pair:
+                </p>
+                <ul class="text-muted">
+                    <li>Public key for verification</li>
+                    <li>Private key for signing (kept secure)</li>
+                    <li>Unique fingerprint and key ID</li>
+                </ul>
+                <p class="card-text text-muted">
+                    <strong>Security Note:</strong> Keys are generated without a passphrase so the application can use them for automated signing.
+                    Private keys are stored in the database and should never be exposed.
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

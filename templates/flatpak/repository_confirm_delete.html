@@ -1,0 +1,96 @@
+{% extends 'base.html' %}
+
+{% block title %}Delete Repository - Flat Manager{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'flatpak:repo_list' %}">Repositories</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'flatpak:repo_detail' object.pk %}">{{ object.name }}</a></li>
+        <li class="breadcrumb-item active">Delete</li>
+    </ol>
+</nav>
+
+<h2 class="mb-4">Delete Repository</h2>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card border-danger">
+            <div class="card-header bg-danger text-white">
+                <h5 class="mb-0"><i class="bi bi-exclamation-triangle"></i> Confirm Deletion</h5>
+            </div>
+            <div class="card-body">
+                <p>Are you sure you want to delete the repository <strong>{{ object.name }}</strong>?</p>
+                
+                <dl class="row mb-3">
+                    <dt class="col-sm-3">Name:</dt>
+                    <dd class="col-sm-9">{{ object.name }}</dd>
+                    
+                    <dt class="col-sm-3">Collection ID:</dt>
+                    <dd class="col-sm-9"><code>{{ object.collection_id|default:"—" }}</code></dd>
+                    
+                    <dt class="col-sm-3">Repository Path:</dt>
+                    <dd class="col-sm-9"><code>{{ object.repo_path }}</code></dd>
+                    
+                    <dt class="col-sm-3">Description:</dt>
+                    <dd class="col-sm-9">{{ object.description|default:"—" }}</dd>
+                    
+                    <dt class="col-sm-3">Builds:</dt>
+                    <dd class="col-sm-9">{{ object.builds.count }}</dd>
+                    
+                    <dt class="col-sm-3">Subsets:</dt>
+                    <dd class="col-sm-9">{{ object.subsets.count }}</dd>
+                    
+                    <dt class="col-sm-3">GPG Key:</dt>
+                    <dd class="col-sm-9">
+                        {% if object.gpg_key %}
+                        {{ object.gpg_key.name }} ({{ object.gpg_key.key_id }})
+                        {% else %}
+                        None
+                        {% endif %}
+                    </dd>
+                </dl>
+                
+                <div class="alert alert-danger" role="alert">
+                    <h6 class="alert-heading"><i class="bi bi-exclamation-triangle"></i> Warning!</h6>
+                    <ul class="mb-0">
+                        <li>This action <strong>cannot be undone</strong></li>
+                        <li>The OSTree repository directory will be <strong>permanently deleted</strong> from disk</li>
+                        <li>All builds, subsets, and related data will be removed</li>
+                        <li>Any clients using this repository will no longer be able to access it</li>
+                    </ul>
+                </div>
+                
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-danger">
+                            <i class="bi bi-trash"></i> Delete Repository Permanently
+                        </button>
+                        <a href="{% url 'flatpak:repo_detail' object.pk %}" class="btn btn-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">What will be deleted?</h5>
+            </div>
+            <div class="card-body">
+                <ul class="small">
+                    <li>Repository database entry</li>
+                    <li>OSTree repository data at:<br><code class="small">{{ object.repo_path }}</code></li>
+                    <li>All {{ object.builds.count }} build(s)</li>
+                    <li>All {{ object.subsets.count }} subset(s)</li>
+                    <li>Associated build logs and artifacts</li>
+                    <li>Repository summary and metadata</li>
+                </ul>
+                <p class="small text-muted mb-0">GPG keys will not be deleted and can be reused for other repositories.</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

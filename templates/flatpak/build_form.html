@@ -1,0 +1,297 @@
+{% extends 'base.html' %}
+
+{% block title %}{% if edit_mode %}Edit{% else %}Create{% endif %} Build - Flat Manager{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'flatpak:build_list' %}">Builds</a></li>
+        {% if edit_mode %}
+        <li class="breadcrumb-item"><a href="{% url 'flatpak:build_detail' object.pk %}">{{ object.build_id }}</a></li>
+        <li class="breadcrumb-item active">Edit</li>
+        {% else %}
+        <li class="breadcrumb-item active">Create</li>
+        {% endif %}
+    </ol>
+</nav>
+
+<h2 class="mb-4"><i class="bi bi-hammer"></i> {% if edit_mode %}Edit{% else %}Create New{% endif %} Build</h2>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+                    
+                    <div class="mb-3">
+                        <label for="id_repository" class="form-label">Repository *</label>
+                        {{ form.repository }}
+                        <div class="form-text">{{ form.repository.help_text }}</div>
+                        {% if form.repository.errors %}
+                        <div class="text-danger">{{ form.repository.errors }}</div>
+                        {% endif %}
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="id_app_id" class="form-label">Application ID *</label>
+                        <input type="text" class="form-control" id="id_app_id" name="app_id" 
+                               value="{{ form.app_id.value|default:'' }}"
+                               placeholder="org.example.MyApp" required>
+                        <div class="form-text">Flatpak application ID (reverse DNS format)</div>
+                        {% if form.app_id.errors %}
+                        <div class="text-danger">{{ form.app_id.errors }}</div>
+                        {% endif %}
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="id_version" class="form-label">Version</label>
+                        <input type="text" class="form-control" id="id_version" name="version" 
+                               value="{{ form.version.value|default:'' }}"
+                               placeholder="1.0.0">
+                        <div class="form-text">Application version (optional)</div>
+                        {% if form.version.errors %}
+                        <div class="text-danger">{{ form.version.errors }}</div>
+                        {% endif %}
+                    </div>
+                    
+                    <hr class="my-4">
+                    
+                    <h5>Build Source</h5>
+                    <p class="text-muted">Choose to build from Git repository or upload pre-built packages</p>
+                    
+                    <div class="mb-3">
+                        <label for="id_git_repo_url" class="form-label">Git Repository URL (Optional)</label>
+                        <input type="url" class="form-control" id="id_git_repo_url" name="git_repo_url" 
+                               value="{{ form.git_repo_url.value|default:'' }}"
+                               placeholder="https://github.com/user/repo.git">
+                        <div class="form-text">If provided, will build from source using flatpak-builder</div>
+                        {% if form.git_repo_url.errors %}
+                        <div class="text-danger">{{ form.git_repo_url.errors }}</div>
+                        {% endif %}
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="id_git_branch" class="form-label">Git Branch</label>
+                        <input type="text" class="form-control" id="id_git_branch" name="git_branch" 
+                               value="{{ form.git_branch.value|default:'master' }}"
+                               placeholder="master">
+                        <div class="form-text">Git branch or tag to build from</div>
+                        {% if form.git_branch.errors %}
+                        <div class="text-danger">{{ form.git_branch.errors }}</div>
+                        {% endif %}
+                    </div>
+                    
+                    <hr class="my-4">
+                    
+                    <h5>Build Configuration</h5>
+                    
+                    <div class="mb-3">
+                        <label for="id_branch" class="form-label">Flatpak Branch *</label>
+                        <input type="text" class="form-control" id="id_branch" name="branch" 
+                               value="{{ form.branch.value|default:'stable' }}"
+                               required>
+                        <div class="form-text">Target branch (stable, beta, development, etc.)</div>
+                        {% if form.branch.errors %}
+                        <div class="text-danger">{{ form.branch.errors }}</div>
+                        {% endif %}
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="id_arch" class="form-label">Architecture *</label>
+                        <select class="form-select" id="id_arch" name="arch" required>
+                            <option value="x86_64" {% if form.arch.value == 'x86_64' or not form.arch.value %}selected{% endif %}>x86_64</option>
+                            <option value="aarch64" {% if form.arch.value == 'aarch64' %}selected{% endif %}>aarch64</option>
+                            <option value="arm" {% if form.arch.value == 'arm' %}selected{% endif %}>arm</option>
+                        </select>
+                        <div class="form-text">Target architecture</div>
+                        {% if form.arch.errors %}
+                        <div class="text-danger">{{ form.arch.errors }}</div>
+                        {% endif %}
+                    </div>
+                    
+                    <hr class="my-4">
+                    
+                    <div class="d-flex justify-content-between">
+                        <a href="{% if edit_mode %}{% url 'flatpak:build_detail' object.pk %}{% else %}{% url 'flatpak:build_list' %}{% endif %}" class="btn btn-secondary">
+                            <i class="bi bi-x-circle"></i> Cancel
+                        </a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-circle"></i> {% if edit_mode %}Save{% else %}Create Build{% endif %}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card bg-light">
+            <div class="card-body">
+                <h5 class="card-title">Build Modes</h5>
+                <p class="card-text"><strong>Git Build:</strong> Provide a Git repository URL to build from source using flatpak-builder.</p>
+                <p class="card-text"><strong>Upload Build:</strong> Leave Git URL empty to upload pre-built OSTree commits via fmdc client.</p>
+                
+                <hr>
+                
+                <h5 class="card-title">Repository Requirements</h5>
+                <p class="card-text">Only repositories without parent repos can have builds. Builds flow from parent to child repos.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOMContentLoaded fired');
+    
+    // Git branch lookup functionality
+    const gitRepoInput = document.getElementById('id_git_repo_url');
+    const gitBranchInput = document.getElementById('id_git_branch');
+    
+    console.log('gitRepoInput:', gitRepoInput);
+    console.log('gitBranchInput:', gitBranchInput);
+    
+    // Check if elements exist
+    if (!gitRepoInput || !gitBranchInput) {
+        console.error('Git input elements not found');
+        console.log('Available elements with id_git:', document.querySelectorAll('[id*="git"]'));
+        return;
+    }
+    
+    const gitBranchContainer = gitBranchInput.parentElement;
+    let branchSelect = null;
+    
+    console.log('Git branch lookup initialized');
+    console.log('Initial gitRepoInput.value:', gitRepoInput.value);
+    
+    // Debounce function
+    function debounce(func, wait) {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+    }
+    
+    async function lookupBranches(repoUrl) {
+        console.log('lookupBranches called with:', repoUrl, 'typeof:', typeof repoUrl);
+        
+        if (repoUrl === undefined || repoUrl === null) {
+            console.error('lookupBranches called with undefined/null value - aborting');
+            return;
+        }
+        
+        if (!repoUrl || !repoUrl.trim()) {
+            console.log('Empty URL provided, restoring text input');
+            // Restore text input if URL is cleared
+            if (branchSelect) {
+                const currentValue = branchSelect.value;
+                branchSelect.remove();
+                gitBranchInput.type = 'text';
+                gitBranchInput.style.display = '';
+                gitBranchInput.value = currentValue || 'master';
+                branchSelect = null;
+            }
+            return;
+        }
+        
+        try {
+            // Show loading state
+            const loadingMsg = document.createElement('small');
+            loadingMsg.className = 'text-muted d-block mt-1';
+            loadingMsg.id = 'branch-loading';
+            loadingMsg.innerHTML = '<span class=\"spinner-border spinner-border-sm me-1\"></span>Looking up branches...';
+            gitBranchContainer.appendChild(loadingMsg);
+            
+            const response = await fetch(`/api/git-branches/?repo_url=${encodeURIComponent(repoUrl)}`);
+            
+            // Remove loading message
+            document.getElementById('branch-loading')?.remove();
+            
+            if (response.ok) {
+                const data = await response.json();
+                console.log('Received branches:', data.branches);
+                
+                if (data.branches && data.branches.length > 0) {
+                    // Create dropdown if not exists
+                    if (!branchSelect) {
+                        const currentValue = gitBranchInput.value;
+                        gitBranchInput.style.display = 'none';
+                        
+                        branchSelect = document.createElement('select');
+                        branchSelect.className = 'form-select';
+                        branchSelect.id = 'branch-select';
+                        branchSelect.name = 'git_branch';
+                        gitBranchInput.parentNode.insertBefore(branchSelect, gitBranchInput.nextSibling);
+                        
+                        // Sync with hidden input
+                        branchSelect.addEventListener('change', function() {
+                            gitBranchInput.value = this.value;
+                        });
+                    }
+                    
+                    // Populate dropdown
+                    const currentValue = gitBranchInput.value || 'master';
+                    branchSelect.innerHTML = '';
+                    data.branches.forEach(branch => {
+                        const option = document.createElement('option');
+                        option.value = branch;
+                        option.textContent = branch;
+                        if (branch === currentValue || (branch === 'master' && !currentValue)) {
+                            option.selected = true;
+                        }
+                        branchSelect.appendChild(option);
+                    });
+                    gitBranchInput.value = branchSelect.value;
+                }
+            } else {
+                console.error('Failed to fetch branches:', response.status);
+            }
+        } catch (error) {
+            console.error('Error looking up branches:', error);
+            document.getElementById('branch-loading')?.remove();
+        }
+    }
+    
+    // Attach debounced event listener
+    if (gitRepoInput) {
+        console.log('Attaching event listener to gitRepoInput');
+        
+        // Try multiple event types to ensure we catch changes
+        ['input', 'change', 'keyup', 'paste'].forEach(eventType => {
+            gitRepoInput.addEventListener(eventType, debounce(function(event) {
+                const value = event.target.value;
+                console.log(`${eventType} event triggered with value:`, value);
+                lookupBranches(value);
+            }, 800));
+        });
+        
+        // Also try direct property watching
+        let lastValue = gitRepoInput.value;
+        setInterval(() => {
+            if (gitRepoInput.value !== lastValue) {
+                console.log('Value changed via polling:', gitRepoInput.value);
+                lookupBranches(gitRepoInput.value);
+                lastValue = gitRepoInput.value;
+            }
+        }, 1000);
+        
+        // Lookup branches on page load if URL exists
+        if (gitRepoInput.value) {
+            console.log('Page load lookup with value:', gitRepoInput.value);
+            lookupBranches(gitRepoInput.value);
+        }
+    } else {
+        console.error('gitRepoInput is null, cannot attach event listener');
+    }
+});
+</script>
+{% endblock %}

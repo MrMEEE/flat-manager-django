@@ -1,0 +1,682 @@
+{% extends 'base.html' %}
+
+{% block title %}Build {{ build.build_id }} - Flat Manager{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'flatpak:build_list' %}">Builds</a></li>
+        <li class="breadcrumb-item active">{{ build.build_id }}</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-hammer"></i> Build {{ build.build_id }}</h2>
+    <div class="d-flex gap-2 align-items-center" id="action-buttons">
+        {% if build.status == 'pending' %}
+        <span class="badge bg-secondary">Pending</span>
+        {% elif build.status == 'building' %}
+        <span class="badge bg-primary">
+            <span class="spinner-border spinner-border-sm me-1"></span>
+            Building
+        </span>
+        {% elif build.status == 'publishing' %}
+        <span class="badge bg-info">Publishing</span>
+        {% elif build.status == 'completed' %}
+        <span class="badge bg-success">Completed</span>
+        {% elif build.status == 'failed' %}
+        <span class="badge bg-danger">Failed</span>
+        {% else %}
+        <span class="badge bg-warning">{{ build.status }}</span>
+        {% endif %}
+        
+        {% if build.status not in 'building,committing,publishing' %}
+        <a href="{% url 'flatpak:build_edit' build.pk %}" class="btn btn-outline-secondary">
+            <i class="bi bi-pencil"></i> Edit
+        </a>
+        {% endif %}
+        
+        {% if build.status not in 'pending,building,committing,publishing' %}
+        <button type="button" class="btn btn-outline-info" onclick="retryBuild({{ build.pk }})">
+            <i class="bi bi-arrow-clockwise"></i> Retry
+        </button>
+        {% endif %}
+        
+        {% if build.status in 'pending,building,committing,publishing' %}
+        <button type="button" class="btn btn-outline-warning" onclick="cancelBuild({{ build.pk }})">
+            <i class="bi bi-x-circle"></i> Cancel
+        </button>
+        {% else %}
+        <a href="{% url 'flatpak:build_delete' build.pk %}" class="btn btn-outline-danger">
+            <i class="bi bi-trash"></i> Delete
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-8">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">Build Details</h5>
+            </div>
+            <div class="card-body">
+                <dl class="row">
+                    <dt class="col-sm-3">App ID:</dt>
+                    <dd class="col-sm-9">{{ build.app_id }}</dd>
+                    
+                    <dt class="col-sm-3">Build Number:</dt>
+                    <dd class="col-sm-9" id="build-number">{{ build.build_number }}</dd>
+                    
+                    {% if build.version %}
+                    <dt class="col-sm-3">Version:</dt>
+                    <dd class="col-sm-9" id="build-version">{{ build.version }}</dd>
+                    {% endif %}
+                    
+                    <dt class="col-sm-3">Repository:</dt>
+                    <dd class="col-sm-9">
+                        <a href="{% url 'flatpak:repo_detail' build.repository.pk %}">
+                            {{ build.repository.name }}
+                        </a>
+                    </dd>
+                    
+                    <dt class="col-sm-3">Branch:</dt>
+                    <dd class="col-sm-9"><code>{{ build.branch }}</code></dd>
+                    
+                    <dt class="col-sm-3">Architecture:</dt>
+                    <dd class="col-sm-9">{{ build.arch }}</dd>
+                    
+                    <dt class="col-sm-3">Commit:</dt>
+                    <dd class="col-sm-9"><code>{{ build.commit_hash|default:"N/A" }}</code></dd>
+                    
+                    {% if build.dependencies %}
+                    <dt class="col-sm-3">Dependencies:</dt>
+                    <dd class="col-sm-9">
+                        <div class="small">
+                            {% if build.dependencies.sdk %}
+                            <div><strong>SDK:</strong> <code>{{ build.dependencies.sdk }}</code> 
+                                {% if build.dependencies.sdk_version %}({{ build.dependencies.sdk_version }}){% endif %}
+                            </div>
+                            {% endif %}
+                            {% if build.dependencies.runtime %}
+                            <div><strong>Runtime:</strong> <code>{{ build.dependencies.runtime }}</code> 
+                                {% if build.dependencies.runtime_version %}({{ build.dependencies.runtime_version }}){% endif %}
+                            </div>
+                            {% endif %}
+                            {% if build.dependencies.base %}
+                            <div><strong>Base:</strong> <code>{{ build.dependencies.base }}</code> 
+                                {% if build.dependencies.base_version %}({{ build.dependencies.base_version }}){% endif %}
+                            </div>
+                            {% endif %}
+                        </div>
+                    </dd>
+                    {% endif %}
+                    
+                    <dt class="col-sm-3">Created By:</dt>
+                    <dd class="col-sm-9">{{ build.created_by.username }}</dd>
+                    
+                    <dt class="col-sm-3">Created:</dt>
+                    <dd class="col-sm-9">{{ build.created_at|date:"M d, Y H:i:s" }}</dd>
+                    
+                    {% if build.started_at %}
+                    <dt class="col-sm-3">Started:</dt>
+                    <dd class="col-sm-9">{{ build.started_at|date:"M d, Y H:i:s" }}</dd>
+                    {% endif %}
+                    
+                    {% if build.completed_at %}
+                    <dt class="col-sm-3">Completed:</dt>
+                    <dd class="col-sm-9">{{ build.completed_at|date:"M d, Y H:i:s" }}</dd>
+                    {% endif %}
+                    
+                    {% if build.error_message %}
+                    <dt class="col-sm-3">Error:</dt>
+                    <dd class="col-sm-9"><code class="text-danger">{{ build.error_message }}</code></dd>
+                    {% endif %}
+                </dl>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-terminal"></i> Build Logs</h5>
+            </div>
+            <div class="card-body">
+                <div id="build-logs" style="background: #1e1e1e; color: #d4d4d4; padding: 1rem; border-radius: 4px; max-height: 400px; overflow-y: auto; font-family: 'Courier New', monospace;">
+                    {% if logs %}
+                        {% for log in logs %}
+                        <div class="log-entry">
+                            <span class="text-muted">{{ log.timestamp|date:"H:i:s" }}</span>
+                            {% if log.level == 'error' %}
+                            <span class="text-danger">[{{ log.level|upper }}]</span>
+                            {% elif log.level == 'warning' %}
+                            <span class="text-warning">[{{ log.level|upper }}]</span>
+                            {% elif log.level == 'info' %}
+                            <span class="text-info">[{{ log.level|upper }}]</span>
+                            {% else %}
+                            <span>[{{ log.level|upper }}]</span>
+                            {% endif %}
+                            {{ log.message }}
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        {% if build.status in 'pending,building,committing,publishing' %}
+                        <div class="text-muted">Waiting for build to start...</div>
+                        {% else %}
+                        <div class="text-muted">No logs available.</div>
+                        {% endif %}
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">Artifacts</h5>
+            </div>
+            <div class="card-body">
+                {% if artifacts %}
+                <ul class="list-unstyled">
+                    {% for artifact in artifacts %}
+                    <li class="mb-2">
+                        <i class="bi bi-file-earmark-zip"></i>
+                        <strong>{{ artifact.filename }}</strong><br>
+                        <small class="text-muted">{{ artifact.file_size|filesizeformat }}</small><br>
+                        <small class="text-muted">{{ artifact.checksum|truncatechars:16 }}</small>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="text-muted">No artifacts yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const buildId = {{ build.id }};
+    let buildStatus = '{{ build.status }}';
+    let lastLogCount = {{ logs|length|default:0 }};
+    let isAutoScrollEnabled = true;
+    
+    console.log('Build detail page loaded:', {buildId, buildStatus, lastLogCount});
+    
+    // Retry build via AJAX
+    window.retryBuild = async function(id) {
+        try {
+            const response = await fetch(`/builds/${id}/retry/`, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': '{{ csrf_token }}',
+                    'Content-Type': 'application/json'
+                },
+                credentials: 'same-origin'
+            });
+            
+            if (response.ok) {
+                console.log('Build retry initiated');
+                // Clear logs and update status immediately
+                const logsDiv = document.getElementById('build-logs');
+                if (logsDiv) {
+                    logsDiv.innerHTML = '<div class=\"text-muted\">Waiting for build to start...</div>';
+                }
+                lastLogCount = 0;
+                
+                // Update status and start polling
+                buildStatus = 'pending';
+                updateStatusBadge('pending');
+                updateActionButtons('pending');
+                
+                // Fetch and update build details to get new build_number
+                await updateBuildDetails();
+                
+                // Start polling
+                if (!window.logPollInterval) {
+                    updateLogs();
+                    window.logPollInterval = setInterval(updateLogs, 2000);
+                }
+            } else {
+                alert('Failed to retry build');
+            }
+        } catch (error) {
+            console.error('Error retrying build:', error);
+            alert('Error retrying build');
+        }
+    };
+    
+    // Cancel build via AJAX
+    window.cancelBuild = async function(id) {
+        if (!confirm('Cancel this build?')) return;
+        
+        try {
+            const response = await fetch(`/builds/${id}/delete/`, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': '{{ csrf_token }}',
+                    'Content-Type': 'application/json'
+                },
+                credentials: 'same-origin'
+            });
+            
+            if (response.ok) {
+                console.log('Build cancelled');
+                buildStatus = 'cancelled';
+                updateStatusBadge('cancelled');
+                updateActionButtons('cancelled');
+                
+                if (window.logPollInterval) {
+                    clearInterval(window.logPollInterval);
+                }
+            } else {
+                alert('Failed to cancel build');
+            }
+        } catch (error) {
+            console.error('Error cancelling build:', error);
+            alert('Error cancelling build');
+        }
+    };
+    
+    // Update action buttons based on status
+    function updateActionButtons(status) {
+        const actionContainer = document.querySelector('.d-flex.gap-2.align-items-center');
+        if (!actionContainer) return;
+        
+        // Find button container (after badges)
+        let buttonContainer = actionContainer.querySelector('.d-flex.gap-2');
+        if (!buttonContainer) {
+            buttonContainer = document.createElement('div');
+            buttonContainer.className = 'd-flex gap-2';
+            actionContainer.appendChild(buttonContainer);
+        }
+        
+        // Clear existing buttons except view/edit
+        const existingButtons = buttonContainer.querySelectorAll('button, a[href*=\"delete\"], a[href*=\"retry\"], a[href*=\"edit\"]');
+        existingButtons.forEach(btn => btn.remove());
+        
+        // Determine if build is active
+        const isActive = ['pending', 'building', 'committing', 'publishing'].includes(status);
+        
+        // Show Edit button for non-active builds
+        if (!['building', 'committing', 'publishing'].includes(status)) {
+            const editBtn = document.createElement('a');
+            editBtn.href = `/builds/${buildId}/edit/`;
+            editBtn.className = 'btn btn-outline-secondary';
+            editBtn.innerHTML = '<i class=\"bi bi-pencil\"></i> Edit';
+            buttonContainer.appendChild(editBtn);
+        }
+        
+        // Show Retry button for all completed/failed builds
+        if (!['pending', 'building', 'committing', 'publishing'].includes(status)) {
+            const retryBtn = document.createElement('button');
+            retryBtn.type = 'button';
+            retryBtn.className = 'btn btn-outline-info';
+            retryBtn.innerHTML = '<i class=\"bi bi-arrow-clockwise\"></i> Retry';
+            retryBtn.onclick = () => retryBuild(buildId);
+            buttonContainer.appendChild(retryBtn);
+        }
+        
+        // Show Cancel button for active builds, Delete for others
+        if (isActive) {
+            const cancelBtn = document.createElement('button');
+            cancelBtn.type = 'button';
+            cancelBtn.className = 'btn btn-outline-warning';
+            cancelBtn.innerHTML = '<i class=\"bi bi-x-circle\"></i> Cancel';
+            cancelBtn.onclick = () => cancelBuild(buildId);
+            buttonContainer.appendChild(cancelBtn);
+        } else {
+            const deleteBtn = document.createElement('a');
+            deleteBtn.href = `/builds/${buildId}/delete/`;
+            deleteBtn.className = 'btn btn-outline-danger';
+            deleteBtn.innerHTML = '<i class=\"bi bi-trash\"></i> Delete';
+            buttonContainer.appendChild(deleteBtn);
+        }
+    }
+    
+    // Auto-scroll logs to bottom
+    const logsDiv = document.getElementById('build-logs');
+    
+    function scrollLogsToBottom() {
+        if (logsDiv && isAutoScrollEnabled) {
+            logsDiv.scrollTop = logsDiv.scrollHeight;
+        }
+    }
+    
+    // Detect manual scroll to disable auto-scroll
+    if (logsDiv) {
+        logsDiv.addEventListener('scroll', function() {
+            const isAtBottom = logsDiv.scrollHeight - logsDiv.scrollTop <= logsDiv.clientHeight + 50;
+            isAutoScrollEnabled = isAtBottom;
+        });
+        scrollLogsToBottom();
+    }
+    
+    // Update build details from API
+    async function updateBuildDetails() {
+        try {
+            const response = await fetch(`/api/builds/${buildId}/`, {
+                credentials: 'same-origin',
+                headers: {
+                    'X-CSRFToken': '{{ csrf_token }}'
+                }
+            });
+            
+            if (!response.ok) return;
+            
+            const build = await response.json();
+            
+            // Update build number if changed
+            if (build.build_number) {
+                const buildNumberElement = document.getElementById('build-number');
+                if (buildNumberElement) {
+                    buildNumberElement.textContent = build.build_number;
+                }
+            }
+            
+            // Update version if changed
+            if (build.version) {
+                let versionElement = document.getElementById('build-version');
+                if (versionElement) {
+                    versionElement.textContent = build.version;
+                } else {
+                    // Create version row if it doesn't exist
+                    const buildNumberRow = document.getElementById('build-number').parentElement;
+                    const versionDt = document.createElement('dt');
+                    versionDt.className = 'col-sm-3';
+                    versionDt.textContent = 'Version:';
+                    const versionDd = document.createElement('dd');
+                    versionDd.className = 'col-sm-9';
+                    versionDd.id = 'build-version';
+                    versionDd.textContent = build.version;
+                    buildNumberRow.parentElement.insertBefore(versionDt, buildNumberRow.nextSibling);
+                    buildNumberRow.parentElement.insertBefore(versionDd, versionDt.nextSibling);
+                }
+            }
+            
+            // Update status badge if changed
+            if (build.status !== buildStatus) {
+                console.log('Status changed from', buildStatus, 'to', build.status);
+                updateStatusBadge(build.status);
+                buildStatus = build.status;
+                
+                // Stop polling if build is no longer active
+                if (!['pending', 'building', 'committing', 'publishing'].includes(build.status)) {
+                    if (window.logPollInterval) {
+                        clearInterval(window.logPollInterval);
+                        console.log('Build completed, stopped polling');
+                    }
+                }
+            }
+            
+            // Update commit hash
+            if (build.commit_hash) {
+                const commitElement = document.querySelector('dd:has(+ dt:contains("Commit:"))');
+                if (commitElement) {
+                    const currentCommit = commitElement.querySelector('code')?.textContent;
+                    if (currentCommit !== build.commit_hash) {
+                        commitElement.innerHTML = `<code>${build.commit_hash}</code>`;
+                    }
+                }
+            }
+            
+            // Update dependencies
+            if (build.dependencies) {
+                updateDependencies(build.dependencies);
+            }
+            
+        } catch (error) {
+            console.error('Error updating build details:', error);
+        }
+    }
+    
+    // Update status badge
+    function updateStatusBadge(status) {
+        const badgeContainer = document.querySelector('.d-flex.gap-2.align-items-center');
+        if (!badgeContainer) return;
+        
+        const badge = badgeContainer.querySelector('.badge');
+        if (!badge) return;
+        
+        // Remove all status classes
+        badge.className = 'badge';
+        
+        // Add appropriate class and content based on status
+        let badgeHTML = '';
+        switch(status) {
+            case 'pending':
+                badge.classList.add('bg-secondary');
+                badgeHTML = 'Pending';
+                break;
+            case 'building':
+                badge.classList.add('bg-primary');
+                badgeHTML = '<span class=\"spinner-border spinner-border-sm me-1\"></span>Building';
+                break;
+            case 'built':
+                badge.classList.add('bg-success');
+                badgeHTML = 'Built';
+                break;
+            case 'committing':
+                badge.classList.add('bg-info');
+                badgeHTML = 'Committing';
+                break;
+            case 'committed':
+                badge.classList.add('bg-info');
+                badgeHTML = 'Committed';
+                break;
+            case 'publishing':
+                badge.classList.add('bg-info');
+                badgeHTML = 'Publishing';
+                break;
+            case 'published':
+                badge.classList.add('bg-success');
+                badgeHTML = 'Published';
+                break;
+            case 'failed':
+                badge.classList.add('bg-danger');
+                badgeHTML = 'Failed';
+                break;
+            case 'cancelled':
+                badge.classList.add('bg-warning');
+                badgeHTML = 'Cancelled';
+                break;
+            default:
+                badge.classList.add('bg-warning');
+                badgeHTML = status;
+        }
+        badge.innerHTML = badgeHTML;
+    }
+    
+    // Update dependencies section
+    function updateDependencies(deps) {
+        // Find or create dependencies section
+        let depsDD = document.querySelector('dt:contains("Dependencies:")');
+        if (!depsDD) return;
+        
+        depsDD = depsDD.nextElementSibling;
+        if (!depsDD) return;
+        
+        let html = '<div class="small">';
+        if (deps.sdk) {
+            html += `<div><strong>SDK:</strong> <code>${deps.sdk}</code>`;
+            if (deps.sdk_version) html += ` (${deps.sdk_version})`;
+            html += '</div>';
+        }
+        if (deps.runtime) {
+            html += `<div><strong>Runtime:</strong> <code>${deps.runtime}</code>`;
+            if (deps.runtime_version) html += ` (${deps.runtime_version})`;
+            html += '</div>';
+        }
+        if (deps.base) {
+            html += `<div><strong>Base:</strong> <code>${deps.base}</code>`;
+            if (deps.base_version) html += ` (${deps.base_version})`;
+            html += '</div>';
+        }
+        html += '</div>';
+        depsDD.innerHTML = html;
+    }
+    
+    // Fetch and update logs for active builds
+    async function updateLogs() {
+        console.log('Fetching logs for build:', buildId);
+        try {
+            const response = await fetch(`/api/builds/${buildId}/logs/`, {
+                credentials: 'same-origin',
+                headers: {
+                    'X-CSRFToken': '{{ csrf_token }}'
+                }
+            });
+            console.log('Logs API response status:', response.status);
+            
+            if (!response.ok) {
+                console.error('Logs API failed:', response.status, response.statusText);
+                return;
+            }
+            
+            const data = await response.json();
+            
+            // Handle both response formats: array (old) or object with logs key (new)
+            let logsArray, apiStatus;
+            if (Array.isArray(data)) {
+                // Old format: direct array of logs
+                logsArray = data;
+                apiStatus = null;
+            } else {
+                // New format: object with logs, status, build_id
+                logsArray = data.logs || [];
+                apiStatus = data.status;
+            }
+            
+            console.log('Logs data received:', {
+                logCount: logsArray.length,
+                status: apiStatus,
+                lastLogCount: lastLogCount,
+                isArray: Array.isArray(data)
+            });
+            
+            // Always update if log count changed (including from 0 to some)
+            if (logsArray && (logsArray.length !== lastLogCount || lastLogCount === 0)) {
+                console.log('Updating logs display');
+                lastLogCount = logsArray.length;
+                
+                // Update logs container
+                if (!logsDiv) {
+                    console.warn('Logs div not found');
+                    return;
+                }
+                
+                // Clear and rebuild logs
+                logsDiv.innerHTML = '';
+                
+                if (logsArray.length === 0) {
+                    // Show waiting message for active builds
+                    const waiting = document.createElement('div');
+                    waiting.className = 'text-muted';
+                    waiting.textContent = 'Waiting for build to start...';
+                    logsDiv.appendChild(waiting);
+                } else {
+                    logsArray.forEach(log => {
+                        const logEntry = document.createElement('div');
+                        logEntry.className = 'log-entry';
+                        
+                        let levelClass = '';
+                        if (log.level === 'error') levelClass = 'text-danger';
+                        else if (log.level === 'warning') levelClass = 'text-warning';
+                        else if (log.level === 'info') levelClass = 'text-info';
+                        
+                        // Handle timestamp format (ISO string from API vs formatted time)
+                        let timestamp = log.timestamp;
+                        if (timestamp && timestamp.includes('T')) {
+                            // Parse ISO format and extract time
+                            const date = new Date(timestamp);
+                            timestamp = date.toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+                        }
+                        
+                        logEntry.innerHTML = `
+                            <span class="text-muted">${timestamp}</span>
+                            <span class="${levelClass}">[${log.level.toUpperCase()}]</span>
+                            ${log.message}
+                        `;
+                        logsDiv.appendChild(logEntry);
+                    });
+                    
+                    scrollLogsToBottom();
+                }
+            }
+            
+            // Update build details if status might have changed
+            if (apiStatus && apiStatus !== buildStatus) {
+                updateBuildDetails();
+            }
+            
+            // Also check if logs indicate completion
+            if (logsArray && logsArray.length > 0) {
+                const lastLog = logsArray[logsArray.length - 1];
+                if (lastLog && lastLog.message && 
+                    (lastLog.message.includes('completed successfully') || 
+                     lastLog.message.includes('published successfully'))) {
+                    // Update build details to get final status
+                    setTimeout(updateBuildDetails, 1000);
+                }
+            }
+        } catch (error) {
+            console.error('Error fetching logs:', error);
+        }
+    }
+    
+    // Poll for logs if build is active
+    const activeStatuses = ['pending', 'building', 'committing', 'publishing'];
+    if (activeStatuses.includes(buildStatus)) {
+        console.log('Build is active, starting log polling');
+        // Start polling immediately, then every 2 seconds
+        updateLogs();
+        window.logPollInterval = setInterval(updateLogs, 2000);
+    } else {
+        console.log('Build is not active (status:', buildStatus, '), no polling');
+    }
+    
+    // WebSocket handler for real-time updates
+    function onWebSocketMessage(data) {
+        console.log('WebSocket message received:', data);
+        
+        if (data.type === 'build_status_update' && data.build_id == buildId) {
+            console.log('Build status update via WebSocket - updating page');
+            // Update page dynamically instead of reloading
+            updateBuildDetails();
+        }
+        
+        if (data.type === 'build_log_update' && data.build_id == buildId) {
+            console.log('Build log update via WebSocket:', data.log);
+            
+            // Add new log entry
+            if (data.log && logsDiv) {
+                lastLogCount++;
+                
+                // Remove "waiting" message if it exists
+                const waitingMsg = logsDiv.querySelector('.text-muted');
+                if (waitingMsg && waitingMsg.textContent.includes('Waiting')) {
+                    logsDiv.innerHTML = '';
+                }
+                
+                const logEntry = document.createElement('div');
+                logEntry.className = 'log-entry';
+                
+                let levelClass = '';
+                if (data.log.level === 'error') levelClass = 'text-danger';
+                else if (data.log.level === 'warning') levelClass = 'text-warning';
+                else if (data.log.level === 'info') levelClass = 'text-info';
+                
+                logEntry.innerHTML = `
+                    <span class="text-muted">${data.log.timestamp}</span>
+                    <span class="${levelClass}">[${data.log.level.toUpperCase()}]</span>
+                    ${data.log.message}
+                `;
+                logsDiv.appendChild(logEntry);
+                scrollLogsToBottom();
+            }
+        }
+    }
+</script>
+{% endblock %}

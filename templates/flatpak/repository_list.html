@@ -1,0 +1,193 @@
+{% extends 'base.html' %}
+
+{% block title %}Repositories - Flat Manager{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>Repositories</h2>
+    <a href="{% url 'flatpak:repo_create' %}" class="btn btn-primary">
+        <i class="bi bi-plus-circle"></i> New Repository
+    </a>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        {% if repositories %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Collection ID</th>
+                        <th>Subsets</th>
+                        <th>Builds</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for repo in repositories %}
+                    <tr data-repo-id="{{ repo.pk }}">
+                        <td>
+                            <a href="{% url 'flatpak:repo_detail' repo.pk %}">
+                                <i class="bi bi-archive"></i> {{ repo.name }}
+                            </a>
+                            <br><small class="text-muted">{{ repo.repo_path }}</small>
+                        </td>
+                        <td><code>{{ repo.collection_id|default:"—" }}</code></td>
+                        <td class="repo-subsets">{{ repo.subsets.count }}</td>
+                        <td class="repo-builds">{{ repo.builds.count }}</td>
+                        <td>
+                            {% if repo.is_active %}
+                            <span class="badge bg-success">Active</span>
+                            {% else %}
+                            <span class="badge bg-secondary">Inactive</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ repo.created_at|date:"M d, Y" }}</td>
+                        <td>
+                            <div class="btn-group" role="group">
+                                <a href="{% url 'flatpak:repo_detail' repo.pk %}" class="btn btn-sm btn-outline-primary" title="View">
+                                    <i class="bi bi-eye"></i>
+                                </a>
+                                <a href="{% url 'flatpak:repo_edit' repo.pk %}" class="btn btn-sm btn-outline-secondary" title="Edit">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                                <a href="{% url 'flatpak:repo_delete' repo.pk %}" class="btn btn-sm btn-outline-danger" title="Delete">
+                                    <i class="bi bi-trash"></i>
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted">No repositories yet. Create your first repository to get started.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // WebSocket handler for real-time repository updates
+    function onWebSocketMessage(data) {
+        console.log('Repository list received:', data);
+        
+        if (data.type === 'repository_created') {
+            // Fetch and add new repository row dynamically
+            fetchAndAddRepository(data.repository_id);
+        } else if (data.type === 'repository_updated') {
+            // Update existing repository row
+            fetchAndUpdateRepository(data.repository_id);
+        } else if (data.type === 'build_status_update') {
+            // Update build count when build status changes
+            const repoId = data.repository_id;
+            if (repoId) {
+                const row = document.querySelector(`tr[data-repo-id="${repoId}"]`);
+                if (row) {
+                    const buildsCell = row.querySelector('.repo-builds');
+                    if (buildsCell && data.status === 'published') {
+                        // Increment build count (simplified - could fetch actual count)
+                        row.style.animation = 'pulse 0.5s';
+                        setTimeout(() => { row.style.animation = ''; }, 500);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Fetch and add new repository row
+    async function fetchAndAddRepository(repoId) {
+        try {
+            const response = await fetch(`/api/repositories/${repoId}/`);
+            if (!response.ok) return;
+            const repo = await response.json();
+            
+            const tbody = document.querySelector('table tbody');
+            if (!tbody) return;
+            
+            const row = createRepositoryRow(repo);
+            tbody.insertBefore(row, tbody.firstChild);
+            row.style.animation = 'slideIn 0.5s';
+        } catch (error) {
+            console.error('Error fetching repository:', error);
+        }
+    }
+    
+    // Fetch and update existing repository row
+    async function fetchAndUpdateRepository(repoId) {
+        try {
+            const response = await fetch(`/api/repositories/${repoId}/`);
+            if (!response.ok) return;
+            const repo = await response.json();
+            
+            const row = document.querySelector(`tr[data-repo-id="${repoId}"]`);
+            if (row) {
+                const newRow = createRepositoryRow(repo);
+                row.replaceWith(newRow);
+                newRow.style.animation = 'pulse 0.5s';
+            }
+        } catch (error) {
+            console.error('Error updating repository:', error);
+        }
+    }
+    
+    // Create repository table row
+    function createRepositoryRow(repo) {
+        const row = document.createElement('tr');
+        row.setAttribute('data-repo-id', repo.id);
+        
+        const statusBadge = repo.is_active 
+            ? '<span class="badge bg-success">Active</span>'
+            : '<span class="badge bg-secondary">Inactive</span>';
+        
+        row.innerHTML = `
+            <td>
+                <a href="/repositories/${repo.id}/">
+                    <i class="bi bi-archive"></i> ${repo.name}
+                </a>
+                <br><small class="text-muted">${repo.repo_path || ''}</small>
+            </td>
+            <td><code>${repo.collection_id || '—'}</code></td>
+            <td class="repo-subsets">${repo.subsets ? repo.subsets.length : 0}</td>
+            <td class="repo-builds">${repo.builds ? repo.builds.length : 0}</td>
+            <td>${statusBadge}</td>
+            <td>${new Date(repo.created_at).toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'})}</td>
+            <td>
+                <div class="btn-group" role="group">
+                    <a href="/repositories/${repo.id}/" class="btn btn-sm btn-outline-primary" title="View">
+                        <i class="bi bi-eye"></i>
+                    </a>
+                    <a href="/repositories/${repo.id}/edit/" class="btn btn-sm btn-outline-secondary" title="Edit">
+                        <i class="bi bi-pencil"></i>
+                    </a>
+                    <a href="/repositories/${repo.id}/delete/" class="btn btn-sm btn-outline-danger" title="Delete">
+                        <i class="bi bi-trash"></i>
+                    </a>
+                </div>
+            </td>
+        `;
+        return row;
+    }
+</script>
+<style>
+    @keyframes pulse {
+        0%, 100% { background-color: transparent; }
+        50% { background-color: rgba(13, 110, 253, 0.1); }
+    }
+    @keyframes slideIn {
+        from {
+            opacity: 0;
+            transform: translateY(-10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+</style>
+{% endblock %}

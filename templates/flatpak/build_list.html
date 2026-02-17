@@ -1,0 +1,254 @@
+{% extends 'base.html' %}
+
+{% block title %}Builds - Flat Manager{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item active">Builds</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-hammer"></i> Builds</h2>
+    <a href="{% url 'flatpak:build_create' %}" class="btn btn-primary">
+        <i class="bi bi-plus-circle"></i> New Build
+    </a>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        {% if builds %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Build ID</th>
+                        <th>Attempt</th>
+                        <th>App ID</th>
+                        <th>Repository</th>
+                        <th>Status</th>
+                        <th>Source</th>
+                        <th>Branch</th>
+                        <th>Arch</th>
+                        <th>Created</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for build in builds %}
+                    <tr data-build-id="{{ build.pk }}">
+                        <td>
+                            <a href="{% url 'flatpak:build_detail' build.pk %}">
+                                <code>{{ build.build_id }}</code>
+                            </a>
+                        </td>
+                        <td><span class="badge bg-light text-dark">#{{ build.build_number }}</span></td>
+                        <td>{{ build.app_id }}</td>
+                        <td>
+                            <a href="{% url 'flatpak:repo_detail' build.repository.pk %}">
+                                {{ build.repository.name }}
+                            </a>
+                        </td>
+                        <td class="build-status">
+                            {% if build.status == 'pending' %}
+                            <span class="badge bg-secondary">Pending</span>
+                            {% elif build.status == 'building' %}
+                            <span class="badge bg-primary">Building</span>
+                            {% elif build.status == 'built' %}
+                            <span class="badge bg-info">Built</span>
+                            {% elif build.status == 'committing' %}
+                            <span class="badge bg-info">Committing</span>
+                            {% elif build.status == 'committed' %}
+                            <span class="badge bg-info">Committed</span>
+                            {% elif build.status == 'publishing' %}
+                            <span class="badge bg-info">Publishing</span>
+                            {% elif build.status == 'published' %}
+                            <span class="badge bg-success">Published</span>
+                            {% elif build.status == 'failed' %}
+                            <span class="badge bg-danger">Failed</span>
+                            {% elif build.status == 'cancelled' %}
+                            <span class="badge bg-warning">Cancelled</span>
+                            {% else %}
+                            <span class="badge bg-secondary">{{ build.status }}</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if build.git_repo_url %}
+                            <i class="bi bi-git"></i> Git
+                            {% else %}
+                            <i class="bi bi-upload"></i> Upload
+                            {% endif %}
+                        </td>
+                        <td><code>{{ build.branch }}</code></td>
+                        <td>{{ build.arch }}</td>
+                        <td>{{ build.created_at|date:"M d, H:i" }}</td>
+                        <td>
+                            <a href="{% url 'flatpak:build_detail' build.pk %}" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-eye"></i>
+                            </a>
+                            {% if build.status not in 'building,committing,publishing' %}
+                            <a href="{% url 'flatpak:build_edit' build.pk %}" class="btn btn-sm btn-outline-secondary">
+                                <i class="bi bi-pencil"></i>
+                            </a>
+                            {% endif %}
+                            {% if build.status not in 'pending,building,committing,publishing' %}
+                            <form method="post" action="{% url 'flatpak:build_retry' build.pk %}" style="display:inline;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-sm btn-outline-info" title="Retry build">
+                                    <i class="bi bi-arrow-clockwise"></i>
+                                </button>
+                            </form>
+                            {% endif %}
+                            {% if build.status in 'pending,building,committing,publishing' %}
+                            <form method="post" action="{% url 'flatpak:build_delete' build.pk %}" style="display:inline;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-sm btn-outline-warning" onclick="return confirm('Cancel this build?');">
+                                    <i class="bi bi-x-circle"></i>
+                                </button>
+                            </form>
+                            {% else %}
+                            <a href="{% url 'flatpak:build_delete' build.pk %}" class="btn btn-sm btn-outline-danger">
+                                <i class="bi bi-trash"></i>
+                            </a>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted">No builds yet.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // WebSocket handler for real-time build updates
+    function onWebSocketMessage(data) {
+        console.log('Build list received:', data);
+        
+        if (data.type === 'build_status_update') {
+            const buildId = data.build_id;
+            const status = data.status;
+            const row = document.querySelector(`tr[data-build-id="${buildId}"]`);
+            
+            if (row) {
+                const statusCell = row.querySelector('.build-status');
+                if (statusCell) {
+                    // Update status badge
+                    const statusBadges = {
+                        'pending': '<span class="badge bg-secondary">Pending</span>',
+                        'building': '<span class="badge bg-primary">Building</span>',
+                        'built': '<span class="badge bg-info">Built</span>',
+                        'committing': '<span class="badge bg-info">Committing</span>',
+                        'committed': '<span class="badge bg-info">Committed</span>',
+                        'publishing': '<span class="badge bg-info">Publishing</span>',
+                        'published': '<span class="badge bg-success">Published</span>',
+                        'failed': '<span class="badge bg-danger">Failed</span>',
+                        'cancelled': '<span class="badge bg-warning">Cancelled</span>'
+                    };
+                    
+                    statusCell.innerHTML = statusBadges[status] || `<span class="badge bg-secondary">${status}</span>`;
+                    
+                    // Add pulse animation
+                    row.style.animation = 'pulse 0.5s';
+                    setTimeout(() => { row.style.animation = ''; }, 500);
+                }
+            }
+        } else if (data.type === 'build_created') {
+            // Fetch and add new build row dynamically
+            fetchAndAddBuild(data.build_id);
+        }
+    }
+    
+    // Fetch and add new build row
+    async function fetchAndAddBuild(buildId) {
+        try {
+            const response = await fetch(`/api/builds/${buildId}/`);
+            if (!response.ok) return;
+            const build = await response.json();
+            
+            const tbody = document.querySelector('table tbody');
+            if (!tbody) return;
+            
+            const row = createBuildRow(build);
+            tbody.insertBefore(row, tbody.firstChild);
+            row.style.animation = 'slideIn 0.5s';
+        } catch (error) {
+            console.error('Error fetching build:', error);
+        }
+    }
+    
+    // Create build table row
+    function createBuildRow(build) {
+        const row = document.createElement('tr');
+        row.setAttribute('data-build-id', build.id);
+        
+        const statusBadges = {
+            'pending': '<span class="badge bg-secondary">Pending</span>',
+            'building': '<span class="badge bg-primary">Building</span>',
+            'built': '<span class="badge bg-info">Built</span>',
+            'committing': '<span class="badge bg-info">Committing</span>',
+            'committed': '<span class="badge bg-info">Committed</span>',
+            'publishing': '<span class="badge bg-info">Publishing</span>',
+            'published': '<span class="badge bg-success">Published</span>',
+            'failed': '<span class="badge bg-danger">Failed</span>',
+            'cancelled': '<span class="badge bg-warning">Cancelled</span>'
+        };
+        
+        const sourceIcon = build.git_repo_url 
+            ? '<i class="bi bi-git"></i> Git'
+            : '<i class="bi bi-upload"></i> Upload';
+        
+        const repoLink = build.repository 
+            ? `<a href="/repositories/${build.repository.id}/">${build.repository.name}</a>`
+            : 'N/A';
+        
+        const createdDate = new Date(build.created_at).toLocaleDateString('en-US', {
+            month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+        });
+        
+        row.innerHTML = `
+            <td>
+                <a href="/builds/${build.id}/">
+                    <code>${build.build_id}</code>
+                </a>
+            </td>
+            <td><span class="badge bg-light text-dark">#${build.build_number || 1}</span></td>
+            <td>${build.app_id}</td>
+            <td>${repoLink}</td>
+            <td class="build-status">${statusBadges[build.status] || `<span class="badge bg-secondary">${build.status}</span>`}</td>
+            <td>${sourceIcon}</td>
+            <td><code>${build.branch}</code></td>
+            <td>${build.arch}</td>
+            <td>${createdDate}</td>
+            <td>
+                <a href="/builds/${build.id}/" class="btn btn-sm btn-outline-primary">
+                    <i class="bi bi-eye"></i>
+                </a>
+            </td>
+        `;
+        return row;
+    }
+</script>
+<style>
+    @keyframes pulse {
+        0%, 100% { background-color: transparent; }
+        50% { background-color: rgba(13, 110, 253, 0.1); }
+    }
+    @keyframes slideIn {
+        from {
+            opacity: 0;
+            transform: translateY(-10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+</style>
+{% endblock %}

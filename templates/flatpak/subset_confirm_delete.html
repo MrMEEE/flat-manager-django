@@ -1,0 +1,56 @@
+{% extends 'base.html' %}
+
+{% block title %}Delete Subset - Flat Manager{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'flatpak:repo_list' %}">Repositories</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'flatpak:repo_detail' repository.pk %}">{{ repository.name }}</a></li>
+        <li class="breadcrumb-item active">Delete Subset</li>
+    </ol>
+</nav>
+
+<h2 class="mb-4">Delete Subset</h2>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card border-danger">
+            <div class="card-header bg-danger text-white">
+                <h5 class="mb-0"><i class="bi bi-exclamation-triangle"></i> Confirm Deletion</h5>
+            </div>
+            <div class="card-body">
+                <p>Are you sure you want to delete the subset <strong>{{ object.name }}</strong>?</p>
+                
+                <dl class="row">
+                    <dt class="col-sm-3">Subset Name:</dt>
+                    <dd class="col-sm-9">{{ object.name }}</dd>
+                    
+                    <dt class="col-sm-3">Collection ID:</dt>
+                    <dd class="col-sm-9"><code>{{ object.collection_id }}</code></dd>
+                    
+                    <dt class="col-sm-3">Base URL:</dt>
+                    <dd class="col-sm-9">{{ object.base_url|default:"—" }}</dd>
+                    
+                    <dt class="col-sm-3">Repository:</dt>
+                    <dd class="col-sm-9">{{ repository.name }}</dd>
+                </dl>
+                
+                <div class="alert alert-warning" role="alert">
+                    <i class="bi bi-exclamation-triangle"></i> This action cannot be undone.
+                </div>
+                
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-danger">
+                            <i class="bi bi-trash"></i> Delete Subset
+                        </button>
+                        <a href="{% url 'flatpak:repo_detail' repository.pk %}" class="btn btn-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

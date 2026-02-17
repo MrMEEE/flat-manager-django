@@ -1,0 +1,166 @@
+{% extends 'base.html' %}
+
+{% block title %}{% if is_edit %}Edit{% else %}Create{% endif %} Repository - Flat Manager{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'flatpak:repo_list' %}">Repositories</a></li>
+        {% if is_edit %}
+        <li class="breadcrumb-item"><a href="{% url 'flatpak:repo_detail' form.instance.pk %}">{{ form.instance.name }}</a></li>
+        <li class="breadcrumb-item active">Edit</li>
+        {% else %}
+        <li class="breadcrumb-item active">Create</li>
+        {% endif %}
+    </ol>
+</nav>
+
+<h2 class="mb-4">{% if is_edit %}Edit{% else %}Create{% endif %} Repository</h2>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+                    
+                    <div class="mb-3">
+                        <label for="id_name" class="form-label">Name *</label>
+                        <input type="text" class="form-control" id="id_name" name="name" 
+                               value="{{ form.instance.name }}" required>
+                        <div class="form-text">Unique repository name</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="id_collection_id" class="form-label">Collection ID *</label>
+                        <input type="text" class="form-control" id="id_collection_id" name="collection_id" 
+                               value="{{ form.instance.collection_id }}" required
+                               placeholder="org.example.Repo">
+                        <div class="form-text">Collection ID for the repository (reverse DNS format)</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="id_description" class="form-label">Description</label>
+                        <textarea class="form-control" id="id_description" name="description" rows="3">{{ form.instance.description }}</textarea>
+                        <div class="form-text">Optional description of the repository</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="id_gpg_key" class="form-label">GPG Key (Optional)</label>
+                        <select class="form-select" id="id_gpg_key" name="gpg_key">
+                            <option value="">-- No GPG Key --</option>
+                            {% for key in gpg_keys %}
+                            <option value="{{ key.id }}" {% if form.instance.gpg_key_id == key.id %}selected{% endif %}>{{ key.name }} ({{ key.key_id }})</option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">
+                            Select a GPG key to sign this repository. 
+                            <a href="{% url 'flatpak:gpgkey_generate' %}" target="_blank">Generate a new GPG key</a>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="id_parent_repos" class="form-label">Parent Repositories</label>
+                        {{ form.parent_repos }}
+                        <div class="form-text">
+                            Select parent repositories in the lifecycle (e.g., stable → beta → development)
+                        </div>
+                    </div>
+                    
+                    <hr class="my-4">
+                    
+                    {% if is_edit and existing_subsets %}
+                    <h5>Existing Subsets</h5>
+                    <div class="table-responsive mb-3">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Collection ID</th>
+                                    <th>Base URL</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for subset in existing_subsets %}
+                                <tr>
+                                    <td>{{ subset.name }}</td>
+                                    <td><code>{{ subset.collection_id }}</code></td>
+                                    <td>{{ subset.base_url|default:"—" }}</td>
+                                    <td>
+                                        <a href="{% url 'flatpak:subset_edit' subset.pk %}" class="btn btn-sm btn-outline-primary">
+                                            <i class="bi bi-pencil"></i>
+                                        </a>
+                                        <a href="{% url 'flatpak:subset_delete' subset.pk %}" class="btn btn-sm btn-outline-danger">
+                                            <i class="bi bi-trash"></i>
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% endif %}
+                    
+                    <h5>{% if is_edit %}Add New {% endif %}Subsets</h5>
+                    <p class="text-muted">Add {% if is_edit %}additional {% endif %}subsets for partial repository mirrors.</p>
+                    
+                    <div id="subsets-container">
+                        <!-- Subsets will be added here dynamically -->
+                    </div>
+                    
+                    <button type="button" class="btn btn-sm btn-outline-secondary mb-3" id="add-subset-btn">
+                        <i class="bi bi-plus-circle"></i> Add Subset
+                    </button>
+                    
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-save"></i> {% if is_edit %}Update{% else %}Create{% endif %} Repository
+                        </button>
+                        <a href="{% if is_edit %}{% url 'flatpak:repo_detail' form.instance.pk %}{% else %}{% url 'flatpak:repo_list' %}{% endif %}" class="btn btn-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let subsetCount = 0;
+
+document.getElementById('add-subset-btn').addEventListener('click', function() {
+    const container = document.getElementById('subsets-container');
+    const subsetDiv = document.createElement('div');
+    subsetDiv.className = 'card mb-3';
+    subsetDiv.innerHTML = `
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="card-title mb-0">Subset #${subsetCount + 1}</h6>
+                <button type="button" class="btn btn-sm btn-danger remove-subset-btn">Remove</button>
+            </div>
+            <div class="row">
+                <div class="col-md-4">
+                    <label class="form-label">Name *</label>
+                    <input type="text" class="form-control form-control-sm" name="subset_name_${subsetCount}" required>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Collection ID *</label>
+                    <input type="text" class="form-control form-control-sm" name="subset_collection_id_${subsetCount}" required>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Base URL</label>
+                    <input type="url" class="form-control form-control-sm" name="subset_base_url_${subsetCount}">
+                </div>
+            </div>
+        </div>
+    `;
+    
+    subsetDiv.querySelector('.remove-subset-btn').addEventListener('click', function() {
+        subsetDiv.remove();
+    });
+    
+    container.appendChild(subsetDiv);
+    subsetCount++;
+});
+</script>
+{% endblock %}

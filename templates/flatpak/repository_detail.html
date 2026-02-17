@@ -1,0 +1,219 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ repository.name }} - Flat Manager{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'flatpak:repo_list' %}">Repositories</a></li>
+        <li class="breadcrumb-item active">{{ repository.name }}</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-archive"></i> {{ repository.name }}</h2>
+    <div class="d-flex gap-2 align-items-center">
+        <a href="{% url 'flatpak:repo_edit' repository.pk %}" class="btn btn-primary">
+            <i class="bi bi-pencil"></i> Edit
+        </a>
+        <a href="{% url 'flatpak:repo_delete' repository.pk %}" class="btn btn-danger">
+            <i class="bi bi-trash"></i> Delete
+        </a>
+        {% if repository.is_active %}
+        <span class="badge bg-success">Active</span>
+        {% else %}
+        <span class="badge bg-secondary">Inactive</span>
+        {% endif %}
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Repository Details</h5>
+            </div>
+            <div class="card-body">
+                <dl class="row">
+                    <dt class="col-sm-3">Description:</dt>
+                    <dd class="col-sm-9">{{ repository.description|default:"No description" }}</dd>
+                    
+                    <dt class="col-sm-3">Collection ID:</dt>
+                    <dd class="col-sm-9"><code>{{ repository.collection_id|default:"—" }}</code></dd>
+                    
+                    <dt class="col-sm-3">Repository Path:</dt>
+                    <dd class="col-sm-9">
+                        <code>{{ repository.repo_path }}</code>
+                        {% if repository.gpg_key %}
+                        <br><small class="text-muted">Public key: <code>{{ repository.get_public_key_path }}</code></small>
+                        {% endif %}
+                    </dd>
+                    
+                    <dt class="col-sm-3">GPG Key:</dt>
+                    <dd class="col-sm-9">
+                        {% if repository.gpg_key %}
+                        <a href="{% url 'flatpak:gpgkey_detail' repository.gpg_key.pk %}">
+                            <i class="bi bi-key-fill"></i> {{ repository.gpg_key.name }} ({{ repository.gpg_key.key_id }})
+                        </a>
+                        {% else %}
+                        <span class="text-muted">No GPG key assigned</span>
+                        {% endif %}
+                    </dd>
+                    
+                    <dt class="col-sm-3">Parent Repositories:</dt>
+                    <dd class="col-sm-9">
+                        {% if repository.parent_repos.all %}
+                        <ul class="list-unstyled mb-0">
+                            {% for parent in repository.parent_repos.all %}
+                            <li>
+                                <a href="{% url 'flatpak:repo_detail' parent.pk %}">
+                                    <i class="bi bi-arrow-up-right"></i> {{ parent.name }}
+                                </a>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                        {% else %}
+                        <span class="text-muted">No parent repositories</span>
+                        {% endif %}
+                    </dd>
+                    
+                    <dt class="col-sm-3">Child Repositories:</dt>
+                    <dd class="col-sm-9">
+                        {% if repository.child_repos.all %}
+                        <ul class="list-unstyled mb-0">
+                            {% for child in repository.child_repos.all %}
+                            <li>
+                                <a href="{% url 'flatpak:repo_detail' child.pk %}">
+                                    <i class="bi bi-arrow-down-right"></i> {{ child.name }}
+                                </a>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                        {% else %}
+                        <span class="text-muted">No child repositories</span>
+                        {% endif %}
+                    </dd>
+                    
+                    <dt class="col-sm-3">Created By:</dt>
+                    <dd class="col-sm-9">{{ repository.created_by.username }}</dd>
+                    
+                    <dt class="col-sm-3">Created:</dt>
+                    <dd class="col-sm-9">{{ repository.created_at|date:"M d, Y H:i" }}</dd>
+                    
+                    <dt class="col-sm-3">Last Updated:</dt>
+                    <dd class="col-sm-9">{{ repository.updated_at|date:"M d, Y H:i" }}</dd>
+                </dl>
+            </div>
+        </div>
+        
+        {% if repository.subsets.all %}
+        <div class="card mt-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Repository Subsets</h5>
+                <a href="{% url 'flatpak:subset_create' repository.pk %}" class="btn btn-sm btn-primary">
+                    <i class="bi bi-plus-circle"></i> Add Subset
+                </a>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Collection ID</th>
+                                <th>Base URL</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for subset in repository.subsets.all %}
+                            <tr>
+                                <td>{{ subset.name }}</td>
+                                <td><code>{{ subset.collection_id }}</code></td>
+                                <td>{{ subset.base_url|default:"—" }}</td>
+                                <td>
+                                    <a href="{% url 'flatpak:subset_edit' subset.pk %}" class="btn btn-sm btn-outline-primary">
+                                        <i class="bi bi-pencil"></i>
+                                    </a>
+                                    <a href="{% url 'flatpak:subset_delete' subset.pk %}" class="btn btn-sm btn-outline-danger">
+                                        <i class="bi bi-trash"></i>
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="card mt-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Repository Subsets</h5>
+                <a href="{% url 'flatpak:subset_create' repository.pk %}" class="btn btn-sm btn-primary">
+                    <i class="bi bi-plus-circle"></i> Add Subset
+                </a>
+            </div>
+            <div class="card-body">
+                <p class="text-muted">No subsets configured. Subsets allow you to create partial repository mirrors with different collection IDs.</p>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Statistics</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>Total Builds:</strong> {{ repository.builds.count }}</p>
+                <p><strong>Active Builds:</strong> {{ repository.builds.filter|length }}</p>
+                <p><strong>Tokens:</strong> {{ repository.tokens.count }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0">Recent Builds</h5>
+    </div>
+    <div class="card-body">
+        {% if repository.builds.all %}
+        <div class="table-responsive">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>Build ID</th>
+                        <th>App ID</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for build in repository.builds.all|slice:":10" %}
+                    <tr>
+                        <td><code>{{ build.build_id }}</code></td>
+                        <td>{{ build.app_id }}</td>
+                        <td>
+                            <span class="badge bg-{{ build.status }}">{{ build.get_status_display }}</span>
+                        </td>
+                        <td>{{ build.created_at|date:"M d, H:i" }}</td>
+                        <td>
+                            <a href="{% url 'flatpak:build_detail' build.pk %}" class="btn btn-sm btn-outline-primary">
+                                View
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted">No builds yet</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

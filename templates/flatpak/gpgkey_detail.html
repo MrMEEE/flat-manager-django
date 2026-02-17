@@ -1,0 +1,118 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ gpg_key.name }} - GPG Keys{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'flatpak:gpgkey_list' %}">GPG Keys</a></li>
+        <li class="breadcrumb-item active">{{ gpg_key.name }}</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-key-fill"></i> {{ gpg_key.name }}</h2>
+    <div>
+        {% if gpg_key.is_active %}
+        <span class="badge bg-success">Active</span>
+        {% else %}
+        <span class="badge bg-secondary">Inactive</span>
+        {% endif %}
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-8">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">Key Details</h5>
+            </div>
+            <div class="card-body">
+                <dl class="row">
+                    <dt class="col-sm-3">Name:</dt>
+                    <dd class="col-sm-9">{{ gpg_key.name }}</dd>
+                    
+                    <dt class="col-sm-3">Email:</dt>
+                    <dd class="col-sm-9">{{ gpg_key.email }}</dd>
+                    
+                    <dt class="col-sm-3">Key ID:</dt>
+                    <dd class="col-sm-9"><code>{{ gpg_key.key_id }}</code></dd>
+                    
+                    <dt class="col-sm-3">Fingerprint:</dt>
+                    <dd class="col-sm-9"><code>{{ gpg_key.fingerprint }}</code></dd>
+                    
+                    <dt class="col-sm-3">Passphrase Hint:</dt>
+                    <dd class="col-sm-9">{{ gpg_key.passphrase_hint|default:"None" }}</dd>
+                    
+                    <dt class="col-sm-3">Created By:</dt>
+                    <dd class="col-sm-9">{{ gpg_key.created_by.username }}</dd>
+                    
+                    <dt class="col-sm-3">Created:</dt>
+                    <dd class="col-sm-9">{{ gpg_key.created_at|date:"M d, Y H:i:s" }}</dd>
+                    
+                    <dt class="col-sm-3">Last Updated:</dt>
+                    <dd class="col-sm-9">{{ gpg_key.updated_at|date:"M d, Y H:i:s" }}</dd>
+                </dl>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-shield-check"></i> Public Key</h5>
+            </div>
+            <div class="card-body">
+                <pre style="background: #f5f5f5; padding: 1rem; border-radius: 4px; max-height: 300px; overflow-y: auto; font-size: 0.85rem;"><code>{{ gpg_key.public_key }}</code></pre>
+                <a href="{% url 'flatpak:gpgkey_download' gpg_key.pk %}" class="btn btn-success">
+                    <i class="bi bi-download"></i> Download Public Key
+                </a>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">Actions</h5>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <a href="{% url 'flatpak:gpgkey_download' gpg_key.pk %}" class="btn btn-success">
+                        <i class="bi bi-download"></i> Download Public Key
+                    </a>
+                    <a href="{% url 'flatpak:gpgkey_list' %}" class="btn btn-outline-secondary">
+                        <i class="bi bi-arrow-left"></i> Back to List
+                    </a>
+                    <a href="{% url 'flatpak:gpgkey_delete' gpg_key.pk %}" class="btn btn-danger">
+                        <i class="bi bi-trash"></i> Delete Key
+                    </a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Used By Repositories</h5>
+            </div>
+            <div class="card-body">
+                {% if gpg_key.repositories.all %}
+                <ul class="list-unstyled">
+                    {% for repo in gpg_key.repositories.all %}
+                    <li class="mb-2">
+                        <a href="{% url 'flatpak:repo_detail' repo.pk %}">
+                            <i class="bi bi-archive"></i> {{ repo.name }}
+                        </a>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="text-muted mb-0">Not assigned to any repositories yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="alert alert-warning">
+    <i class="bi bi-exclamation-triangle"></i> <strong>Security Note:</strong> The private key is stored encrypted and is never displayed or downloadable through the web interface.
+</div>
+{% endblock %}

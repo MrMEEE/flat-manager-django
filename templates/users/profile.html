@@ -1,0 +1,81 @@
+{% extends 'base.html' %}
+
+{% block title %}Profile - Flat Manager{% endblock %}
+
+{% block content %}
+<h2 class="mb-4">Profile</h2>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Username</label>
+                        <input type="text" class="form-control" value="{{ user.username }}" disabled>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Email</label>
+                        <input type="email" class="form-control" value="{{ user.email }}" disabled>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="bio" class="form-label">Bio</label>
+                        <textarea class="form-control" id="bio" name="bio" rows="3">{{ profile.bio }}</textarea>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="phone" class="form-label">Phone</label>
+                        <input type="text" class="form-control" id="phone" name="phone" value="{{ profile.phone }}">
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="organization" class="form-label">Organization</label>
+                        <input type="text" class="form-control" id="organization" name="organization" value="{{ profile.organization }}">
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-save"></i> Save Changes
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Account Info</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>Joined:</strong> {{ user.created_at|date:"M d, Y" }}</p>
+                <p><strong>Status:</strong> 
+                    {% if user.is_active %}
+                    <span class="badge bg-success">Active</span>
+                    {% else %}
+                    <span class="badge bg-secondary">Inactive</span>
+                    {% endif %}
+                </p>
+                <p><strong>Permissions:</strong></p>
+                <ul class="list-unstyled">
+                    {% if user.is_superuser %}
+                    <li><i class="bi bi-check-circle text-success"></i> Superuser</li>
+                    {% endif %}
+                    {% if user.is_staff %}
+                    <li><i class="bi bi-check-circle text-success"></i> Staff</li>
+                    {% endif %}
+                    {% if user.is_repo_admin %}
+                    <li><i class="bi bi-check-circle text-success"></i> Repo Admin</li>
+                    {% endif %}
+                    {% if user.is_build_admin %}
+                    <li><i class="bi bi-check-circle text-success"></i> Build Admin</li>
+                    {% endif %}
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

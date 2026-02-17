@@ -1,0 +1,79 @@
+{% extends 'base.html' %}
+
+{% block title %}Dashboard - Flat Manager{% endblock %}
+
+{% block content %}
+<h2 class="mb-4">Dashboard</h2>
+
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card text-white bg-primary">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-archive"></i> Repositories</h5>
+                <p class="card-text display-6">0</p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3">
+        <div class="card text-white bg-success">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-hammer"></i> Active Builds</h5>
+                <p class="card-text display-6">0</p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3">
+        <div class="card text-white bg-info">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-check-circle"></i> Completed</h5>
+                <p class="card-text display-6">0</p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3">
+        <div class="card text-white bg-danger">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-x-circle"></i> Failed</h5>
+                <p class="card-text display-6">0</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Recent Builds</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted">No recent builds</p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Quick Actions</h5>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <a href="{% url 'flatpak:repo_create' %}" class="btn btn-primary">
+                        <i class="bi bi-plus-circle"></i> New Repository
+                    </a>
+                    <a href="{% url 'flatpak:repo_list' %}" class="btn btn-outline-secondary">
+                        <i class="bi bi-archive"></i> View Repositories
+                    </a>
+                    <a href="{% url 'flatpak:build_list' %}" class="btn btn-outline-secondary">
+                        <i class="bi bi-list"></i> View All Builds
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

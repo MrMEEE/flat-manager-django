@@ -1,0 +1,58 @@
+# Core Django dependencies
+Django>=5.0,<5.1
+django-environ>=0.11.0
+
+# Database drivers
+mysqlclient>=2.2.0  # For MariaDB/MySQL
+
+# REST Framework
+djangorestframework>=3.14.0
+django-filter>=23.5
+
+# Celery for background tasks
+celery>=5.3.0
+django-celery-beat>=2.5.0
+django-celery-results>=2.5.0
+
+# Redis/Valkey (Celery broker and cache)
+redis>=5.0.0
+hiredis>=2.3.0  # C parser for performance
+
+# Django Channels for WebSockets
+channels>=4.0.0
+channels-redis>=4.1.0
+daphne>=4.0.0
+
+# CORS headers
+django-cors-headers>=4.3.0
+
+# Security
+django-ratelimit>=4.1.0
+
+# Utilities
+python-dateutil>=2.8.2
+pytz>=2023.3
+Pillow>=10.0.0  # For ImageField support
+python-gnupg>=0.5.0  # For GPG key generation
+
+# Development dependencies
+python-dotenv>=1.0.0
+
+# Testing (optional, for later)
+pytest>=7.4.0
+pytest-django>=4.5.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+factory-boy>=3.3.0
+
+# Code quality (optional)
+flake8>=6.1.0
+black>=23.12.0
+isort>=5.13.0
+
+# Production server
+gunicorn>=21.2.0
+uvicorn[standard]>=0.25.0
+
+# Flatpak related (if needed)
+# PyGObject>=3.44.0  # For OSTree/Flatpak bindings if needed
