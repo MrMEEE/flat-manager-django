@@ -1,0 +1,282 @@
+{% extends 'base.html' %}
+
+{% block title %}Published Builds{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-arrow-up-right-circle"></i> Published Builds</h2>
+</div>
+
+<div class="card mb-3">
+    <div class="card-body">
+        <form id="filter-form" method="get" class="row g-2 align-items-end">
+            <div class="col-sm-4">
+                <label class="form-label small text-muted mb-1">Search package</label>
+                <input type="text" name="q" value="{{ filter_q }}" class="form-control form-control-sm"
+                       placeholder="Package name or ID…" autocomplete="off">
+            </div>
+            <div class="col-12"><hr class="my-1"><small class="text-muted">Published Builds filters</small></div>
+            <div class="col-sm-3">
+                <label class="form-label small text-muted mb-1">Source repository</label>
+                <select name="pub_repo" class="form-select form-select-sm">
+                    <option value="">All repos</option>
+                    {% for repo in repositories %}
+                    <option value="{{ repo.pk }}" {% if filter_pub_repo == repo.pk|stringformat:"s" %}selected{% endif %}>{{ repo.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-12"><hr class="my-1"><small class="text-muted">Promotions filters</small></div>
+            <div class="col-sm-3">
+                <label class="form-label small text-muted mb-1">Promotion status</label>
+                <select name="status" class="form-select form-select-sm">
+                    <option value="">All statuses</option>
+                    {% for val, label in promo_status_choices %}
+                    <option value="{{ val }}" {% if filter_status == val %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-sm-3">
+                <label class="form-label small text-muted mb-1">Promoted to</label>
+                <select name="repo" class="form-select form-select-sm">
+                    <option value="">All repos</option>
+                    {% for repo in repositories %}
+                    <option value="{{ repo.pk }}" {% if filter_repo == repo.pk|stringformat:"s" %}selected{% endif %}>{{ repo.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-auto align-self-end">
+                <a id="clear-btn" href="{% url 'flatpak:promotion_list' %}" class="btn btn-sm btn-outline-secondary"
+                   {% if not filter_q and not filter_status and not filter_repo and not filter_pub_repo %}style="display:none"{% endif %}>
+                    <i class="bi bi-x-lg"></i> Clear
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="results-container">
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-cloud-upload"></i> Published to Build Repository</h5>
+    </div>
+    <div class="card-body p-0">
+        {% if published_builds %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Build</th>
+                        <th>Package</th>
+                        <th>Version</th>
+                        <th>Repository</th>
+                        <th>Status</th>
+                        <th>Published</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for build in published_builds %}
+                    <tr>
+                        <td><a href="{% url 'flatpak:build_detail' build.pk %}">#{{ build.build_number }}</a></td>
+                        <td>
+                            <a href="{% url 'flatpak:package_detail' build.package.pk %}">{{ build.package.package_name }}</a>
+                            <br><small class="text-muted"><code>{{ build.package.package_id }}</code></small>
+                        </td>
+                        <td>{{ build.version|default:"-" }}</td>
+                        <td>
+                            <a href="{% url 'flatpak:repo_detail' build.package.repository.pk %}">{{ build.package.repository.name }}</a>
+                        </td>
+                        <td><span class="badge bg-success">Published</span></td>
+                        <td>{{ build.completed_at|date:"M d, H:i"|default:"-" }}</td>
+                        <td>
+                            <a href="{% url 'flatpak:build_detail' build.pk %}" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-eye"></i>
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="p-3 text-muted">No published builds yet.</div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-arrow-up-right"></i> Promotions to Child Repositories</h5>
+    </div>
+    <div class="card-body p-0">
+        {% if promotions %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Build</th>
+                        <th>Package</th>
+                        <th>Version</th>
+                        <th>Source Repo</th>
+                        <th>Promoted To</th>
+                        <th>Status</th>
+                        <th>Promoted by</th>
+                        <th>Date</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for promotion in promotions %}
+                    <tr>
+                        <td>
+                            <a href="{% url 'flatpak:build_detail' promotion.build.pk %}">#{{ promotion.build.build_number }}</a>
+                        </td>
+                        <td>
+                            <a href="{% url 'flatpak:package_detail' promotion.package.pk %}">{{ promotion.package.package_name }}</a>
+                            <br><small class="text-muted"><code>{{ promotion.package.package_id }}</code></small>
+                        </td>
+                        <td>{{ promotion.build.version|default:"-" }}</td>
+                        <td>
+                            <a href="{% url 'flatpak:repo_detail' promotion.package.repository.pk %}">
+                                {{ promotion.package.repository.name }}
+                            </a>
+                        </td>
+                        <td>
+                            <a href="{% url 'flatpak:repo_detail' promotion.target_repo.pk %}">
+                                {{ promotion.target_repo.name }}
+                            </a>
+                        </td>
+                        <td>
+                            {% if promotion.status == 'promoted' %}
+                            <span class="badge bg-success">Promoted</span>
+                            {% elif promotion.status == 'promoting' %}
+                            <span class="badge bg-primary">
+                                <span class="spinner-border spinner-border-sm me-1"></span>Promoting
+                            </span>
+                            {% elif promotion.status == 'pending' %}
+                            <span class="badge bg-secondary">Pending</span>
+                            {% elif promotion.status == 'failed' %}
+                            <span class="badge bg-danger">Failed</span>
+                            {% if promotion.error_message %}
+                            <br><small class="text-danger">{{ promotion.error_message|truncatechars:80 }}</small>
+                            {% endif %}
+                            {% endif %}
+                        </td>
+                        <td>{{ promotion.promoted_by.username|default:"-" }}</td>
+                        <td>
+                            {% if promotion.completed_at %}
+                            {{ promotion.completed_at|date:"M d, H:i" }}
+                            {% else %}
+                            {{ promotion.created_at|date:"M d, H:i" }}
+                            {% endif %}
+                        </td>
+                        <td>
+                            <a href="{% url 'flatpak:build_detail' promotion.build.pk %}" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-eye"></i>
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        {% if is_paginated %}
+        <div class="p-3">
+            <nav>
+                <ul class="pagination justify-content-center mb-0">
+                    {% if page_obj.has_previous %}
+                    <li class="page-item"><a class="page-link" href="?{% if filter_params %}{{ filter_params }}&{% endif %}page=1">First</a></li>
+                    <li class="page-item"><a class="page-link" href="?{% if filter_params %}{{ filter_params }}&{% endif %}page={{ page_obj.previous_page_number }}">Previous</a></li>
+                    {% endif %}
+                    <li class="page-item active">
+                        <span class="page-link">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+                    </li>
+                    {% if page_obj.has_next %}
+                    <li class="page-item"><a class="page-link" href="?{% if filter_params %}{{ filter_params }}&{% endif %}page={{ page_obj.next_page_number }}">Next</a></li>
+                    <li class="page-item"><a class="page-link" href="?{% if filter_params %}{{ filter_params }}&{% endif %}page={{ page_obj.paginator.num_pages }}">Last</a></li>
+                    {% endif %}
+                </ul>
+            </nav>
+        </div>
+        {% endif %}
+
+        {% else %}
+        <div class="p-3 text-muted">No promotions yet. Publish a build and promote it to a child repository.</div>
+        {% endif %}
+    </div>
+</div>
+</div>
+<script>
+(function () {
+    var form = document.getElementById('filter-form');
+    var container = document.getElementById('results-container');
+    var debounceTimer;
+    var busy = false;
+
+    function updateClearBtn() {
+        var hasFilter = false;
+        form.querySelectorAll('input[type=text], select').forEach(function (el) {
+            if (el.value) hasFilter = true;
+        });
+        var btn = document.getElementById('clear-btn');
+        if (btn) btn.style.display = hasFilter ? '' : 'none';
+    }
+
+    function loadUrl(url, pushState) {
+        if (busy) return;
+        busy = true;
+        if (pushState) history.pushState(null, '', url);
+        container.style.opacity = '0.4';
+        fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(function (r) { return r.text(); })
+            .then(function (html) {
+                var doc = new DOMParser().parseFromString(html, 'text/html');
+                var fresh = doc.getElementById('results-container');
+                if (fresh) container.innerHTML = fresh.innerHTML;
+                bindPagination();
+            })
+            .catch(function () {})
+            .finally(function () { busy = false; container.style.opacity = ''; });
+    }
+
+    function submitFilter() {
+        var params = new URLSearchParams(new FormData(form));
+        params.delete('page');
+        loadUrl(location.pathname + '?' + params.toString(), true);
+        updateClearBtn();
+    }
+
+    function bindPagination() {
+        container.querySelectorAll('a.page-link').forEach(function (a) {
+            a.addEventListener('click', function (e) {
+                e.preventDefault();
+                loadUrl(this.href, true);
+            });
+        });
+    }
+
+    form.querySelector('input[type=text]').addEventListener('input', function () {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(submitFilter, 400);
+    });
+    form.querySelectorAll('select').forEach(function (sel) {
+        sel.addEventListener('change', submitFilter);
+    });
+    form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        submitFilter();
+    });
+    window.addEventListener('popstate', function () {
+        var params = new URLSearchParams(location.search);
+        form.querySelectorAll('input[type=text], select').forEach(function (el) {
+            if (el.name) el.value = params.get(el.name) || '';
+        });
+        loadUrl(location.href, false);
+        updateClearBtn();
+    });
+
+    bindPagination();
+})();
+</script>
+{% endblock %}

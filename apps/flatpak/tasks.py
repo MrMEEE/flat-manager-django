@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task
-def build_from_git_task(build_id):
+def package_from_git_task(package_id):
     """
     Build a flatpak from git repository using flatpak-builder.
     This task:
@@ -23,34 +23,42 @@ def build_from_git_task(build_id):
     3. Exports the build to the build OSTree repository
     4. Updates build status and logs
     """
-    from apps.flatpak.models import Build, BuildLog
+    from apps.flatpak.models import Package, Build, BuildLog
     
+    package = None
     build = None
     temp_dir = None
     
     try:
-        build = Build.objects.get(id=build_id)
+        package = Package.objects.get(id=package_id)
         
         # Validate git build
-        if not build.git_repo_url:
+        if not package.git_repo_url:
             raise ValueError("No git repository URL specified")
         
-        # Update status
-        build.status = 'building'
-        build.started_at = timezone.now()
-        build.save()
+        # Create Build history record for this attempt
+        build = Build.objects.create(
+            package=package,
+            build_number=package.build_number,
+            status='building',
+            started_at=timezone.now()
+        )
         
-        log_build(build, 'info', f"Starting git build for {build.app_id}")
-        send_build_status_update(build_id, 'building', 'Cloning git repository')
+        # Update package status
+        package.status = 'building'
+        package.save()
+        
+        log_build(build, 'info', f"Starting package build for {package.package_id}")
+        send_build_status_update(package_id, 'building', 'Cloning git repository')
         
         # Create temporary directory for build
-        temp_dir = tempfile.mkdtemp(prefix=f'fmdc_build_{build.build_id}_')
+        temp_dir = tempfile.mkdtemp(prefix=f'fmdc_build_{package.build_number}_')
         log_build(build, 'info', f"Created build directory: {temp_dir}")
         
         # Clone git repository
-        log_build(build, 'info', f"Cloning {build.git_repo_url} (branch: {build.git_branch})")
+        log_build(build, 'info', f"Cloning {package.git_repo_url} (branch: {package.git_branch})")
         clone_result = subprocess.run(
-            ['git', 'clone', '--branch', build.git_branch, '--depth', '1', '--recurse-submodules', '--shallow-submodules', build.git_repo_url, 'source'],
+            ['git', 'clone', '--branch', package.git_branch, '--depth', '1', '--recurse-submodules', '--shallow-submodules', package.git_repo_url, 'source'],
             cwd=temp_dir,
             capture_output=True,
             text=True,
@@ -129,15 +137,15 @@ def build_from_git_task(build_id):
         )
         
         if commit_result.returncode == 0:
-            build.source_commit = commit_result.stdout.strip()
-            build.save()
-            log_build(build, 'info', f"Source commit: {build.source_commit}")
+            package.source_commit = commit_result.stdout.strip()
+            package.save()
+            log_build(build, 'info', f"Source commit: {package.source_commit}")
         
-        send_build_status_update(build_id, 'building', 'Running flatpak-builder')
+        send_build_status_update(package_id, 'building', 'Running flatpak-builder')
         
         # Find manifest file (common names)
         manifest_file = None
-        for name in [f'{build.app_id}.yml', f'{build.app_id}.yaml', f'{build.app_id}.json', 
+        for name in [f'{package.package_id}.yml', f'{package.package_id}.yaml', f'{package.package_id}.json', 
                      'flatpak.yml', 'flatpak.yaml', 'flatpak.json']:
             candidate = os.path.join(source_dir, name)
             if os.path.exists(candidate):
@@ -146,16 +154,16 @@ def build_from_git_task(build_id):
         
         if not manifest_file:
             raise FileNotFoundError(
-                f"No manifest file found. Looking for {build.app_id}.yml, flatpak.yml, etc."
+                f"No manifest file found. Looking for {package.package_id}.yml, flatpak.yml, etc."
             )
         
         log_build(build, 'info', f"Using manifest: {os.path.basename(manifest_file)}")
         
         # Parse manifest to extract dependencies
-        dependencies = parse_manifest_dependencies(build, manifest_file)
+        dependencies = parse_manifest_dependencies(package, manifest_file, build)
         if dependencies:
-            build.dependencies = dependencies
-            build.save()
+            package.dependencies = dependencies
+            package.save()
             
             # Enhanced dependency logging
             dep_info = f"SDK={dependencies.get('sdk')}, Runtime={dependencies.get('runtime')}"
@@ -166,7 +174,7 @@ def build_from_git_task(build_id):
             log_build(build, 'info', f"Detected dependencies: {dep_info}")
             
             # Install dependencies before building
-            if not install_flatpak_dependencies(build, dependencies):
+            if not install_flatpak_dependencies(package, dependencies, build):
                 raise RuntimeError("Failed to install required dependencies")
         
         # Create build directory
@@ -193,7 +201,7 @@ def build_from_git_task(build_id):
             'flatpak-builder',
             '--force-clean',
             '--repo', build_repo_path,
-            '--default-branch', build.branch,
+            '--default-branch', package.branch,
             build_dir,
             manifest_file
         ]
@@ -214,12 +222,12 @@ def build_from_git_task(build_id):
         
         if builder_result.returncode != 0:
             error_msg = builder_result.stderr or "flatpak-builder failed"
-            log_build(build, 'error', f"Build failed: {error_msg}")
+            log_build(build, 'error', f"Package build failed: {error_msg}")
             
             # Try to detect and install missing dependencies
             if 'not installed' in error_msg or 'Unable to find' in error_msg:
                 log_build(build, 'info', "Attempting to install missing dependencies...")
-                if detect_and_install_dependencies(build, error_msg):
+                if detect_and_install_dependencies(package, error_msg, build):
                     log_build(build, 'info', "Dependencies installed, retrying build...")
                     
                     # Retry flatpak-builder
@@ -245,26 +253,34 @@ def build_from_git_task(build_id):
             else:
                 raise RuntimeError(f"flatpak-builder failed: {error_msg}")
         
-        # Success
+        # Success - update both Package and Build history
+        package.status = 'built'
+        package.save()
+        
         build.status = 'built'
         build.completed_at = timezone.now()
         build.save()
         
         log_build(build, 'info', "Build completed successfully")
-        send_build_status_update(build_id, 'built', 'Build completed, ready to publish')
+        send_build_status_update(package_id, 'built', 'Build completed, ready to publish')
         
-    except Build.DoesNotExist:
-        logger.error(f"Build {build_id} not found")
+    except Package.DoesNotExist:
+        logger.error(f"Package {package_id} not found")
     except Exception as e:
-        logger.error(f"Error building from git {build_id}: {str(e)}")
+        logger.error(f"Error building from git {package_id}: {str(e)}")
+        if package:
+            package.status = 'failed'
+            package.error_message = str(e)
+            package.save()
+        
         if build:
             build.status = 'failed'
             build.error_message = str(e)
             build.completed_at = timezone.now()
             build.save()
-            
-            log_build(build, 'error', f"Build failed: {str(e)}")
-            send_build_status_update(build_id, 'failed', f'Build failed: {str(e)}')
+            log_build(build, 'error', f"Package build failed: {str(e)}")
+        
+        send_build_status_update(package_id, 'failed', f'Build failed: {str(e)}')
     finally:
         # Cleanup temp directory
         if temp_dir and os.path.exists(temp_dir):
@@ -276,25 +292,35 @@ def build_from_git_task(build_id):
 
 
 @shared_task
-def commit_build_task(build_id):
+def commit_package_task(package_id):
     """
     Commit a build - validates the build and marks it ready for publishing.
     For upload-based builds, this validates all refs have been uploaded.
     For git-based builds, this is called after flatpak-builder completes.
     """
-    from apps.flatpak.models import Build, BuildLog
+    from apps.flatpak.models import Package, Build, BuildLog
     
     try:
-        build = Build.objects.get(id=build_id)
+        package = Package.objects.get(id=package_id)
         
-        if build.status not in ['pending', 'building', 'built']:
-            raise ValueError(f"Cannot commit build with status: {build.status}")
+        if package.status not in ['pending', 'building', 'built']:
+            raise ValueError(f"Cannot commit build with status: {package.status}")
+        
+        # Get or create Build history record for this attempt
+        build, created = Build.objects.get_or_create(
+            package=package,
+            build_number=package.build_number,
+            defaults={'status': 'committing', 'started_at': timezone.now()}
+        )
+        if not created:
+            build.status = 'committing'
+            build.save()
         
         log_build(build, 'info', "Committing build")
-        build.status = 'committing'
-        build.save()
+        package.status = 'committing'
+        package.save()
         
-        send_build_status_update(build_id, 'committing', 'Validating build')
+        send_build_status_update(package_id, 'committing', 'Validating build')
         
         # Get build repo
         build_repo_path = os.path.join(settings.REPOS_BASE_PATH, 'build-repo')
@@ -303,7 +329,7 @@ def commit_build_task(build_id):
             raise FileNotFoundError("Build repository not found")
         
         # Verify the ref exists in build-repo
-        ref_name = f'app/{build.app_id}/{build.arch}/{build.branch}'
+        ref_name = f'app/{package.package_id}/{package.arch}/{package.branch}'
         
         check_ref = subprocess.run(
             ['ostree', 'refs', f'--repo={build_repo_path}'],
@@ -317,12 +343,12 @@ def commit_build_task(build_id):
             
             if ref_name not in refs and refs != ['']:
                 # Try to find any ref for this app
-                app_refs = [r for r in refs if build.app_id in r]
+                app_refs = [r for r in refs if package.package_id in r]
                 if app_refs:
                     log_build(build, 'warning', f"Exact ref not found, but found: {', '.join(app_refs)}")
                     ref_name = app_refs[0]  # Use the first match
                 else:
-                    raise ValueError(f"No refs found for {build.app_id}")
+                    raise ValueError(f"No refs found for {package.package_id}")
         
         # Get the commit hash for this ref
         show_commit = subprocess.run(
@@ -340,61 +366,88 @@ def commit_build_task(build_id):
             )
             if rev_parse.returncode == 0:
                 commit_hash = rev_parse.stdout.strip()
-                build.commit_hash = commit_hash
+                package.commit_hash = commit_hash
                 log_build(build, 'info', f"Commit hash: {commit_hash}")
         
+        package.status = 'committed'
+        package.save()
+        
         build.status = 'committed'
+        build.completed_at = timezone.now()
         build.save()
         
         log_build(build, 'info', "Build committed successfully, ready to publish")
-        send_build_status_update(build_id, 'committed', 'Build committed, ready to publish')
+        send_build_status_update(package_id, 'committed', 'Build committed, ready to publish')
         
-    except Build.DoesNotExist:
-        logger.error(f"Build {build_id} not found")
+    except Package.DoesNotExist:
+        logger.error(f"Package {package_id} not found")
     except Exception as e:
-        logger.error(f"Error committing build {build_id}: {str(e)}")
-        if build:
+        logger.error(f"Error committing build {package_id}: {str(e)}")
+        if 'package' in locals() and package:
+            package.status = 'failed'
+            package.error_message = str(e)
+            package.save()
+        if 'build' in locals() and build:
             build.status = 'failed'
             build.error_message = str(e)
+            build.completed_at = timezone.now()
             build.save()
             log_build(build, 'error', f"Commit failed: {str(e)}")
-            send_build_status_update(build_id, 'failed', f'Commit failed: {str(e)}')
+        send_build_status_update(package_id, 'failed', f'Commit failed: {str(e)}')
 
 
 @shared_task
-def publish_build_task(build_id):
+def publish_package_task(package_id):
     """
     Publish a committed build to the target repository.
     This pulls the commit from build-repo and pushes it to the main repository.
     """
-    from apps.flatpak.models import Build, BuildLog
-    from apps.flatpak.utils.ostree import sign_repo_summary
+    from apps.flatpak.models import Package, Build, BuildLog
+    from apps.flatpak.utils.ostree import sign_repo_summary, temp_gpg_homedir, update_repo_metadata
     
     try:
-        build = Build.objects.get(id=build_id)
+        package = Package.objects.get(id=package_id)
         
-        if build.status != 'committed':
-            raise ValueError(f"Cannot publish build with status: {build.status}. Must be 'committed'.")
+        if package.status != 'committed':
+            raise ValueError(f"Cannot publish build with status: {package.status}. Must be 'committed'.")
+        
+        # Get Build history record for this attempt
+        build = Build.objects.filter(
+            package=package,
+            build_number=package.build_number
+        ).first()
+        
+        if not build:
+            # Create Build record if it doesn't exist (shouldn't happen but be defensive)
+            build = Build.objects.create(
+                package=package,
+                build_number=package.build_number,
+                status='publishing',
+                started_at=timezone.now()
+            )
+        else:
+            build.status = 'publishing'
+            build.save()
         
         log_build(build, 'info', "Publishing build to repository")
-        build.status = 'publishing'
-        build.save()
+        package.status = 'publishing'
+        package.save()
         
-        send_build_status_update(build_id, 'publishing', 'Publishing to repository')
+        send_build_status_update(package_id, 'publishing', 'Publishing to repository')
         
         # Get repositories
         build_repo_path = os.path.join(settings.REPOS_BASE_PATH, 'build-repo')
-        target_repo_path = os.path.join(settings.REPOS_BASE_PATH, build.repository.name)
+        target_repo_path = os.path.join(settings.REPOS_BASE_PATH, package.repository.name)
         
         if not os.path.exists(os.path.join(target_repo_path, 'config')):
-            raise FileNotFoundError(f"Target repository {build.repository.name} not found")
+            raise FileNotFoundError(f"Target repository {package.repository.name} not found")
         
         # Determine the ref name
-        ref_name = f'app/{build.app_id}/{build.arch}/{build.branch}'
+        ref_name = f'app/{package.package_id}/{package.arch}/{package.branch}'
         
-        log_build(build, 'info', f"Pulling {ref_name} from build-repo to {build.repository.name}")
+        log_build(build, 'info', f"Pulling {ref_name} from build-repo to {package.repository.name}")
         
-        # Pull the commit from build-repo to target repo
+        # Pull the app commit from build-repo to target repo
         pull_cmd = [
             'ostree', 'pull-local',
             build_repo_path,
@@ -414,51 +467,64 @@ def publish_build_task(build_id):
         
         log_build(build, 'info', f"Successfully pulled {ref_name}")
         
-        # Update repository summary
-        log_build(build, 'info', "Updating repository summary")
-        summary_cmd = ['ostree', 'summary', '-u', f'--repo={target_repo_path}']
-        
-        summary_result = subprocess.run(
-            summary_cmd,
-            capture_output=True,
-            text=True
+        # Also pull the .Locale ref if it exists in build-repo (contains locale files)
+        locale_ref = f'runtime/{package.package_id}.Locale/{package.arch}/{package.branch}'
+        locale_refs_result = subprocess.run(
+            ['ostree', 'refs', f'--repo={build_repo_path}'],
+            capture_output=True, text=True
         )
+        if locale_ref in (locale_refs_result.stdout or ''):
+            locale_pull = subprocess.run(
+                ['ostree', 'pull-local', build_repo_path, locale_ref, f'--repo={target_repo_path}'],
+                capture_output=True, text=True, timeout=300
+            )
+            if locale_pull.returncode == 0:
+                log_build(build, 'info', f"Pulled locale ref {locale_ref}")
+            else:
+                log_build(build, 'warning', f"Failed to pull locale ref: {locale_pull.stderr}")
         
-        if summary_result.returncode != 0:
-            logger.warning(f"Failed to update summary: {summary_result.stderr}")
-        
-        # Sign the repository if GPG key is configured
-        if build.repository.gpg_key:
-            log_build(build, 'info', f"Signing repository with key {build.repository.gpg_key.key_id}")
-            try:
-                result = sign_repo_summary(target_repo_path, build.repository.gpg_key.key_id)
-                if result['success']:
-                    log_build(build, 'info', "Repository signed successfully")
-                else:
-                    logger.warning(f"Failed to sign repository: {result.get('error')}")
-                    log_build(build, 'warning', f"Repository signing failed: {result.get('error')}")
-            except Exception as e:
-                logger.warning(f"Failed to sign repository: {e}")
-                log_build(build, 'warning', f"Repository signing failed: {e}")
+        # Update repository metadata including appstream (version info visible via flatpak remote-ls).
+        # update_repo_metadata: purges stale unsigned deltas, runs build-update-repo with GPG-signed
+        # delta superblocks and summary, then signs every individual commit so non-delta pulls verify.
+        log_build(build, 'info', "Updating repository metadata and appstream data")
+        gpg_key = package.repository.gpg_key
+        if gpg_key:
+            log_build(build, 'info', f"Signing with GPG key {gpg_key.key_id}")
+        meta_result = update_repo_metadata(target_repo_path, gpg_key)
+        if meta_result['success']:
+            log_build(build, 'info', "Repository metadata updated and signed successfully")
+        else:
+            log_build(build, 'warning',
+                      f"Repository metadata update issue: {meta_result.get('message', '')} "
+                      f"{meta_result.get('detail', meta_result.get('error', ''))}")
+            logger.warning("update_repo_metadata warning for %s: %s", target_repo_path, meta_result)
         
         # Mark as published
+        package.status = 'published'
+        package.save()
+        
         build.status = 'published'
-        build.published_at = timezone.now()
+        build.completed_at = timezone.now()
         build.save()
         
-        log_build(build, 'info', f"Build published successfully to {build.repository.name}")
-        send_build_status_update(build_id, 'published', 'Build published successfully')
+        log_build(build, 'info', f"Build published successfully to {package.repository.name}")
+        send_build_status_update(package_id, 'published', 'Build published successfully')
         
-    except Build.DoesNotExist:
-        logger.error(f"Build {build_id} not found")
+    except Package.DoesNotExist:
+        logger.error(f"Package {package_id} not found")
     except Exception as e:
-        logger.error(f"Error publishing build {build_id}: {str(e)}")
-        if build:
+        logger.error(f"Error publishing build {package_id}: {str(e)}")
+        if 'package' in locals() and package:
+            package.status = 'failed'
+            package.error_message = str(e)
+            package.save()
+        if 'build' in locals() and build:
             build.status = 'failed'
             build.error_message = str(e)
+            build.completed_at = timezone.now()
             build.save()
             log_build(build, 'error', f"Publish failed: {str(e)}")
-            send_build_status_update(build_id, 'failed', f'Publish failed: {str(e)}')
+        send_build_status_update(package_id, 'failed', f'Publish failed: {str(e)}')
 
 
 def log_build(build, level, message):
@@ -472,7 +538,7 @@ def log_build(build, level, message):
     )
     logger.log(
         getattr(logging, level.upper(), logging.INFO),
-        f"[Build {build.build_id}] {message}"
+        f"[Build #{build.build_number}] {message}"
     )
     
     # Broadcast log via WebSocket
@@ -482,24 +548,7 @@ def log_build(build, level, message):
             'builds',
             {
                 'type': 'build_log_update',
-                'build_id': build.id,
-                'log': {
-                    'id': log.id,
-                    'message': message,
-                    'level': level,
-                    'timestamp': log.timestamp.strftime('%H:%M:%S')
-                }
-            }
-        )
-    
-    # Broadcast log via WebSocket
-    channel_layer = get_channel_layer()
-    if channel_layer:
-        async_to_sync(channel_layer.group_send)(
-            'builds',
-            {
-                'type': 'build_log_update',
-                'build_id': build.id,
+                'build_id': build.package.id,
                 'log': {
                     'id': log.id,
                     'message': message,
@@ -510,7 +559,7 @@ def log_build(build, level, message):
         )
 
 
-def detect_and_install_dependencies(build, error_message):
+def detect_and_install_dependencies(package, error_message, build=None):
     """Detect missing Flatpak SDK/runtime from error and install it."""
     import re
     
@@ -535,7 +584,7 @@ def detect_and_install_dependencies(build, error_message):
                     # Second pattern: name and version
                     name = match[1]
                     version = match[2]
-                    arch = build.arch or 'x86_64'
+                    arch = package.arch or 'x86_64'
                     ref = f"{name}/{arch}/{version}"
                     dependencies.append(ref)
     
@@ -575,7 +624,7 @@ def detect_and_install_dependencies(build, error_message):
     return True
 
 
-def parse_manifest_dependencies(build, manifest_file):
+def parse_manifest_dependencies(package, manifest_file, build=None):
     """Parse flatpak manifest file to extract SDK and runtime dependencies."""
     import yaml
     import json
@@ -608,7 +657,7 @@ def parse_manifest_dependencies(build, manifest_file):
         if not version and 'modules' in manifest:
             import re
             # Find the module that matches the app name (usually the last module is the main app)
-            app_name = build.app_id.split('.')[-1].lower() if build.app_id else None
+            app_name = package.package_id.split('.')[-1].lower() if package.package_id else None
             
             # Try to find matching modules (check in reverse - last modules are usually the app)
             for module in reversed(manifest['modules']):  # Start from last module
@@ -715,8 +764,10 @@ def parse_manifest_dependencies(build, manifest_file):
                     if version:
                         break
         
-        # If version found, save it to build
+        # If version found, save it to both package and build
         if version:
+            package.version = version
+            package.save(update_fields=['version'])
             build.version = version
             build.save(update_fields=['version'])
             log_build(build, 'info', f"Detected application version: {version}")
@@ -727,7 +778,7 @@ def parse_manifest_dependencies(build, manifest_file):
             sdk_version = manifest.get('runtime-version', manifest.get('sdk-version', ''))
             dependencies['sdk'] = sdk
             dependencies['sdk_version'] = sdk_version
-            dependencies['sdk_full'] = f"{sdk}/{build.arch or 'x86_64'}/{sdk_version}"
+            dependencies['sdk_full'] = f"{sdk}/{package.arch or 'x86_64'}/{sdk_version}"
         
         # Extract Runtime
         if 'runtime' in manifest:
@@ -735,7 +786,7 @@ def parse_manifest_dependencies(build, manifest_file):
             runtime_version = manifest.get('runtime-version', '')
             dependencies['runtime'] = runtime
             dependencies['runtime_version'] = runtime_version
-            dependencies['runtime_full'] = f"{runtime}/{build.arch or 'x86_64'}/{runtime_version}"
+            dependencies['runtime_full'] = f"{runtime}/{package.arch or 'x86_64'}/{runtime_version}"
         
         # Extract base app if present
         if 'base' in manifest:
@@ -743,14 +794,14 @@ def parse_manifest_dependencies(build, manifest_file):
             base_version = manifest.get('base-version', runtime_version)
             dependencies['base'] = base
             dependencies['base_version'] = base_version
-            dependencies['base_full'] = f"{base}/{build.arch or 'x86_64'}/{base_version}"
+            dependencies['base_full'] = f"{base}/{package.arch or 'x86_64'}/{base_version}"
         
         # Extract SDK extensions if present
         if 'sdk-extensions' in manifest:
             sdk_extensions = manifest['sdk-extensions']
             dependencies['sdk_extensions'] = []
             sdk_version = dependencies.get('sdk_version', '')
-            arch = build.arch or 'x86_64'
+            arch = package.arch or 'x86_64'
             
             for extension in sdk_extensions:
                 extension_full = f"{extension}/{arch}/{sdk_version}"
@@ -769,7 +820,7 @@ def parse_manifest_dependencies(build, manifest_file):
         return {}
 
 
-def install_flatpak_dependencies(build, dependencies):
+def install_flatpak_dependencies(package, dependencies, build=None):
     """Install required Flatpak SDK and runtime dependencies."""
     refs_to_install = []
     
@@ -788,8 +839,8 @@ def install_flatpak_dependencies(build, dependencies):
         return True
     
     # Determine installation scope from build settings
-    install_scope = f"--{build.installation_type}" if hasattr(build, 'installation_type') and build.installation_type else '--system'
-    scope_name = build.installation_type if hasattr(build, 'installation_type') and build.installation_type else 'system'
+    install_scope = f"--{package.installation_type}" if hasattr(package, 'installation_type') and package.installation_type else '--system'
+    scope_name = package.installation_type if hasattr(package, 'installation_type') and package.installation_type else 'system'
     
     log_build(build, 'info', f"Installing {len(refs_to_install)} dependencies from flathub to {scope_name}...")
     
@@ -876,44 +927,202 @@ def check_pending_builds():
     Periodic task that checks for pending builds and triggers them.
     This runs every minute via Celery Beat.
     """
-    from apps.flatpak.models import Build
+    from apps.flatpak.models import Package
     
     # Find all pending builds with git URLs that haven't been triggered
-    pending_builds = Build.objects.filter(
+    pending_packages = Package.objects.filter(
         status='pending',
         git_repo_url__isnull=False
     ).exclude(git_repo_url='')
     
-    count = pending_builds.count()
+    count = pending_packages.count()
     if count > 0:
         logger.info(f"Found {count} pending git-based build(s), triggering...")
         
-        for build in pending_builds:
-            logger.info(f"Triggering build {build.build_id} - {build.app_id}")
-            build_from_git_task.delay(build.id)
+        for package in pending_packages:
+            logger.info(f"Triggering build {package.build_number} - {package.package_id}")
+            package_from_git_task.delay(package.id)
     
     return f"Checked pending builds: {count} triggered"
 
 
-def send_build_status_update(build_id, status, message='', repository_id=None):
+@shared_task
+def cleanup_stale_builds():
+    """
+    Periodic task that detects and fails stale builds that are stuck in active states.
+    This handles cases where builds were interrupted by service restarts or crashes.
+    Runs every 5 minutes via Celery Beat.
+    """
+    from apps.flatpak.models import Package, Build
+    from datetime import timedelta
+    
+    # Active states that should have activity
+    active_states = ['building', 'committing', 'publishing']
+    
+    # Consider a build stale if it's been in an active state for more than 30 minutes
+    # with no recent log activity
+    stale_threshold = timezone.now() - timedelta(minutes=30)
+    
+    stale_packages = Package.objects.filter(
+        status__in=active_states,
+        started_at__lt=stale_threshold
+    )
+    
+    count = 0
+    for package in stale_packages:
+        # Get the current Build history record
+        build = Build.objects.filter(
+            package=package,
+            build_number=package.build_number
+        ).first()
+        
+        # Check if there are recent logs (within last 5 minutes)
+        has_recent_logs = False
+        if build:
+            has_recent_logs = build.logs.filter(
+                timestamp__gte=timezone.now() - timedelta(minutes=5)
+            ).exists()
+        
+        if not has_recent_logs:
+            # No recent activity - mark as failed
+            logger.warning(f"Detected stale package {package.package_id} (build #{package.build_number}) in {package.status} state - marking as failed")
+            
+            package.status = 'failed'
+            package.error_message = f"Build was interrupted (stuck in '{package.status}' state with no activity). Possibly due to service restart or crash."
+            package.save()
+            
+            if build:
+                build.status = 'failed'
+                build.error_message = package.error_message
+                build.completed_at = timezone.now()
+                build.save()
+                log_build(build, 'error', f"Build marked as failed due to inactivity (was stuck in '{package.status}' state)")
+            
+            send_build_status_update(package.id, 'failed', 'Build was interrupted and marked as failed')
+            
+            count += 1
+    
+    if count > 0:
+        logger.info(f"Cleaned up {count} stale build(s)")
+    
+    return f"Checked stale builds: {count} failed"
+
+
+@shared_task
+def cleanup_failed_builds():
+    """
+    Periodic task that removes old failed builds per package,
+    keeping only the N most recent ones as configured in SiteConfig.
+    Runs hourly via Celery Beat.
+    """
+    from apps.flatpak.models import Package, Build, SiteConfig
+
+    config = SiteConfig.get_solo()
+    keep = config.failed_builds_to_keep
+
+    if keep == 0:
+        return "Cleanup skipped: keeping all failed builds"
+
+    total_deleted = 0
+    for package in Package.objects.all():
+        failed_ids = list(
+            Build.objects.filter(package=package, status='failed')
+            .order_by('-build_number')
+            .values_list('id', flat=True)
+        )
+        to_delete = failed_ids[keep:]
+        if to_delete:
+            deleted, _ = Build.objects.filter(id__in=to_delete).delete()
+            total_deleted += deleted
+            logger.info(
+                f"Deleted {deleted} old failed build(s) for package {package.package_id}"
+            )
+
+    if total_deleted > 0:
+        logger.info(f"cleanup_failed_builds: removed {total_deleted} build record(s)")
+
+    return f"Cleaned up {total_deleted} old failed build(s)"
+
+
+@shared_task
+def promote_build_task(promotion_id):
+    """
+    Celery task that promotes a published build to a child repository.
+    Always pulls from build-repo to avoid OSTree collection-ID binding
+    issues that occur when pulling between repos that have different collection IDs.
+    """
+    from apps.flatpak.models import Promotion
+    from apps.flatpak.utils.ostree import sign_repo_summary, temp_gpg_homedir, update_repo_metadata
+
+    try:
+        promotion = Promotion.objects.select_related(
+            'build', 'package', 'target_repo', 'target_repo__gpg_key'
+        ).get(id=promotion_id)
+
+        promotion.status = 'promoting'
+        promotion.save()
+
+        package = promotion.package
+        target_repo = promotion.target_repo
+
+        # Always pull from build-repo (source of truth, no collection-id issues)
+        build_repo_path = os.path.join(settings.REPOS_BASE_PATH, 'build-repo')
+        target_repo_path = os.path.join(settings.REPOS_BASE_PATH, target_repo.name)
+
+        if not os.path.exists(os.path.join(target_repo_path, 'config')):
+            raise FileNotFoundError(f"Target repository '{target_repo.name}' not found on disk")
+
+        ref_name = f'app/{package.package_id}/{package.arch}/{package.branch}'
+        logger.info(f"Promoting {ref_name} from build-repo to {target_repo.name}")
+
+        pull_result = subprocess.run(
+            ['ostree', 'pull-local', build_repo_path, ref_name, f'--repo={target_repo_path}'],
+            capture_output=True, text=True, timeout=300
+        )
+        if pull_result.returncode != 0:
+            raise RuntimeError(f"ostree pull-local failed: {pull_result.stderr.strip()}")
+
+        # Update repository metadata (appstream, signed deltas, commit signatures)
+        update_repo_metadata(target_repo_path, target_repo.gpg_key)
+
+        promotion.status = 'promoted'
+        promotion.completed_at = timezone.now()
+        promotion.save()
+        logger.info(f"Promotion {promotion_id} complete: {ref_name} → {target_repo.name}")
+
+    except Promotion.DoesNotExist:
+        logger.error(f"Promotion {promotion_id} not found")
+    except Exception as e:
+        logger.error(f"Promotion {promotion_id} failed: {e}")
+        try:
+            p = Promotion.objects.get(id=promotion_id)
+            p.status = 'failed'
+            p.error_message = str(e)
+            p.completed_at = timezone.now()
+            p.save()
+        except Exception:
+            pass
+
+
+def send_build_status_update(package_id, status, message='', repository_id=None):
     """
     Send build status update via WebSocket to both specific build and general builds group.
     """
-    from apps.flatpak.models import Build
+    from apps.flatpak.models import Package
     
     # Get repository_id if not provided
     if not repository_id:
         try:
-            build = Build.objects.get(id=build_id)
-            repository_id = build.repository.id
-        except Build.DoesNotExist:
+            package = Package.objects.get(id=package_id)
+            repository_id = package.repository.id
+        except Package.DoesNotExist:
             repository_id = None
     
     channel_layer = get_channel_layer()
     
     event_data = {
         'type': 'build_status_update',
-        'build_id': build_id,
+        'build_id': package_id,
         'status': status,
         'message': message,
         'timestamp': timezone.now().isoformat(),
@@ -922,7 +1131,7 @@ def send_build_status_update(build_id, status, message='', repository_id=None):
     
     # Send to specific build group
     async_to_sync(channel_layer.group_send)(
-        f'build_{build_id}',
+        f'build_{package_id}',
         event_data
     )
     
@@ -931,3 +1140,90 @@ def send_build_status_update(build_id, status, message='', repository_id=None):
         'builds',
         event_data
     )
+
+
+def _fetch_latest_upstream_tag(url):
+    """
+    Fetch the latest version tag from a remote git repository using
+    ``git ls-remote --tags --refs --sort=-version:refname``.
+
+    Returns ``(version_string, error_string)`` where exactly one value is
+    non-None.  Any leading 'v' or 'V' is stripped from the tag name.
+    """
+    import re
+    try:
+        result = subprocess.run(
+            ['git', 'ls-remote', '--tags', '--refs', '--sort=-version:refname', url],
+            capture_output=True, text=True, timeout=30,
+        )
+        lines = [l for l in result.stdout.strip().splitlines() if '\t' in l]
+        if not lines:
+            return '', None  # repository has no tags
+        tag = lines[0].split('\t', 1)[-1].replace('refs/tags/', '').strip()
+        # Strip a leading 'v' or 'V' only when followed immediately by a digit
+        if re.match(r'^[vV]\d', tag):
+            tag = tag[1:]
+        return tag, None
+    except subprocess.TimeoutExpired:
+        return None, 'Timed out after 30 s'
+    except FileNotFoundError:
+        return None, 'git binary not found'
+    except Exception as e:
+        return None, str(e)
+
+
+@shared_task
+def check_upstream_version_task(package_id):
+    """Check and store the latest upstream version for a single package."""
+    from apps.flatpak.models import Package
+    try:
+        package = Package.objects.get(id=package_id)
+    except Package.DoesNotExist:
+        return None
+    if not package.upstream_url:
+        return None
+    version, error = _fetch_latest_upstream_tag(package.upstream_url)
+    if error:
+        logger.warning(f"Upstream check failed for {package.package_id}: {error}")
+        return None
+    package.upstream_version = version
+    package.upstream_checked_at = timezone.now()
+    package.save(update_fields=['upstream_version', 'upstream_checked_at'])
+    logger.info(f"Upstream version for {package.package_id}: {version!r}")
+    return version
+
+
+@shared_task
+def check_all_upstream_versions():
+    """Periodic task: refresh upstream versions for every package that has an upstream_url.
+    Also updates the celery-beat schedule if the configured interval has changed.
+    """
+    from apps.flatpak.models import Package, SiteConfig
+    config = SiteConfig.get_solo()
+    interval_hours = config.upstream_version_check_interval_hours
+
+    # Sync beat schedule with current config
+    try:
+        import json
+        from django_celery_beat.models import PeriodicTask, IntervalSchedule
+        schedule, _ = IntervalSchedule.objects.get_or_create(
+            every=max(interval_hours, 1),
+            period=IntervalSchedule.HOURS,
+        )
+        PeriodicTask.objects.filter(name='Check all upstream versions').update(
+            interval=schedule,
+            enabled=interval_hours > 0,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to sync upstream check schedule: {e}")
+
+    if interval_hours == 0:
+        logger.info("Upstream version check is disabled (interval=0)")
+        return "Upstream version check disabled"
+
+    packages = Package.objects.filter(upstream_url__isnull=False).exclude(upstream_url='')
+    count = packages.count()
+    for p in packages:
+        check_upstream_version_task.delay(p.id)
+    logger.info(f"Queued upstream version check for {count} package(s)")
+    return f"Queued {count} upstream version check(s)"

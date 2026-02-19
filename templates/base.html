@@ -91,14 +91,20 @@
             <a class="nav-link" href="{% url 'flatpak:repo_list' %}">
                 <i class="bi bi-archive"></i> Repositories
             </a>
+            <a class="nav-link" href="{% url 'flatpak:package_list' %}">
+                <i class="bi bi-box-seam"></i> Packages
+            </a>
             <a class="nav-link" href="{% url 'flatpak:build_list' %}">
                 <i class="bi bi-hammer"></i> Builds
+            </a>
+            <a class="nav-link" href="{% url 'flatpak:promotion_list' %}">
+                <i class="bi bi-arrow-up-right-circle"></i> Published Builds
             </a>
             <a class="nav-link" href="{% url 'flatpak:gpgkey_list' %}">
                 <i class="bi bi-key"></i> GPG Keys
             </a>
             <a class="nav-link" href="{% url 'flatpak:dependencies_list' %}">
-                <i class="bi bi-box-seam"></i> Dependencies
+                <i class="bi bi-puzzle"></i> Dependencies
             </a>
             
             <hr class="my-3" style="border-color: rgba(255,255,255,0.2);">
@@ -111,6 +117,10 @@
             
             <a class="nav-link" href="{% url 'users:profile' %}">
                 <i class="bi bi-person-circle"></i> Profile
+            </a>
+            
+            <a class="nav-link" href="{% url 'flatpak:config' %}">
+                <i class="bi bi-gear"></i> Config
             </a>
             
             <a class="nav-link" href="/api/">

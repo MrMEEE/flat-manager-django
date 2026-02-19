@@ -8,7 +8,8 @@ router.register(r'profiles', views.UserProfileViewSet)
 router.register(r'gpg-keys', views.GPGKeyViewSet)
 router.register(r'repositories', views.RepositoryViewSet)
 router.register(r'repository-subsets', views.RepositorySubsetViewSet)
-router.register(r'builds', views.BuildViewSet)
+router.register(r'packages', views.PackageViewSet)
+router.register(r'builds', views.BuildViewSet, basename='build')  # Build history
 router.register(r'artifacts', views.BuildArtifactViewSet)
 router.register(r'tokens', views.TokenViewSet)
 

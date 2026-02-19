@@ -30,7 +30,39 @@ class FlatpakConfig(AppConfig):
             import logging
             logger = logging.getLogger(__name__)
             logger.warning(f"Failed to check/initialize repositories on startup: {e}")
-    
+        try:
+            self._register_periodic_tasks()
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to register periodic tasks: {e}")
+
+    def _register_periodic_tasks(self):
+        """Ensure our periodic tasks exist in django_celery_beat."""
+        import json
+        from django_celery_beat.models import PeriodicTask, IntervalSchedule
+        from .models import SiteConfig
+        config = SiteConfig.get_solo()
+        interval_hours = config.upstream_version_check_interval_hours or 1
+        schedule, _ = IntervalSchedule.objects.get_or_create(
+            every=interval_hours,
+            period=IntervalSchedule.HOURS,
+        )
+        task, created = PeriodicTask.objects.get_or_create(
+            name='Check all upstream versions',
+            defaults={
+                'task': 'apps.flatpak.tasks.check_all_upstream_versions',
+                'interval': schedule,
+                'args': json.dumps([]),
+                'enabled': config.upstream_version_check_interval_hours > 0,
+            },
+        )
+        if not created:
+            # Update schedule and enabled state in case config changed
+            task.interval = schedule
+            task.enabled = config.upstream_version_check_interval_hours > 0
+            task.save(update_fields=['interval', 'enabled'])
+
     def _check_and_init_repositories(self):
         """Check all repositories and initialize missing OSTree repos."""
         from .models import Repository

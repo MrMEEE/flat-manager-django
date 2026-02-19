@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import GPGKey, Repository, RepositorySubset, Build, BuildArtifact, BuildLog, Token
+from .models import GPGKey, Repository, RepositorySubset, Package, Build, BuildArtifact, BuildLog, Token
 
 
 @admin.register(GPGKey)
@@ -27,19 +27,27 @@ class RepositorySubsetAdmin(admin.ModelAdmin):
     readonly_fields = ['created_at']
 
 
+@admin.register(Package)
+class PackageAdmin(admin.ModelAdmin):
+    list_display = ['package_name', 'package_id', 'repository', 'status', 'build_number', 'created_by', 'created_at']
+    list_filter = ['status', 'repository', 'created_at']
+    search_fields = ['package_id', 'package_name']
+    readonly_fields = ['created_at', 'updated_at']
+
+
 @admin.register(Build)
 class BuildAdmin(admin.ModelAdmin):
-    list_display = ['build_id', 'app_id', 'repository', 'status', 'created_by', 'created_at']
-    list_filter = ['status', 'repository', 'created_at']
-    search_fields = ['build_id', 'app_id']
-    readonly_fields = ['created_at', 'started_at', 'completed_at']
+    list_display = ['package', 'build_number', 'version', 'status', 'started_at']
+    list_filter = ['status', 'started_at']
+    search_fields = ['package__package_id', 'package__package_name', 'version']
+    readonly_fields = ['started_at', 'completed_at', 'published_at']
 
 
 @admin.register(BuildArtifact)
 class BuildArtifactAdmin(admin.ModelAdmin):
     list_display = ['build', 'filename', 'file_size', 'uploaded_at']
     list_filter = ['uploaded_at']
-    search_fields = ['filename', 'build__build_id']
+    search_fields = ['filename', 'build__package__package_id']
     readonly_fields = ['uploaded_at']
 
 
@@ -47,7 +55,7 @@ class BuildArtifactAdmin(admin.ModelAdmin):
 class BuildLogAdmin(admin.ModelAdmin):
     list_display = ['build', 'level', 'timestamp']
     list_filter = ['level', 'timestamp']
-    search_fields = ['build__build_id', 'message']
+    search_fields = ['build__package__package_id', 'message']
     readonly_fields = ['timestamp']
 
 

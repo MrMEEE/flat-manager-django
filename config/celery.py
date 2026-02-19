@@ -26,6 +26,20 @@ app.conf.beat_schedule = {
             'expires': 3.0,  # Task expires after 3 seconds if not executed
         }
     },
+    'cleanup-stale-builds': {
+        'task': 'apps.flatpak.tasks.cleanup_stale_builds',
+        'schedule': 300.0,  # Run every 5 minutes
+        'options': {
+            'expires': 60.0,  # Task expires after 1 minute if not executed
+        }
+    },
+    'cleanup-failed-builds': {
+        'task': 'apps.flatpak.tasks.cleanup_failed_builds',
+        'schedule': 3600.0,  # Run every hour
+        'options': {
+            'expires': 300.0,  # Task expires after 5 minutes if not executed
+        }
+    },
 }
 
 

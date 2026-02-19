@@ -2,7 +2,7 @@
 Flatpak app forms.
 """
 from django import forms
-from .models import GPGKey, Repository, Build, Token
+from .models import GPGKey, Repository, Package, Token, SiteConfig
 
 
 class GPGKeyGenerateForm(forms.Form):
@@ -89,7 +89,24 @@ class GPGKeyImportForm(forms.Form):
             raise forms.ValidationError("Invalid public key format")
         
         private_key = cleaned_data.get('private_key')
-        if private_key and not private_key.strip().startswith('-----BEGIN PGP PRIVATE KEY BLOCK-----'):
-            raise forms.ValidationError("Invalid private key format")
-        
         return cleaned_data
+
+
+class SiteConfigForm(forms.ModelForm):
+    """Form for editing site-wide configuration."""
+
+    class Meta:
+        model = SiteConfig
+        fields = ['failed_builds_to_keep', 'upstream_version_check_interval_hours']
+        widgets = {
+            'failed_builds_to_keep': forms.NumberInput(
+                attrs={'class': 'form-control', 'min': '0', 'style': 'width: 130px;'}
+            ),
+            'upstream_version_check_interval_hours': forms.NumberInput(
+                attrs={'class': 'form-control', 'min': '0', 'style': 'width: 130px;'}
+            ),
+        }
+        help_texts = {
+            'failed_builds_to_keep': 'Maximum number of failed builds to retain per package. Set to 0 to keep all failed builds.',
+            'upstream_version_check_interval_hours': 'How often to check for new upstream release tags. Set to 0 to disable automatic checks.',
+        }

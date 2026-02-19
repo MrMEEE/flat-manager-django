@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from apps.users.models import User, UserProfile, APIToken
-from apps.flatpak.models import GPGKey, Repository, RepositorySubset, Build, BuildArtifact, BuildLog, Token
+from apps.flatpak.models import GPGKey, Repository, RepositorySubset, Package, Build, BuildArtifact, BuildLog, Token
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -102,20 +102,45 @@ class BuildLogSerializer(serializers.ModelSerializer):
 
 
 class BuildSerializer(serializers.ModelSerializer):
-    repository = RepositorySerializer(read_only=True)
-    repository_id = serializers.IntegerField(write_only=True)
-    created_by = UserSerializer(read_only=True)
-    artifacts = BuildArtifactSerializer(many=True, read_only=True)
+    """Serializer for Build history records."""
+    package_id = serializers.IntegerField(source='package.id', read_only=True)
+    package_package_id = serializers.CharField(source='package.package_id', read_only=True)
+    package_name = serializers.CharField(source='package.package_name', read_only=True)
+    repository_name = serializers.CharField(source='package.repository.name', read_only=True)
     logs = BuildLogSerializer(many=True, read_only=True)
+    artifacts = BuildArtifactSerializer(many=True, read_only=True)
     
     class Meta:
         model = Build
-        fields = ['id', 'build_id', 'app_id', 'version', 'git_repo_url', 'git_branch', 'source_commit',
-                  'branch', 'arch', 'status', 'commit_hash', 'repository', 'repository_id', 
-                  'created_by', 'created_at', 'started_at', 'completed_at', 'published_at',
-                  'error_message', 'build_number', 'artifacts', 'logs']
-        read_only_fields = ['id', 'build_id', 'source_commit', 'commit_hash', 
-                            'created_at', 'started_at', 'completed_at', 'published_at', 'build_number']
+        fields = ['id', 'package_id', 'package_package_id', 'package_name', 'build_number',
+                  'version', 'source_commit', 'commit_hash', 'dependencies', 
+                  'status', 'error_message', 'repository_name',
+                  'started_at', 'completed_at', 'artifacts', 'logs']
+        read_only_fields = ['id', 'started_at', 'completed_at']
+
+
+class PackageSerializer(serializers.ModelSerializer):
+    """Serializer for Package (main configuration) records."""
+    repository = RepositorySerializer(read_only=True)
+    repository_id = serializers.IntegerField(write_only=True)
+    created_by = UserSerializer(read_only=True)
+    builds = BuildSerializer(many=True, read_only=True)
+    latest_build = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Package
+        fields = ['id', 'package_id', 'package_name', 'version', 'git_repo_url', 'git_branch', 
+                  'source_commit', 'branch', 'arch', 'status', 'commit_hash', 'dependencies',
+                  'repository', 'repository_id', 'created_by', 'created_at', 'build_number',
+                  'error_message', 'builds', 'latest_build']
+        read_only_fields = ['id', 'source_commit', 'commit_hash', 'created_at', 'build_number']
+    
+    def get_latest_build(self, obj):
+        """Get the most recent Build history record."""
+        latest = obj.builds.order_by('-build_number').first()
+        if latest:
+            return BuildSerializer(latest).data
+        return None
 
 
 class TokenSerializer(serializers.ModelSerializer):

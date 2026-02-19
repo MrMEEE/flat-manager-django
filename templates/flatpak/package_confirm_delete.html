@@ -5,8 +5,8 @@
 {% block content %}
 <nav aria-label="breadcrumb">
     <ol class="breadcrumb">
-        <li class="breadcrumb-item"><a href="{% url 'flatpak:build_list' %}">Builds</a></li>
-        <li class="breadcrumb-item"><a href="{% url 'flatpak:build_detail' build.pk %}">{{ build.build_id }}</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'flatpak:package_list' %}">Packages</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'flatpak:package_detail' package.pk %}">{{ package.build_id }}</a></li>
         <li class="breadcrumb-item active">{% if can_cancel %}Cancel{% else %}Delete{% endif %}</li>
     </ol>
 </nav>
@@ -21,14 +21,14 @@
                 <p class="mb-4">Are you sure you want to {% if can_cancel %}cancel{% else %}delete{% endif %} this build?</p>
                 
                 <dl class="row">
-                    <dt class="col-sm-4">Build ID:</dt>
-                    <dd class="col-sm-8"><code>{{ build.build_id }}</code></dd>
+                    <dt class="col-sm-4">Package ID:</dt>
+                    <dd class="col-sm-8"><code>{{ package.build_id }}</code></dd>
                     
                     <dt class="col-sm-4">Application:</dt>
-                    <dd class="col-sm-8">{{ build.app_id }}</dd>
+                    <dd class="col-sm-8">{{ package.app_id }}</dd>
                     
                     <dt class="col-sm-4">Repository:</dt>
-                    <dd class="col-sm-8">{{ build.repository.name }}</dd>
+                    <dd class="col-sm-8">{{ package.repository.name }}</dd>
                     
                     <dt class="col-sm-4">Status:</dt>
                     <dd class="col-sm-8">
@@ -41,12 +41,12 @@
                         {% elif build.status == 'failed' %}
                         <span class="badge bg-danger">Failed</span>
                         {% else %}
-                        <span class="badge bg-warning">{{ build.status }}</span>
+                        <span class="badge bg-warning">{{ package.status }}</span>
                         {% endif %}
                     </dd>
                     
                     <dt class="col-sm-4">Created:</dt>
-                    <dd class="col-sm-8">{{ build.created_at|date:"M d, Y H:i" }}</dd>
+                    <dd class="col-sm-8">{{ package.created_at|date:"M d, Y H:i" }}</dd>
                 </dl>
                 
                 <div class="alert alert-warning">
@@ -54,7 +54,7 @@
                     <ul class="mb-0">
                         {% if can_cancel %}
                         <li>Cancel the running build process</li>
-                        <li>Set the build status to 'cancelled'</li>
+                        <li>Set the package status to 'cancelled'</li>
                         <li>Keep the build record in the database</li>
                         {% else %}
                         <li>Remove build artifacts and logs</li>
@@ -67,7 +67,7 @@
                 <form method="post">
                     {% csrf_token %}
                     <div class="d-flex justify-content-between">
-                        <a href="{% url 'flatpak:build_detail' build.pk %}" class="btn btn-secondary">
+                        <a href="{% url 'flatpak:package_detail' package.pk %}" class="btn btn-secondary">
                             <i class="bi bi-arrow-left"></i> No, Go Back
                         </a>
                         <button type="submit" class="btn btn-danger">

@@ -5,9 +5,9 @@
 {% block content %}
 <nav aria-label="breadcrumb">
     <ol class="breadcrumb">
-        <li class="breadcrumb-item"><a href="{% url 'flatpak:build_list' %}">Builds</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'flatpak:package_list' %}">Packages</a></li>
         {% if edit_mode %}
-        <li class="breadcrumb-item"><a href="{% url 'flatpak:build_detail' object.pk %}">{{ object.build_id }}</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'flatpak:package_detail' object.pk %}">{{ object.build_id }}</a></li>
         <li class="breadcrumb-item active">Edit</li>
         {% else %}
         <li class="breadcrumb-item active">Create</li>
@@ -15,12 +15,35 @@
     </ol>
 </nav>
 
-<h2 class="mb-4"><i class="bi bi-hammer"></i> {% if edit_mode %}Edit{% else %}Create New{% endif %} Build</h2>
+<h2 class="mb-4"><i class="bi bi-box-seam"></i> {% if edit_mode %}Edit{% else %}Create New{% endif %} Build</h2>
 
 <div class="row">
     <div class="col-md-8">
         <div class="card">
             <div class="card-body">
+                {% if form.errors %}
+                <div class="alert alert-danger" role="alert">
+                    <h5 class="alert-heading">Please correct the following errors:</h5>
+                    {% for field in form %}
+                        {% if field.errors %}
+                            <strong>{{ field.label }}:</strong>
+                            <ul class="mb-0">
+                            {% for error in field.errors %}
+                                <li>{{ error }}</li>
+                            {% endfor %}
+                            </ul>
+                        {% endif %}
+                    {% endfor %}
+                    {% if form.non_field_errors %}
+                        <ul class="mb-0">
+                        {% for error in form.non_field_errors %}
+                            <li>{{ error }}</li>
+                        {% endfor %}
+                        </ul>
+                    {% endif %}
+                </div>
+                {% endif %}
+                
                 <form method="post">
                     {% csrf_token %}
                     
@@ -34,13 +57,24 @@
                     </div>
                     
                     <div class="mb-3">
-                        <label for="id_app_id" class="form-label">Application ID *</label>
-                        <input type="text" class="form-control" id="id_app_id" name="app_id" 
-                               value="{{ form.app_id.value|default:'' }}"
+                        <label for="id_package_id" class="form-label">Package ID *</label>
+                        <input type="text" class="form-control" id="id_package_id" name="package_id" 
+                               value="{{ form.package_id.value|default:'' }}"
                                placeholder="org.example.MyApp" required>
                         <div class="form-text">Flatpak application ID (reverse DNS format)</div>
-                        {% if form.app_id.errors %}
-                        <div class="text-danger">{{ form.app_id.errors }}</div>
+                        {% if form.package_id.errors %}
+                        <div class="text-danger">{{ form.package_id.errors }}</div>
+                        {% endif %}
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="id_package_name" class="form-label">Package Name *</label>
+                        <input type="text" class="form-control" id="id_package_name" name="package_name" 
+                               value="{{ form.package_name.value|default:'' }}"
+                               placeholder="My Application" required>
+                        <div class="form-text">Human-readable name for the package</div>
+                        {% if form.package_name.errors %}
+                        <div class="text-danger">{{ form.package_name.errors }}</div>
                         {% endif %}
                     </div>
                     
@@ -81,9 +115,20 @@
                         <div class="text-danger">{{ form.git_branch.errors }}</div>
                         {% endif %}
                     </div>
-                    
+
+                    <div class="mb-3">
+                        <label for="id_upstream_url" class="form-label">Upstream Repository URL</label>
+                        <input type="url" class="form-control" id="id_upstream_url" name="upstream_url"
+                               value="{{ form.upstream_url.value|default:'' }}"
+                               placeholder="https://github.com/upstream/project">
+                        <div class="form-text">Public repository to watch for new upstream release tags. Used to show &ldquo;Last Upstream Version&rdquo; on the package page.</div>
+                        {% if form.upstream_url.errors %}
+                        <div class="text-danger">{{ form.upstream_url.errors }}</div>
+                        {% endif %}
+                    </div>
+
                     <hr class="my-4">
-                    
+
                     <h5>Build Configuration</h5>
                     
                     <div class="mb-3">
@@ -113,8 +158,8 @@
                     <div class="mb-3">
                         <label for="id_installation_type" class="form-label">Installation Type *</label>
                         <select class="form-select" id="id_installation_type" name="installation_type" required>
-                            <option value="system" {% if form.installation_type.value == 'system' or not form.installation_type.value %}selected{% endif %}>System (requires sudo)</option>
-                            <option value="user" {% if form.installation_type.value == 'user' %}selected{% endif %}>User (no sudo required)</option>
+                            <option value="user" {% if form.installation_type.value == 'user' or not form.installation_type.value %}selected{% endif %}>User (no sudo required)</option>
+                            <option value="system" {% if form.installation_type.value == 'system' %}selected{% endif %}>System (requires sudo)</option>
                         </select>
                         <div class="form-text">Where to install Flatpak dependencies for this build</div>
                         {% if form.installation_type.errors %}
@@ -125,11 +170,11 @@
                     <hr class="my-4">
                     
                     <div class="d-flex justify-content-between">
-                        <a href="{% if edit_mode %}{% url 'flatpak:build_detail' object.pk %}{% else %}{% url 'flatpak:build_list' %}{% endif %}" class="btn btn-secondary">
+                        <a href="{% if edit_mode %}{% url 'flatpak:package_detail' object.pk %}{% else %}{% url 'flatpak:package_list' %}{% endif %}" class="btn btn-secondary">
                             <i class="bi bi-x-circle"></i> Cancel
                         </a>
                         <button type="submit" class="btn btn-primary">
-                            <i class="bi bi-check-circle"></i> {% if edit_mode %}Save{% else %}Create Build{% endif %}
+                            <i class="bi bi-check-circle"></i> {% if edit_mode %}Save{% else %}Create Package{% endif %}
                         </button>
                     </div>
                 </form>

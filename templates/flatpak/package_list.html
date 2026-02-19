@@ -1,10 +1,13 @@
 {% extends 'base.html' %}
 
-{% block title %}Builds - Flat Manager{% endblock %}
+{% block title %}Packages - Flat Manager{% endblock %}
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h2><i class="bi bi-hammer"></i> Builds</h2>
+    <h2><i class="bi bi-box-seam"></i> Packages</h2>
+    <a href="{% url 'flatpak:package_create' %}" class="btn btn-primary">
+        <i class="bi bi-plus-circle"></i> New Package
+    </a>
 </div>
 
 <div class="card mb-3">
@@ -34,7 +37,7 @@
                 </select>
             </div>
             <div class="col-auto align-self-end">
-                <a id="clear-btn" href="{% url 'flatpak:build_list' %}" class="btn btn-sm btn-outline-secondary"
+                <a id="clear-btn" href="{% url 'flatpak:package_list' %}" class="btn btn-sm btn-outline-secondary"
                    {% if not filter_q and not filter_status and not filter_repo %}style="display:none"{% endif %}>
                     <i class="bi bi-x-lg"></i> Clear
                 </a>
@@ -46,71 +49,83 @@
 <div id="results-container">
 <div class="card">
     <div class="card-body">
-        {% if builds %}
+        {% if packages %}
         <div class="table-responsive">
             <table class="table table-hover">
                 <thead>
                     <tr>
-                        <th>Build #</th>
-                        <th>Package</th>
+                        <th>Name</th>
+                        <th>Package ID</th>
                         <th>Repository</th>
                         <th>Status</th>
                         <th>Version</th>
-                        <th>Started</th>
-                        <th>Duration</th>
+                        <th>Upstream Version</th>
+                        <th>Branch</th>
+                        <th>Arch</th>
+                        <th>Created</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {% for build in builds %}
+                    {% for package in packages %}
                     <tr>
-                        <td><strong>#{{ build.build_number }}</strong></td>
                         <td>
-                            <a href="{% url 'flatpak:package_detail' build.package.pk %}">
-                                {{ build.package.package_name }}
-                            </a>
-                            <br><small class="text-muted"><code>{{ build.package.package_id }}</code></small>
-                        </td>
-                        <td>
-                            <a href="{% url 'flatpak:repo_detail' build.package.repository.pk %}">
-                                {{ build.package.repository.name }}
+                            <a href="{% url 'flatpak:package_detail' package.pk %}">
+                                <strong>{{ package.package_name }}</strong>
                             </a>
                         </td>
+                        <td><code>{{ package.package_id }}</code></td>
                         <td>
-                            {% if build.status == 'published' %}
-                            <span class="badge bg-success">Published</span>
-                            {% elif build.status == 'committed' %}
-                            <span class="badge bg-info">Committed</span>
-                            {% elif build.status == 'built' %}
-                            <span class="badge bg-info">Built</span>
-                            {% elif build.status == 'building' %}
+                            <a href="{% url 'flatpak:repo_detail' package.repository.pk %}">
+                                {{ package.repository.name }}
+                            </a>
+                        </td>
+                        <td>
+                            {% if package.status == 'pending' %}
+                            <span class="badge bg-secondary">Pending</span>
+                            {% elif package.status == 'building' %}
                             <span class="badge bg-primary">Building</span>
-                            {% elif build.status == 'committing' %}
+                            {% elif package.status == 'built' %}
+                            <span class="badge bg-info">Built</span>
+                            {% elif package.status == 'committing' %}
                             <span class="badge bg-primary">Committing</span>
-                            {% elif build.status == 'publishing' %}
+                            {% elif package.status == 'committed' %}
+                            <span class="badge bg-info">Committed</span>
+                            {% elif package.status == 'publishing' %}
                             <span class="badge bg-primary">Publishing</span>
-                            {% elif build.status == 'failed' %}
+                            {% elif package.status == 'published' %}
+                            <span class="badge bg-success">Published</span>
+                            {% elif package.status == 'failed' %}
                             <span class="badge bg-danger">Failed</span>
-                            {% elif build.status == 'cancelled' %}
+                            {% elif package.status == 'cancelled' %}
                             <span class="badge bg-warning">Cancelled</span>
                             {% else %}
-                            <span class="badge bg-secondary">{{ build.status }}</span>
+                            <span class="badge bg-secondary">{{ package.status }}</span>
                             {% endif %}
                         </td>
-                        <td>{{ build.version|default:"-" }}</td>
-                        <td>{{ build.started_at|date:"M d, H:i" }}</td>
+                        <td>{{ package.version|default:"-" }}</td>
                         <td>
-                            {% if build.completed_at %}
-                            {{ build.completed_at|timeuntil:build.started_at }}
-                            {% elif build.status in 'building,committing,publishing' %}
-                            <span class="text-muted">In progress...</span>
+                            {% if package.upstream_version %}
+                            {{ package.upstream_version }}
+                            {% if package.version and package.upstream_version != package.version %}
+                            <span class="badge bg-warning text-dark ms-1"
+                                  title="Newer upstream version available">
+                                <i class="bi bi-arrow-up-circle"></i>
+                            </span>
+                            {% endif %}
                             {% else %}
-                            -
+                            <span class="text-muted">-</span>
                             {% endif %}
                         </td>
+                        <td><code>{{ package.branch }}</code></td>
+                        <td>{{ package.arch }}</td>
+                        <td>{{ package.created_at|date:"M d, H:i" }}</td>
                         <td>
-                            <a href="{% url 'flatpak:build_detail' build.pk %}" class="btn btn-sm btn-outline-primary">
-                                <i class="bi bi-eye"></i> View
+                            <a href="{% url 'flatpak:package_detail' package.pk %}" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-eye"></i>
+                            </a>
+                            <a href="{% url 'flatpak:package_edit' package.pk %}" class="btn btn-sm btn-outline-secondary">
+                                <i class="bi bi-pencil"></i>
                             </a>
                         </td>
                     </tr>
@@ -121,7 +136,7 @@
 
         {% if is_paginated %}
         <nav aria-label="Page navigation">
-            <ul class="pagination justify-content-center">
+            <ul class="pagination justify-content-center mt-3">
                 {% if page_obj.has_previous %}
                 <li class="page-item">
                     <a class="page-link" href="?{% if filter_params %}{{ filter_params }}&{% endif %}page=1">First</a>
@@ -148,7 +163,7 @@
         {% endif %}
 
         {% else %}
-        <p class="text-muted">No builds yet.</p>
+        <p class="text-muted">No packages yet. <a href="{% url 'flatpak:package_create' %}">Create your first package</a>.</p>
         {% endif %}
     </div>
 </div>
