@@ -155,7 +155,7 @@ class Package(models.Model):
     
     class Meta:
         ordering = ['-created_at']
-        unique_together = [['repository', 'package_id', 'arch', 'branch']]
+        unique_together = [['repository', 'package_id', 'arch', 'branch', 'git_branch']]
     
     def __str__(self):
         return f"{self.package_name} ({self.package_id})"
