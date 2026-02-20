@@ -55,7 +55,7 @@
 </div>
 
 <div class="row mb-4">
-    <div class="col-md-8">
+    <div class="col-md-12">
         <div class="card mb-4">
             <div class="card-header">
                 <h5 class="mb-0">Package Details</h5>
@@ -257,29 +257,6 @@
         </div>
     </div>
     
-    <div class="col-md-4">
-        <div class="card mb-4">
-            <div class="card-header">
-                <h5 class="mb-0">Artifacts</h5>
-            </div>
-            <div class="card-body">
-                {% if artifacts %}
-                <ul class="list-unstyled">
-                    {% for artifact in artifacts %}
-                    <li class="mb-2">
-                        <i class="bi bi-file-earmark-zip"></i>
-                        <strong>{{ artifact.filename }}</strong><br>
-                        <small class="text-muted">{{ artifact.file_size|filesizeformat }}</small><br>
-                        <small class="text-muted">{{ artifact.checksum|truncatechars:16 }}</small>
-                    </li>
-                    {% endfor %}
-                </ul>
-                {% else %}
-                <p class="text-muted">No artifacts yet.</p>
-                {% endif %}
-            </div>
-        </div>
-    </div>
 </div>
 
 <!-- Confirmation Modal -->

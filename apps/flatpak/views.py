@@ -1,3 +1,6 @@
+import os
+import subprocess
+import logging
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth.decorators import login_required
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView
@@ -11,6 +14,8 @@ from .models import GPGKey, Repository, RepositorySubset, Package, Build, Promot
 from .forms import GPGKeyGenerateForm, GPGKeyImportForm
 from .utils.gpg import generate_gpg_key, import_gpg_key
 from .utils.ostree import init_ostree_repo, sign_repo_summary, delete_ostree_repo, temp_gpg_homedir, update_repo_metadata
+
+logger = logging.getLogger(__name__)
 
 class GPGKeyListView(LoginRequiredMixin, ListView):
     """List all GPG keys."""
@@ -703,39 +708,130 @@ class PromoteView(LoginRequiredMixin, View):
         return JsonResponse({'status': 'ok', 'promotion_id': promotion.id})
 
 
+def _delete_promotion_from_repo(promotion):
+    """Remove the OSTree ref from the promotion's target repo and delete the Promotion record."""
+    if promotion.status == 'promoted':
+        target_repo_path = os.path.join(settings.REPOS_BASE_PATH, promotion.target_repo.name)
+        ref_name = (
+            f'app/{promotion.package.package_id}'
+            f'/{promotion.package.arch}/{promotion.package.branch}'
+        )
+        locale_ref = (
+            f'runtime/{promotion.package.package_id}.Locale'
+            f'/{promotion.package.arch}/{promotion.package.branch}'
+        )
+        subprocess.run(
+            ['ostree', 'refs', '--delete', ref_name, f'--repo={target_repo_path}'],
+            capture_output=True, text=True, timeout=60
+        )
+        subprocess.run(
+            ['ostree', 'refs', '--delete', locale_ref, f'--repo={target_repo_path}'],
+            capture_output=True, text=True, timeout=60
+        )
+        result = update_repo_metadata(target_repo_path, promotion.target_repo.gpg_key)
+        if not result['success']:
+            logger.warning(f"update_repo_metadata warning for {promotion}: {result}")
+    promotion.delete()
+
+
+def _collect_child_promotions(build, parent_repo, visited=None):
+    """Recursively collect all Promotion records for *build* that target descendant repos of *parent_repo*."""
+    if visited is None:
+        visited = set()
+    if parent_repo.pk in visited:
+        return []
+    visited.add(parent_repo.pk)
+    results = []
+    for child_repo in parent_repo.child_repos.all():
+        child_promo = Promotion.objects.filter(build=build, target_repo=child_repo).first()
+        if child_promo:
+            results.append(child_promo)
+        results.extend(_collect_child_promotions(build, child_repo, visited))
+    return results
+
+
 class PromotionDeleteView(LoginRequiredMixin, View):
-    """Delete a promotion and remove the OSTree ref from the target repo."""
+    """Delete a promotion (and all descendant-repo promotions) and remove OSTree refs."""
 
     def post(self, request, pk):
-        import os as _os
-        import subprocess as _sp
         promotion = get_object_or_404(Promotion, pk=pk)
-        if promotion.status == 'promoted':
-            target_repo_path = _os.path.join(settings.REPOS_BASE_PATH, promotion.target_repo.name)
-            ref_name = (
-                f'app/{promotion.package.package_id}'
-                f'/{promotion.package.arch}/{promotion.package.branch}'
+        # Collect child promotions before we delete the parent (to avoid losing the ref chain)
+        children = _collect_child_promotions(promotion.build, promotion.target_repo)
+        try:
+            # Delete children first (leaf → root order to avoid partial states)
+            for child in reversed(children):
+                _delete_promotion_from_repo(child)
+            # Delete the requested promotion
+            _delete_promotion_from_repo(promotion)
+        except Exception as e:
+            return JsonResponse({'error': f'Failed to remove ref from repo: {e}'}, status=500)
+        from apps.flatpak.tasks import sync_repo_state
+        sync_repo_state.delay()
+        return JsonResponse({
+            'status': 'ok',
+            'deleted_children': len(children),
+        })
+
+
+class BuildUnpublishView(LoginRequiredMixin, View):
+    """Remove a published build from build-repo and set its status back to committed."""
+
+    def post(self, request, pk):
+        build = get_object_or_404(Build, pk=pk)
+        if build.status != 'published':
+            return JsonResponse({'error': 'Build is not published'}, status=400)
+
+        package = build.package
+        build_repo_path = os.path.join(settings.REPOS_BASE_PATH, 'build-repo')
+        ref_name = f'app/{package.package_id}/{package.arch}/{package.branch}'
+
+        try:
+            subprocess.run(
+                ['ostree', 'refs', '--delete', ref_name, f'--repo={build_repo_path}'],
+                capture_output=True, text=True, timeout=60
             )
-            try:
-                _sp.run(
-                    ['ostree', 'refs', '--delete', ref_name, f'--repo={target_repo_path}'],
-                    capture_output=True, text=True, timeout=60
-                )
-                _sp.run(
-                    ['ostree', 'summary', '-u', f'--repo={target_repo_path}'],
-                    capture_output=True, text=True, timeout=60
-                )
-                if promotion.target_repo.gpg_key:
-                    with temp_gpg_homedir(promotion.target_repo.gpg_key) as homedir:
-                        sign_repo_summary(
-                            target_repo_path,
-                            promotion.target_repo.gpg_key.key_id,
-                            gpg_homedir=homedir,
-                        )
-            except Exception as e:
-                return JsonResponse({'error': f'Failed to remove ref from repo: {e}'}, status=500)
-        promotion.delete()
-        return JsonResponse({'status': 'ok'})
+            # Also remove locale ref if present
+            locale_ref = f'runtime/{package.package_id}.Locale/{package.arch}/{package.branch}'
+            subprocess.run(
+                ['ostree', 'refs', '--delete', locale_ref, f'--repo={build_repo_path}'],
+                capture_output=True, text=True, timeout=60
+            )
+            # Update summary for build-repo (internal staging, no GPG needed)
+            subprocess.run(
+                ['ostree', 'summary', '-u', f'--repo={build_repo_path}'],
+                capture_output=True, text=True, timeout=60
+            )
+        except Exception as e:
+            return JsonResponse({'error': f'Failed to remove ref from build-repo: {e}'}, status=500)
+
+        # Roll build and package status back to committed
+        build.status = 'committed'
+        build.completed_at = None
+        build.save(update_fields=['status', 'completed_at'])
+
+        # Update package status only if this is the current/latest build
+        latest = package.builds.order_by('-build_number').first()
+        if latest and latest.pk == build.pk:
+            package.status = 'committed'
+            package.save(update_fields=['status'])
+
+        from apps.flatpak.tasks import sync_repo_state
+        sync_repo_state.delay()
+        return JsonResponse({'status': 'ok', 'message': f'Build #{build.build_number} unpublished from build-repo'})
+
+
+def _ostree_refs(repo_path):
+    from apps.flatpak.utils.sync import ostree_refs
+    return ostree_refs(repo_path)
+
+
+class SyncReposView(LoginRequiredMixin, View):
+    """Scan all OSTree repos on disk and reconcile Build / Promotion records."""
+
+    def post(self, request):
+        from apps.flatpak.utils.sync import run_repo_sync
+        stats = run_repo_sync()
+        return JsonResponse(stats)
 
 
 class PromotionListView(LoginRequiredMixin, ListView):
@@ -789,6 +885,32 @@ class PromotionListView(LoginRequiredMixin, ListView):
         get_params = self.request.GET.copy()
         get_params.pop('page', None)
         context['filter_params'] = get_params.urlencode()
+
+        # Build a JSON map of promotion_pk → [child repo names that also have that build]
+        import json as _json
+        from collections import defaultdict
+        page_promos = list(context['promotions'])
+        if page_promos:
+            build_ids = list({p.build_id for p in page_promos})
+            all_build_promos = (
+                Promotion.objects
+                .filter(build_id__in=build_ids)
+                .values('build_id', 'target_repo_id', 'target_repo__name')
+            )
+            # build_id → {target_repo_id: name}
+            build_repo_map = defaultdict(dict)
+            for p in all_build_promos:
+                build_repo_map[p['build_id']][p['target_repo_id']] = p['target_repo__name']
+            child_repos_map = {}
+            for promo in page_promos:
+                kids = []
+                for child_repo in promo.target_repo.child_repos.all():
+                    if child_repo.pk in build_repo_map[promo.build_id]:
+                        kids.append(build_repo_map[promo.build_id][child_repo.pk])
+                child_repos_map[str(promo.pk)] = kids
+            context['promotion_child_repos_json'] = _json.dumps(child_repos_map)
+        else:
+            context['promotion_child_repos_json'] = '{}'
         return context
 
 

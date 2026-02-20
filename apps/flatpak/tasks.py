@@ -1045,7 +1045,14 @@ def cleanup_failed_builds():
 
 
 @shared_task
-def promote_build_task(promotion_id):
+def sync_repo_state():
+    """Periodic + post-mutation task: reconcile Build/Promotion DB records against
+    the actual OSTree refs present on disk in all active repositories."""
+    from apps.flatpak.utils.sync import run_repo_sync
+    stats = run_repo_sync()
+    return stats
+
+
     """
     Celery task that promotes a published build to a child repository.
     Always pulls from build-repo to avoid OSTree collection-ID binding
@@ -1089,6 +1096,8 @@ def promote_build_task(promotion_id):
         promotion.completed_at = timezone.now()
         promotion.save()
         logger.info(f"Promotion {promotion_id} complete: {ref_name} → {target_repo.name}")
+        # Kick off a sync so any indirect state drift is caught immediately
+        sync_repo_state.delay()
 
     except Promotion.DoesNotExist:
         logger.error(f"Promotion {promotion_id} not found")

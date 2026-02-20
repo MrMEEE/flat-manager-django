@@ -242,13 +242,50 @@
 </div>
 
 <script>
+// --- Inline modal helpers ---
+function _repoModal(titleHtml, bodyHtml, footerHtml) {
+    const existing = document.getElementById('_repoModal');
+    if (existing) existing.remove();
+    document.body.insertAdjacentHTML('beforeend', `
+    <div class="modal fade" id="_repoModal" tabindex="-1">
+      <div class="modal-dialog"><div class="modal-content">
+        <div class="modal-header">${titleHtml}
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">${bodyHtml}</div>
+        <div class="modal-footer">${footerHtml}</div>
+      </div></div>
+    </div>`);
+    new bootstrap.Modal(document.getElementById('_repoModal')).show();
+}
+function showRepoError(title, message) {
+    _repoModal(
+        `<h5 class="modal-title text-danger"><i class="bi bi-x-octagon-fill me-2"></i>${title}</h5>`,
+        `<div class="alert alert-danger mb-0">${message}</div>`,
+        `<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>`
+    );
+}
+function showRepoToast(message) {
+    // lightweight inline toast — no JS popup
+    let t = document.getElementById('_repoToast');
+    if (!t) {
+        document.body.insertAdjacentHTML('beforeend',
+            `<div id="_repoToast" style="position:fixed;bottom:1.5rem;right:1.5rem;z-index:9999"
+                  class="toast align-items-center text-bg-success border-0" role="alert">
+               <div class="d-flex">
+                 <div class="toast-body" id="_repoToastBody"></div>
+                 <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+               </div></div>`);
+        t = document.getElementById('_repoToast');
+    }
+    document.getElementById('_repoToastBody').textContent = message;
+    bootstrap.Toast.getOrCreateInstance(t, {delay: 2500}).show();
+}
+
 function copyToClipboard(text) {
-    navigator.clipboard.writeText(text).then(() => {
-        alert('URL copied to clipboard!');
-    }).catch(err => {
-        console.error('Failed to copy:', err);
-        alert('Failed to copy URL');
-    });
+    navigator.clipboard.writeText(text)
+        .then(() => showRepoToast('URL copied to clipboard!'))
+        .catch(err => showRepoError('Copy failed', err.message));
 }
 
 async function regenerateMetadata(repoId) {
@@ -262,7 +299,8 @@ async function regenerateMetadata(repoId) {
             headers: { 'X-CSRFToken': '{{ csrf_token }}' },
             credentials: 'same-origin'
         });
-        const d = await r.json();
+        let d = {};
+        try { d = await r.json(); } catch (_) {}
         if (d.status === 'ok') {
             btn.classList.remove('btn-outline-secondary');
             btn.classList.add('btn-outline-success');
@@ -276,12 +314,13 @@ async function regenerateMetadata(repoId) {
             btn.classList.remove('btn-outline-secondary');
             btn.classList.add('btn-outline-warning');
             btn.innerHTML = '<i class="bi bi-exclamation-triangle"></i> Partial';
-            alert((d.message || 'Warning') + (d.detail ? '\n\n' + d.detail : ''));
+            const msg = (d.message || 'Warning') + (d.detail ? '<br><code>' + d.detail + '</code>' : '');
+            showRepoError('Metadata update warning', msg);
         }
     } catch (e) {
         btn.classList.add('btn-outline-danger');
         btn.innerHTML = '<i class="bi bi-x-circle"></i> Failed';
-        alert('Request failed: ' + e.message);
+        showRepoError('Request failed', e.message);
     } finally {
         btn.disabled = false;
         setTimeout(() => {

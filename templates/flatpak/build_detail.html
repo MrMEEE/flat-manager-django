@@ -174,28 +174,6 @@
     </div>
     
     <div class="col-md-4">
-        <div class="card mb-4">
-            <div class="card-header">
-                <h5 class="mb-0">Artifacts</h5>
-            </div>
-            <div class="card-body">
-                {% if artifacts %}
-                <ul class="list-unstyled">
-                    {% for artifact in artifacts %}
-                    <li class="mb-2">
-                        <i class="bi bi-file-earmark-zip"></i>
-                        <strong>{{ artifact.filename }}</strong><br>
-                        <small class="text-muted">{{ artifact.file_size|filesizeformat }}</small><br>
-                        <small class="text-muted">{{ artifact.checksum|truncatechars:16 }}</small>
-                    </li>
-                    {% endfor %}
-                </ul>
-                {% else %}
-                <p class="text-muted">No artifacts yet.</p>
-                {% endif %}
-            </div>
-        </div>
-        
         {% if build.dependencies %}
         <div class="card">
             <div class="card-header">
@@ -258,7 +236,7 @@
     }
     scrollLogsToBottom();
 
-    // --- Confirmation modal (inline, no extra markup needed — create lazily) ---
+    // --- Confirmation modal ---
     function showConfirm(title, message, okLabel, okClass, callback) {
         const existing = document.getElementById('_buildConfirmModal');
         if (existing) existing.remove();
@@ -280,6 +258,33 @@
         const modal = new bootstrap.Modal(document.getElementById('_buildConfirmModal'));
         document.getElementById('_confirmOk').onclick = () => { modal.hide(); callback(); };
         modal.show();
+    }
+
+    // --- Error modal ---
+    function showError(title, message) {
+        const existing = document.getElementById('_buildErrorModal');
+        if (existing) existing.remove();
+        const html = `
+        <div class="modal fade" id="_buildErrorModal" tabindex="-1">
+          <div class="modal-dialog"><div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title text-danger"><i class="bi bi-x-octagon-fill me-2"></i>${title}</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body"><div class="alert alert-danger mb-0">${message}</div></div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+          </div></div>
+        </div>`;
+        document.body.insertAdjacentHTML('beforeend', html);
+        new bootstrap.Modal(document.getElementById('_buildErrorModal')).show();
+    }
+
+    // Safe JSON parse — never throws, always returns an object
+    async function safeJson(response) {
+        try { return await response.json(); } catch (_) { return {}; }
+    }
     }
 
     // Update action buttons dynamically when status changes
@@ -344,10 +349,10 @@
                     updateActionButtons('committing');
                     startPolling();
                 } else {
-                    const d = await r.json().catch(() => ({}));
-                    alert('Failed to commit: ' + (d.error || r.statusText));
+                    const d = await safeJson(r);
+                    showError('Commit Failed', d.error || r.statusText || 'Unknown error');
                 }
-            } catch (e) { alert('Error: ' + e.message); }
+            } catch (e) { showError('Commit Error', e.message); }
         });
     }
 
@@ -365,10 +370,10 @@
                     updateActionButtons('publishing');
                     startPolling();
                 } else {
-                    const d = await r.json().catch(() => ({}));
-                    alert('Failed to publish: ' + (d.error || r.statusText));
+                    const d = await safeJson(r);
+                    showError('Publish Failed', d.error || r.statusText || 'Unknown error');
                 }
-            } catch (e) { alert('Error: ' + e.message); }
+            } catch (e) { showError('Publish Error', e.message); }
         });
     }
 
@@ -519,12 +524,13 @@
                     const resp = await fetch(`/builds/${buildPk}/promote/`, {
                         method: 'POST',
                         headers: {'X-CSRFToken': '{{ csrf_token }}', 'Content-Type': 'application/json'},
+                        credentials: 'same-origin',
                         body: JSON.stringify({target_repo_id: repoId})
                     });
-                    const data = await resp.json();
+                    const data = await safeJson(resp);
                     if (resp.ok) { refreshPromotions(); }
-                    else { alert('Promotion failed: ' + (data.error || resp.statusText)); }
-                } catch (e) { alert('Error: ' + e.message); }
+                    else { showError('Promotion Failed', data.error || resp.statusText || 'Unknown error'); }
+                } catch (e) { showError('Promotion Error', e.message); }
             }
         );
     }
@@ -538,12 +544,13 @@
                 try {
                     const resp = await fetch(`/promotions/${promotionId}/delete/`, {
                         method: 'POST',
-                        headers: {'X-CSRFToken': '{{ csrf_token }}', 'Content-Type': 'application/json'}
+                        headers: {'X-CSRFToken': '{{ csrf_token }}', 'Content-Type': 'application/json'},
+                        credentials: 'same-origin',
                     });
-                    const data = await resp.json();
+                    const data = await safeJson(resp);
                     if (resp.ok) { refreshPromotions(); }
-                    else { alert('Remove failed: ' + (data.error || resp.statusText)); }
-                } catch (e) { alert('Error: ' + e.message); }
+                    else { showError('Remove Failed', data.error || resp.statusText || 'Unknown error'); }
+                } catch (e) { showError('Remove Error', e.message); }
             }
         );
     }
@@ -551,5 +558,55 @@
     if (buildStatus === 'published' || {% if promotions %}true{% else %}false{% endif %}) {
         refreshPromotions();
     }
+
+    // ========== WebSocket for real-time push updates ==========
+    // The channel group is keyed on the Package PK, so use packageId here.
+    (function () {
+        const wsScheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        const ws = new WebSocket(`${wsScheme}://${window.location.host}/ws/builds/${packageId}/`);
+
+        ws.onopen = () => console.log('Build detail WS connected, package', packageId);
+
+        ws.onmessage = (e) => {
+            try {
+                const data = JSON.parse(e.data);
+                if (data.type !== 'build_status_update') return;
+                // The server sends the Package PK as build_id
+                if (String(data.build_id) !== String(packageId)) return;
+
+                const newStatus = data.status;
+                if (!newStatus || newStatus === buildStatus) return;
+
+                buildStatus = newStatus;
+                updateStatusBadge(newStatus);
+                updateActionButtons(newStatus);
+
+                // Kick off a log fetch so new entries appear immediately
+                updateLogs();
+
+                if (newStatus === 'published') {
+                    // Reload promotions panel
+                    const pb = document.getElementById('promotions-body');
+                    if (pb) pb.innerHTML = '<div class="text-muted small">Loading&hellip;</div>';
+                    setTimeout(refreshPromotions, 500);
+                }
+
+                if (!['building', 'committing', 'publishing'].includes(newStatus)) {
+                    if (window.logPollInterval) {
+                        clearInterval(window.logPollInterval);
+                        window.logPollInterval = null;
+                    }
+                } else {
+                    // Make sure polling is running for active states
+                    startPolling();
+                }
+            } catch (err) {
+                console.error('WS parse error:', err);
+            }
+        };
+
+        ws.onclose = () => console.log('Build detail WS disconnected');
+        ws.onerror = (err) => console.error('Build detail WS error:', err);
+    })();
 </script>
 {% endblock %}

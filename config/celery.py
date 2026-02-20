@@ -40,6 +40,13 @@ app.conf.beat_schedule = {
             'expires': 300.0,  # Task expires after 5 minutes if not executed
         }
     },
+    'sync-repo-state': {
+        'task': 'apps.flatpak.tasks.sync_repo_state',
+        'schedule': 300.0,  # Run every 5 minutes to catch external drift
+        'options': {
+            'expires': 60.0,
+        }
+    },
 }
 
 

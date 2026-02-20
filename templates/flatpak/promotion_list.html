@@ -92,6 +92,10 @@
                             <a href="{% url 'flatpak:build_detail' build.pk %}" class="btn btn-sm btn-outline-primary">
                                 <i class="bi bi-eye"></i>
                             </a>
+                            <button class="btn btn-sm btn-outline-danger ms-1"
+                                    onclick="confirmUnpublish({{ build.pk }}, '{{ build.package.package_name|escapejs }}', '#{{ build.build_number }}')">
+                                <i class="bi bi-trash3"></i> Unpublish
+                            </button>
                         </td>
                     </tr>
                     {% endfor %}
@@ -174,6 +178,17 @@
                             <a href="{% url 'flatpak:build_detail' promotion.build.pk %}" class="btn btn-sm btn-outline-primary">
                                 <i class="bi bi-eye"></i>
                             </a>
+                            {% if promotion.status == 'promoted' %}
+                            <button class="btn btn-sm btn-outline-danger ms-1"
+                                    onclick="confirmDeletePromotion({{ promotion.pk }}, '{{ promotion.package.package_name|escapejs }}', '{{ promotion.target_repo.name|escapejs }}')">
+                                <i class="bi bi-trash3"></i> Delete
+                            </button>
+                            {% elif promotion.status == 'failed' %}
+                            <button class="btn btn-sm btn-outline-secondary ms-1"
+                                    onclick="confirmDeletePromotion({{ promotion.pk }}, '{{ promotion.package.package_name|escapejs }}', '{{ promotion.target_repo.name|escapejs }}')">
+                                <i class="bi bi-x-circle"></i> Dismiss
+                            </button>
+                            {% endif %}
                         </td>
                     </tr>
                     {% endfor %}
@@ -278,5 +293,103 @@
 
     bindPagination();
 })();
+</script>
+
+<!-- Confirm modal -->
+<div class="modal fade" id="deleteConfirmModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteConfirmTitle">Confirm</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="deleteConfirmBody"></div>
+            <div class="modal-footer" id="deleteConfirmFooter">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="deleteConfirmOk">Confirm</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const _csrf = '{{ csrf_token }}';
+const _promotionChildRepos = {{ promotion_child_repos_json|safe }};
+
+function showDeleteConfirm(title, body, okLabel, onOk) {
+    document.getElementById('deleteConfirmTitle').textContent = title;
+    document.getElementById('deleteConfirmBody').innerHTML = body;
+    document.getElementById('deleteConfirmFooter').innerHTML =
+        '<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>' +
+        `<button type="button" class="btn btn-danger" id="deleteConfirmOk">${okLabel}</button>`;
+    const okBtn = document.getElementById('deleteConfirmOk');
+    const modal = new bootstrap.Modal(document.getElementById('deleteConfirmModal'));
+    okBtn.onclick = function() { modal.hide(); onOk(); };
+    modal.show();
+}
+
+function showErrorModal(title, message) {
+    document.getElementById('deleteConfirmTitle').textContent = title;
+    document.getElementById('deleteConfirmBody').innerHTML =
+        `<div class="alert alert-danger mb-0"><i class="bi bi-x-octagon-fill me-2"></i>${message}</div>`;
+    document.getElementById('deleteConfirmFooter').innerHTML =
+        '<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>';
+    const elModal = document.getElementById('deleteConfirmModal');
+    (bootstrap.Modal.getInstance(elModal) || new bootstrap.Modal(elModal)).show();
+}
+
+function confirmUnpublish(buildPk, pkgName, buildRef) {
+    showDeleteConfirm(
+        'Unpublish Build',
+        `<p>Remove <strong>${pkgName} ${buildRef}</strong> from the build repository?</p>
+         <p class="text-muted small mb-0">The build record is kept and can be re-published. Existing promotions to child repositories are <strong>not</strong> affected.</p>`,
+        'Unpublish',
+        async () => {
+            try {
+                const r = await fetch(`/builds/${buildPk}/unpublish/`, {
+                    method: 'POST',
+                    headers: { 'X-CSRFToken': _csrf },
+                    credentials: 'same-origin'
+                });
+                const d = await r.json();
+                if (r.ok) { location.reload(); }
+                else { showErrorModal('Unpublish Failed', d.error || r.statusText); }
+            } catch (e) { showErrorModal('Unpublish Error', e.message); }
+        }
+    );
+}
+
+function confirmDeletePromotion(promotionPk, pkgName, repoName) {
+    const childRepos = _promotionChildRepos[String(promotionPk)] || [];
+    let childWarning = '';
+    if (childRepos.length > 0) {
+        const repoList = childRepos.map(r => `<li>${r}</li>`).join('');
+        childWarning = `
+            <div class="alert alert-warning mt-2 mb-0 py-2">
+                <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                <strong>This package is also promoted to child repositories and will be removed from those too:</strong>
+                <ul class="mb-0 mt-1">${repoList}</ul>
+            </div>`;
+    }
+    showDeleteConfirm(
+        'Delete Promotion',
+        `<p>Remove <strong>${pkgName}</strong> from repository <strong>${repoName}</strong>?</p>
+         <p class="text-muted small mb-0">The OSTree ref will be deleted from the repository and metadata will be regenerated. This cannot be undone.</p>
+         ${childWarning}`,
+        'Delete',
+        async () => {
+            try {
+                const r = await fetch(`/promotions/${promotionPk}/delete/`, {
+                    method: 'POST',
+                    headers: { 'X-CSRFToken': _csrf },
+                    credentials: 'same-origin'
+                });
+                const d = await r.json();
+                if (r.ok) { location.reload(); }
+                else { showErrorModal('Delete Failed', d.error || r.statusText); }
+            } catch (e) { showErrorModal('Delete Error', e.message); }
+        }
+    );
+}
 </script>
 {% endblock %}
