@@ -67,6 +67,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      # actions/checkout runs as the runner UID; the container runs as root.
+      # Git refuses to operate on the repo unless we mark it safe explicitly.
+      - name: Mark workspace as git safe directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       # ── Determine version from tag ──────────────────────────────────────────
       - name: Determine version
         id: ver
