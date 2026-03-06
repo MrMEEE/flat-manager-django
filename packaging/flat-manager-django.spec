@@ -272,6 +272,9 @@ fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 %changelog
+* Fri Mar 06 2026 Release Bot <noreply@example.com> - 0.1.1-1
+- Release 0.1.1
+
 * Thu Mar 06 2026 RPM Bot <noreply@example.com> - %{version_string}-1
 - Split virtualenv into flat-manager-django-python-libs subpackage
 - flat-manager-django is now noarch; python-libs carries compiled extensions
