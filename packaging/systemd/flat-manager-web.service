@@ -1,0 +1,36 @@
+[Unit]
+Description=Flat Manager — Daphne ASGI server
+Documentation=https://github.com/YOUR_ORG/flat-manager-django
+After=network.target mariadb.service redis.service valkey.service
+Wants=mariadb.service
+
+[Service]
+Type=simple
+User=flat-manager
+Group=flat-manager
+WorkingDirectory=/opt/flat-manager/app
+EnvironmentFile=/etc/flat-manager/flat-manager.env
+ExecStart=/opt/flat-manager/venv/bin/daphne \
+    -u /run/flat-manager/daphne.sock \
+    --access-log /var/log/flat-manager/access.log \
+    config.asgi:application
+ExecStartPost=/bin/sh -c 'until [ -S /run/flat-manager/daphne.sock ]; do sleep 0.1; done; chmod 660 /run/flat-manager/daphne.sock'
+
+RuntimeDirectory=flat-manager
+RuntimeDirectoryMode=0750
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+# Hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ReadWritePaths=/var/lib/flat-manager /var/log/flat-manager /run/flat-manager
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=flat-manager-web
+
+[Install]
+WantedBy=flat-manager.target multi-user.target

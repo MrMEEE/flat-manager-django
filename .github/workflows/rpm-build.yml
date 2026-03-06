@@ -1,0 +1,172 @@
+name: Build RPM
+
+# ── Only run on version tags — no manual triggers, no branch pushes ───────────
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+
+permissions:
+  contents: write   # needed to create GitHub Releases
+
+jobs:
+  # ────────────────────────────────────────────────────────────────────────────
+  build-rpm:
+    name: RPM — ${{ matrix.distro_label }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro_label:  CentOS Stream 9
+            container:     quay.io/centos/centos:stream9
+            artifact_name: centos-stream-9
+            python_pkg:    "python3.11 python3.11-devel"
+            rhel_ver:      9
+
+          - distro_label:  CentOS Stream 10
+            container:     quay.io/centos/centos:stream10
+            artifact_name: centos-stream-10
+            python_pkg:    "python3 python3-devel"
+            rhel_ver:      10
+
+    container:
+      image: ${{ matrix.container }}
+      options: --privileged
+
+    steps:
+      # ── Install build toolchain ─────────────────────────────────────────────
+      - name: Install build dependencies
+        run: |
+          dnf install -y epel-release 2>/dev/null || true
+          dnf install -y 'dnf-command(config-manager)' 2>/dev/null || true
+          dnf config-manager --set-enabled crb 2>/dev/null || \
+          dnf config-manager --set-enabled powertools 2>/dev/null || true
+
+          dnf install -y \
+            rpm-build \
+            rpmdevtools \
+            git \
+            gcc \
+            mariadb-connector-c-devel \
+            flatpak \
+            ${{ matrix.python_pkg }}
+
+          # python3.11 on CS9 ships without pip — bootstrap it
+          if command -v python3.11 &>/dev/null && ! python3.11 -m pip --version &>/dev/null; then
+            python3.11 -m ensurepip --upgrade || \
+              curl -sS https://bootstrap.pypa.io/get-pip.py | python3.11
+          fi
+
+          rpmdev-setuptree
+
+      # ── Checkout source ─────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── Determine version from tag ──────────────────────────────────────────
+      - name: Determine version
+        id: ver
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Building version: ${VERSION}"
+
+      # ── Create source tarball ───────────────────────────────────────────────
+      - name: Create source tarball
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          TARBALL="${HOME}/rpmbuild/SOURCES/flat-manager-django-${VERSION}.tar.gz"
+          git archive \
+            --format=tar.gz \
+            --prefix="flat-manager-django-${VERSION}/" \
+            HEAD \
+            > "${TARBALL}"
+          ls -lh "${TARBALL}"
+
+      # ── Build RPMs (app + python-libs) ──────────────────────────────────────
+      - name: Build RPMs
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          rpmbuild -ba packaging/flat-manager-django.spec \
+            --define "version_string ${VERSION}" \
+            --define "_topdir ${HOME}/rpmbuild" \
+            --define "rhel ${{ matrix.rhel_ver }}"
+
+      # ── List output ─────────────────────────────────────────────────────────
+      - name: List built RPMs
+        run: find "${HOME}/rpmbuild/RPMS" -name '*.rpm' | sort
+
+      # ── Upload as workflow artefact ─────────────────────────────────────────
+      - name: Upload RPM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: "rpms-${{ matrix.artifact_name }}"
+          path: ~/rpmbuild/RPMS/**/*.rpm
+          if-no-files-found: error
+
+  # ────────────────────────────────────────────────────────────────────────────
+  create-release:
+    name: Create GitHub Release
+    needs: build-rpm
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all RPM artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-rpms/
+
+      - name: List release assets
+        run: find release-rpms/ -name '*.rpm' | sort
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-rpms/**/*.rpm
+          generate_release_notes: true
+          draft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true
+          body: |
+            ## Installation
+
+            Choose the correct RPM for your distribution:
+
+            | File pattern | Target |
+            |---|---|
+            | `*el9*.rpm` | CentOS Stream 9 / RHEL 9 |
+            | `*el10*.rpm` | CentOS Stream 10 / RHEL 10 |
+
+            Each release produces two RPMs per distro:
+            - **`flat-manager-django-*`** — application source, systemd units, nginx config
+            - **`flat-manager-django-python-libs-*`** — pre-built Python virtualenv (compiled extensions)
+
+            Install both packages together:
+            ```
+            dnf install flat-manager-django-<version>.rpm \
+                        flat-manager-django-python-libs-<version>.rpm
+            ```
+
+            ### First-time setup
+            ```
+            # 1. Edit the environment file
+            vi /etc/flat-manager/flat-manager.env
+
+            # 2. Run database migrations
+            flat-manager-manage migrate
+
+            # 3. Create an admin user
+            flat-manager-manage createsuperuser
+
+            # 4. Start services
+            systemctl enable --now nginx flat-manager.target
+            ```
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

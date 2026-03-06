@@ -121,11 +121,11 @@ USE_TZ = True
 
 # Static files (CSS, JavaScript, Images)
 STATIC_URL = 'static/'
-STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATIC_ROOT = os.environ.get('STATIC_ROOT', str(BASE_DIR / 'staticfiles'))
 STATICFILES_DIRS = [BASE_DIR / 'static']
 
 MEDIA_URL = 'media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+MEDIA_ROOT = os.environ.get('MEDIA_ROOT', str(BASE_DIR / 'media'))
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
@@ -155,7 +155,7 @@ CHANNEL_LAYERS = {
 }
 
 # Flatpak Repository Configuration
-REPOS_BASE_PATH = os.path.join(BASE_DIR, 'repos')
+REPOS_BASE_PATH = os.environ.get('REPOS_BASE_PATH', str(BASE_DIR / 'repos'))
 os.makedirs(REPOS_BASE_PATH, exist_ok=True)
 
 # REST Framework Configuration
@@ -182,10 +182,11 @@ CORS_ALLOWED_ORIGINS = os.environ.get(
 ).split(',')
 
 # Flatpak Repository Settings
-FLATPAK_REPO_PATH = os.environ.get('FLATPAK_REPO_PATH', BASE_DIR / 'repos')
-FLATPAK_BUILD_PATH = os.environ.get('FLATPAK_BUILD_PATH', BASE_DIR / 'builds')
+FLATPAK_REPO_PATH = os.environ.get('REPOS_BASE_PATH', str(BASE_DIR / 'repos'))
+FLATPAK_BUILD_PATH = os.environ.get('FLATPAK_BUILD_PATH', str(BASE_DIR / 'builds'))
 
 # Logging Configuration
+_LOG_DIR = os.environ.get('LOG_DIR', str(BASE_DIR / 'logs'))
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -202,7 +203,7 @@ LOGGING = {
         },
         'file': {
             'class': 'logging.FileHandler',
-            'filename': BASE_DIR / 'logs' / 'django.log',
+            'filename': os.path.join(_LOG_DIR, 'django.log'),
             'formatter': 'verbose',
         },
     },
@@ -224,7 +225,7 @@ LOGGING = {
     },
 }
 
-# Create logs directory if it doesn't exist
-os.makedirs(BASE_DIR / 'logs', exist_ok=True)
+# Create required directories if they don't exist
+os.makedirs(_LOG_DIR, exist_ok=True)
 os.makedirs(FLATPAK_REPO_PATH, exist_ok=True)
 os.makedirs(FLATPAK_BUILD_PATH, exist_ok=True)

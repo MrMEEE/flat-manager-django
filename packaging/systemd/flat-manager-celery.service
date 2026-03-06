@@ -1,0 +1,38 @@
+[Unit]
+Description=Flat Manager — Celery worker
+Documentation=https://github.com/YOUR_ORG/flat-manager-django
+After=network.target mariadb.service redis.service valkey.service
+Wants=mariadb.service
+
+[Service]
+Type=forking
+User=flat-manager
+Group=flat-manager
+WorkingDirectory=/opt/flat-manager/app
+EnvironmentFile=/etc/flat-manager/flat-manager.env
+ExecStart=/opt/flat-manager/venv/bin/celery \
+    -A config worker \
+    --loglevel=info \
+    --logfile=/var/log/flat-manager/celery.log \
+    --pidfile=/run/flat-manager/celery.pid \
+    --detach
+ExecStop=/opt/flat-manager/venv/bin/celery -A config control shutdown
+
+RuntimeDirectory=flat-manager
+RuntimeDirectoryMode=0750
+PIDFile=/run/flat-manager/celery.pid
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=60
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ReadWritePaths=/var/lib/flat-manager /var/log/flat-manager /run/flat-manager
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=flat-manager-celery
+
+[Install]
+WantedBy=flat-manager.target multi-user.target
