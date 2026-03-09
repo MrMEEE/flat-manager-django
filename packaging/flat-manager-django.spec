@@ -88,7 +88,11 @@ independently of the application code.
 Summary:        Python virtualenv for flat-manager-django
 # NOT noarch: compiled C extensions (mysqlclient, Pillow, hiredis, …)
 
+# python3.11-pip does not exist as an RPM on CS9 — pip is bootstrapped via
+# ensurepip in %build instead.  On CS10, python3-pip is available normally.
+%if 0%{?rhel} != 9
 BuildRequires:  %{pypkg_prefix}-pip
+%endif
 BuildRequires:  %{pypkg_prefix}-devel
 BuildRequires:  gcc
 BuildRequires:  mariadb-connector-c-devel
@@ -107,6 +111,12 @@ to be updated independently of the application code.
 %autosetup -n %{name}-%{version}
 
 %build
+# ── Bootstrap pip on RHEL9 where python3.11-pip is not an RPM ────────────────
+%if 0%{?rhel} == 9
+%{pybin} -m ensurepip --upgrade 2>/dev/null || \
+    curl -sS https://bootstrap.pypa.io/get-pip.py | %{pybin}
+%endif
+
 # ── Build virtualenv with all Python dependencies ─────────────────────────────
 %{pybin} -m venv %{_builddir}/fmvenv
 %{_builddir}/fmvenv/bin/pip install --upgrade pip --quiet
