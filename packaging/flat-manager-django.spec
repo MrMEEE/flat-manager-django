@@ -33,7 +33,9 @@ Summary:        Flatpak repository manager — Django/Channels web application
 License:        MIT
 URL:            https://github.com/YOUR_ORG/flat-manager-django
 Source0:        %{name}-%{version}.tar.gz
-BuildArch:      noarch
+# python-libs subpackage contains compiled C extensions so the whole spec
+# must be built for the target arch.  The main package contents are
+# architecture-independent but will carry an arch suffix (e.g. .x86_64).
 
 BuildRequires:  %{pypkg_prefix}
 BuildRequires:  systemd-rpm-macros
@@ -243,15 +245,15 @@ fi
 %files
 %license README.md
 
+# %dir declares the parent directory so it is owned; the trailing-slash glob
+# that follows already implies the directory itself — no %dir needed for it.
 %dir                                           %{install_dir}
-%dir                                           %{install_dir}/app
 %{install_dir}/app/
 
 %dir %attr(0750, %{app_user}, %{app_group})    %{data_dir}
 %dir %attr(0750, %{app_user}, %{app_group})    %{data_dir}/repos
 %dir %attr(0750, %{app_user}, %{app_group})    %{data_dir}/builds
 %dir %attr(0750, %{app_user}, %{app_group})    %{data_dir}/media
-%dir %attr(0750, %{app_user}, %{app_group})    %{data_dir}/staticfiles
 %{data_dir}/staticfiles/
 %dir %attr(0750, %{app_user}, %{app_group})    %{log_dir}
 
@@ -271,8 +273,8 @@ fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 %files          python-libs
-%dir                                            %{install_dir}
-%dir                                            %{install_dir}/venv
+# /opt/flat-manager is already owned by the main package (which this one
+# requires), so we must NOT declare it again here — that would be "listed twice".
 %{install_dir}/venv/
 
 # ─────────────────────────────────────────────────────────────────────────────
