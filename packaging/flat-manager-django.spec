@@ -18,6 +18,11 @@
 %global pypkg_prefix python3
 %endif
 
+# ── Exclude the bundled venv from RPM's shebang-mangling check ────────────────
+# The venv contains upstream pip packages with shebangs we cannot control
+# (e.g. #!/usr/bin/env python in Django's project template).
+%global __brp_mangle_shebangs_exclude_from ^%{install_dir}/venv/
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Main package  (noarch — pure Python + config files)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -278,6 +283,7 @@ fi
 * Fri Mar 06 2026 Release Bot <noreply@example.com> - 0.1.1-1
 - Release 0.1.1
 
-* Thu Mar 06 2026 RPM Bot <noreply@example.com> - %{version_string}-1
+* Fri Mar 06 2026 RPM Bot <noreply@example.com> - 0.1.0-1
+- Initial release
 - Split virtualenv into flat-manager-django-python-libs subpackage
-- flat-manager-django is now noarch; python-libs carries compiled extensions
+- flat-manager-django is noarch; python-libs carries compiled extensions
