@@ -23,6 +23,14 @@
 # (e.g. #!/usr/bin/env python in Django's project template).
 %global __brp_mangle_shebangs_exclude_from ^%{install_dir}/venv/
 
+# ── Suppress debuginfo generation ────────────────────────────────────────────
+# Pre-built pip wheels (Pillow, mysqlclient, hiredis, …) are stripped upstream
+# and do not carry ELF build-IDs.  eu-strip cannot process them and
+# --strict-build-id (default on RHEL10) would abort the build.
+# There is nothing useful to extract into a debuginfo package here.
+%global debug_package %{nil}
+%undefine _missing_build_ids_terminate_build
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Main package  (noarch — pure Python + config files)
 # ─────────────────────────────────────────────────────────────────────────────
