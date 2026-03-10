@@ -212,9 +212,19 @@ EOF
 mkdir -p %{buildroot}%{_bindir}
 cat > %{buildroot}%{_bindir}/flat-manager-manage <<'EOF'
 #!/bin/sh
+# Load the production environment
 set -a
 [ -f /etc/flat-manager/flat-manager.env ] && . /etc/flat-manager/flat-manager.env
 set +a
+
+# When invoked as root (e.g. during initial setup: migrate, createsuperuser)
+# drop privileges to the flat-manager service account so that any files created
+# (logs, .pyc caches, etc.) are owned by flat-manager, not root.
+if [ "$(id -u)" -eq 0 ]; then
+    exec runuser -u flat-manager -- \
+        /opt/flat-manager/venv/bin/python /opt/flat-manager/app/manage.py "$@"
+fi
+
 exec /opt/flat-manager/venv/bin/python /opt/flat-manager/app/manage.py "$@"
 EOF
 chmod 0755 %{buildroot}%{_bindir}/flat-manager-manage

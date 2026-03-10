@@ -10,6 +10,7 @@ User=flat-manager
 Group=flat-manager
 WorkingDirectory=/opt/flat-manager/app
 EnvironmentFile=/etc/flat-manager/flat-manager.env
+ExecStartPre=/bin/chown -R flat-manager:flat-manager /var/log/flat-manager
 ExecStart=/opt/flat-manager/venv/bin/daphne \
     -u /run/flat-manager/daphne.sock \
     --access-log /var/log/flat-manager/access.log \
@@ -18,6 +19,10 @@ ExecStartPost=/bin/sh -c 'until [ -S /run/flat-manager/daphne.sock ]; do sleep 0
 
 RuntimeDirectory=flat-manager
 RuntimeDirectoryMode=0750
+LogsDirectory=flat-manager
+LogsDirectoryMode=0750
+StateDirectory=flat-manager
+StateDirectoryMode=0750
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30

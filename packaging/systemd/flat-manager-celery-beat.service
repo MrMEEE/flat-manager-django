@@ -5,7 +5,7 @@ After=network.target mariadb.service redis.service valkey.service flat-manager-c
 Wants=flat-manager-celery.service
 
 [Service]
-Type=forking
+Type=simple
 User=flat-manager
 Group=flat-manager
 WorkingDirectory=/opt/flat-manager/app
@@ -13,14 +13,14 @@ EnvironmentFile=/etc/flat-manager/flat-manager.env
 ExecStart=/opt/flat-manager/venv/bin/celery \
     -A config beat \
     --loglevel=info \
-    --scheduler django_celery_beat.schedulers:DatabaseScheduler \
-    --logfile=/var/log/flat-manager/celery-beat.log \
-    --pidfile=/run/flat-manager/celery-beat.pid \
-    --detach
+    --scheduler django_celery_beat.schedulers:DatabaseScheduler
 
 RuntimeDirectory=flat-manager
 RuntimeDirectoryMode=0750
-PIDFile=/run/flat-manager/celery-beat.pid
+LogsDirectory=flat-manager
+LogsDirectoryMode=0750
+StateDirectory=flat-manager
+StateDirectoryMode=0750
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=30
