@@ -257,15 +257,17 @@ FLATPAK_BUILD_PATH=/path/to/builds
 
 ## Production Deployment
 
-For production:
+For RPM-based production installation (RHEL 9/10, CentOS Stream 9/10) see
+**[docs/INSTALL_RPM.md](docs/INSTALL_RPM.md)** for the full step-by-step guide covering:
 
-1. Set `DEBUG=False`
-2. Use MariaDB/MySQL (`DB_ENGINE=mysql`)
-3. Use a production-grade Redis
-4. Use Gunicorn/uWSGI instead of runserver
-5. Use Nginx as reverse proxy
-6. Set strong `SECRET_KEY`
-7. Configure proper CORS settings
+- Prerequisites and repository setup
+- Redis / Valkey broker (must be started before flat-manager services)
+- MariaDB database creation
+- Environment file configuration
+- Running migrations and creating an admin user
+- nginx configuration
+- Enabling `flat-manager.target` (web + celery + celery-beat)
+- Verification and troubleshooting
 
 ## Next Steps
 
