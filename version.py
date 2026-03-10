@@ -7,8 +7,8 @@ It is updated automatically by tools/release.py.
 """
 
 # Version format: MAJOR.MINOR.PATCH
-VERSION = "0.1.6"
-BUILD_DATE = "2026-03-09"
+VERSION = "0.1.7"
+BUILD_DATE = "2026-03-10"
 
 
 def get_version() -> str:
