@@ -71,6 +71,7 @@ Requires:       mariadb
 Requires:       flatpak
 Requires:       flatpak-builder
 Requires:       ostree
+Requires:       openssl
 
 Requires(pre):  shadow-utils
 %{?systemd_requires}
@@ -252,6 +253,17 @@ if [ $1 -eq 1 ] && [ ! -f %{conf_dir}/flat-manager.env ]; then
     chown root:%{app_group} %{conf_dir}/flat-manager.env
 fi
 
+# Generate a self-signed snakeoil TLS certificate on first install
+# if one does not already exist.
+if [ $1 -eq 1 ] && [ ! -f /etc/pki/tls/certs/flat-manager.crt ]; then
+    HOSTNAME=$(hostname -f 2>/dev/null || echo localhost)
+    openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+        -keyout /etc/pki/tls/private/flat-manager.key \
+        -out    /etc/pki/tls/certs/flat-manager.crt \
+        -subj "/CN=${HOSTNAME}" 2>/dev/null || :
+    chmod 0600 /etc/pki/tls/private/flat-manager.key
+fi
+
 if [ $1 -eq 1 ]; then
     echo ""
     echo "=================================================================="
@@ -268,7 +280,10 @@ if [ $1 -eq 1 ]; then
     echo ""
     echo "  4. flat-manager-manage migrate"
     echo "  5. flat-manager-manage createsuperuser"
-    echo "  6. systemctl enable --now nginx flat-manager.target"
+    echo "  6. Set server_name in /etc/nginx/conf.d/flat-manager.conf"
+    echo "     A snakeoil cert was auto-generated; replace with a real cert:"
+    echo "     certbot --nginx -d hostname"
+    echo "  7. systemctl enable --now nginx flat-manager.target"
     echo "=================================================================="
 fi
 

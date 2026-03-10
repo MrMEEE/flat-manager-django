@@ -151,17 +151,73 @@ flat-manager-manage createsuperuser
 The package installs a ready-to-use nginx config at
 `/etc/nginx/conf.d/flat-manager.conf`.
 
-Update the `server_name` directive to match your hostname:
+### Why the default nginx test page appears
+
+RHEL/CentOS nginx ships with a `default_server` block in `/etc/nginx/nginx.conf`
+that wins over any `conf.d/` file that doesn't also declare `default_server`.
+The installed config uses `listen 80 default_server` and
+`listen 443 ssl default_server`, so it will take over correctly once you
+restart nginx — no manual editing of `nginx.conf` is needed.
+
+### Set the hostname
+
+Edit the config and set `server_name` in both server blocks (HTTP and HTTPS)
+to your FQDN:
 
 ```bash
 vi /etc/nginx/conf.d/flat-manager.conf
-# Change: server_name _;
-# To:     server_name your.server.hostname;
 ```
 
-Test the configuration:
+Replace `_` with your actual hostname, e.g. `flatpak.example.com`
+(there are two `server_name` lines — one in each block).
+
+### Obtain a TLS certificate
+
+The RPM post-install script **automatically generates a self-signed snakeoil
+certificate** using the server's hostname, so nginx starts immediately without
+any manual cert setup. Browsers will show an untrusted-cert warning —
+replace it with a real certificate for production use.
+
+**To replace with a Let's Encrypt certificate:**
 
 ```bash
+dnf install -y certbot python3-certbot-nginx
+firewall-cmd --permanent --add-service=http && firewall-cmd --reload
+certbot certonly --standalone -d your.server.hostname
+```
+
+Then edit `/etc/nginx/conf.d/flat-manager.conf` — comment out the snakeoil
+lines and uncomment the `letsencrypt` lines, then reload nginx:
+
+```nginx
+# ssl_certificate     /etc/pki/tls/certs/flat-manager.crt;
+# ssl_certificate_key /etc/pki/tls/private/flat-manager.key;
+ssl_certificate     /etc/letsencrypt/live/your.server.hostname/fullchain.pem;
+ssl_certificate_key /etc/letsencrypt/live/your.server.hostname/privkey.pem;
+```
+
+```bash
+nginx -t && systemctl reload nginx
+```
+
+To regenerate the snakeoil cert manually (e.g. after a hostname change):
+
+```bash
+openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+  -keyout /etc/pki/tls/private/flat-manager.key \
+  -out    /etc/pki/tls/certs/flat-manager.crt \
+  -subj "/CN=your.server.hostname"
+chmod 0600 /etc/pki/tls/private/flat-manager.key
+nginx -t && systemctl reload nginx
+```
+
+### Open firewall ports and test
+
+```bash
+firewall-cmd --permanent --add-service=http
+firewall-cmd --permanent --add-service=https
+firewall-cmd --reload
+
 nginx -t
 ```
 
@@ -192,8 +248,11 @@ All three should show `active (running)`.
 ## 9. Verify the installation
 
 ```bash
-# Web interface should return 200
-curl -sI http://localhost/ | head -1
+# HTTPS should return 200 (use -k for self-signed certs)
+curl -sI https://your.server.hostname/ | head -1
+
+# HTTP should redirect to HTTPS (301)
+curl -sI http://your.server.hostname/ | head -2
 
 # Socket created and reachable by nginx
 ls -al /run/flat-manager/daphne.sock
@@ -249,12 +308,11 @@ systemctl status flat-manager-web
 ls -al /run/flat-manager/daphne.sock
 ```
 
-The socket should be `srw-rw----` owned by `flat-manager:flat-manager`.
-nginx must be in the `flat-manager` group (or the socket permissions adjusted):
+The socket should be `srwxrwxrwx` (666). If it shows `srw-rw----`, the service
+is running an older unit file — restart it to pick up the new permissions:
 
 ```bash
-usermod -aG flat-manager nginx
-systemctl restart nginx
+systemctl restart flat-manager-web
 ```
 
 ---

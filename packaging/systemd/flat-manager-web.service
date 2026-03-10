@@ -15,10 +15,10 @@ ExecStart=/opt/flat-manager/venv/bin/daphne \
     -u /run/flat-manager/daphne.sock \
     --access-log /var/log/flat-manager/access.log \
     config.asgi:application
-ExecStartPost=/bin/sh -c 'until [ -S /run/flat-manager/daphne.sock ]; do sleep 0.1; done; chmod 660 /run/flat-manager/daphne.sock'
+ExecStartPost=/bin/sh -c 'until [ -S /run/flat-manager/daphne.sock ]; do sleep 0.1; done; chmod 666 /run/flat-manager/daphne.sock'
 
 RuntimeDirectory=flat-manager
-RuntimeDirectoryMode=0750
+RuntimeDirectoryMode=0755
 LogsDirectory=flat-manager
 LogsDirectoryMode=0750
 StateDirectory=flat-manager
