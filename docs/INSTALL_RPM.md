@@ -112,6 +112,7 @@ Minimum required settings:
 SECRET_KEY=<long-random-string>          # python3 -c "import secrets; print(secrets.token_hex(50))"
 DEBUG=False
 ALLOWED_HOSTS=your.server.hostname
+CSRF_TRUSTED_ORIGINS=https://your.server.hostname
 
 DB_ENGINE=django.db.backends.mysql
 DB_NAME=flatmanager

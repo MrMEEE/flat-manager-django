@@ -15,6 +15,10 @@ DEBUG = os.environ.get('DEBUG', 'True') == 'True'
 
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
+# Required when serving over HTTPS — must include the scheme.
+# e.g. CSRF_TRUSTED_ORIGINS=https://flatpak.example.com
+CSRF_TRUSTED_ORIGINS = os.environ.get('CSRF_TRUSTED_ORIGINS', '').split(',') if os.environ.get('CSRF_TRUSTED_ORIGINS') else []
+
 # Application definition
 INSTALLED_APPS = [
     'daphne',  # Must be first for channels
