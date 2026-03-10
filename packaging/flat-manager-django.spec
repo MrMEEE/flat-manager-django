@@ -72,6 +72,7 @@ Requires:       flatpak
 Requires:       flatpak-builder
 Requires:       ostree
 Requires:       openssl
+Requires:       policycoreutils-python-utils
 
 Requires(pre):  shadow-utils
 %{?systemd_requires}
@@ -243,6 +244,14 @@ exit 0
 
 chown -R %{app_user}:%{app_group} %{data_dir} %{log_dir} %{conf_dir}
 systemd-tmpfiles --create %{_tmpfilesdir}/flat-manager.conf 2>/dev/null || :
+
+# Label /run/flat-manager/ so nginx (httpd_t) can connect to the UNIX socket.
+# Without this SELinux denies httpd_t write access to var_run_t sock_file.
+if command -v semanage >/dev/null 2>&1; then
+    semanage fcontext -a -t httpd_var_run_t '/run/flat-manager(/.*)?' 2>/dev/null || \
+    semanage fcontext -m -t httpd_var_run_t '/run/flat-manager(/.*)?' 2>/dev/null || :
+    restorecon -Rv /run/flat-manager/ 2>/dev/null || :
+fi
 
 if [ $1 -eq 1 ] && [ ! -f %{conf_dir}/flat-manager.env ]; then
     cp %{conf_dir}/flat-manager.env.example %{conf_dir}/flat-manager.env
