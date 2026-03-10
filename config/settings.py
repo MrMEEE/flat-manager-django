@@ -19,6 +19,11 @@ ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(','
 # e.g. CSRF_TRUSTED_ORIGINS=https://flatpak.example.com
 CSRF_TRUSTED_ORIGINS = os.environ.get('CSRF_TRUSTED_ORIGINS', '').split(',') if os.environ.get('CSRF_TRUSTED_ORIGINS') else []
 
+# Trust the X-Forwarded-Proto header set by nginx so Django knows the
+# connection is HTTPS. Without this request.is_secure() returns False
+# and CSRF referer validation fails even with CSRF_TRUSTED_ORIGINS set.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
 # Application definition
 INSTALLED_APPS = [
     'daphne',  # Must be first for channels
