@@ -31,6 +31,16 @@
 %global debug_package %{nil}
 %undefine _missing_build_ids_terminate_build
 
+# ── Exclude the venv from automatic dependency scanning ───────────────────────
+# Pillow manylinux wheels bundle private copies of libjpeg, libpng, libtiff,
+# liblzma, … with hashed SONAMEs (e.g. libjpeg-32d42e18.so.62.4.0).
+# RPM's ELF scanner would generate Requires: for those hashed names which do
+# not exist in any distro package — causing dnf to refuse installation.
+# Excluding the entire venv from both Requires and Provides scanning is the
+# standard approach for bundled/private dependency trees.
+%global __requires_exclude_from ^%{install_dir}/venv/
+%global __provides_exclude_from ^%{install_dir}/venv/
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Main package  (noarch — pure Python + config files)
 # ─────────────────────────────────────────────────────────────────────────────
