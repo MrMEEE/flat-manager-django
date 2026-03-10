@@ -239,10 +239,7 @@ getent passwd %{app_user}  >/dev/null || \
 exit 0
 
 %post
-%systemd_post flat-manager-web.service \
-              flat-manager-celery.service \
-              flat-manager-celery-beat.service \
-              flat-manager.target
+%systemd_post flat-manager-web.service flat-manager-celery.service flat-manager-celery-beat.service flat-manager.target
 
 chown -R %{app_user}:%{app_group} %{data_dir} %{log_dir} %{conf_dir}
 systemd-tmpfiles --create %{_tmpfilesdir}/flat-manager.conf 2>/dev/null || :
@@ -288,15 +285,10 @@ if [ $1 -eq 1 ]; then
 fi
 
 %preun
-%systemd_preun flat-manager-web.service \
-               flat-manager-celery.service \
-               flat-manager-celery-beat.service \
-               flat-manager.target
+%systemd_preun flat-manager-web.service flat-manager-celery.service flat-manager-celery-beat.service flat-manager.target
 
 %postun
-%systemd_postun_with_restart flat-manager-web.service \
-                              flat-manager-celery.service \
-                              flat-manager-celery-beat.service
+%systemd_postun_with_restart flat-manager-web.service flat-manager-celery.service flat-manager-celery-beat.service
 
 # ─────────────────────────────────────────────────────────────────────────────
 %files
