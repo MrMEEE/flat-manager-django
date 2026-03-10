@@ -57,6 +57,8 @@ Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  %{pypkg_prefix}
 BuildRequires:  systemd-rpm-macros
+BuildRequires:  checkpolicy
+BuildRequires:  policycoreutils
 
 # Python runtime interpreter
 Requires:       %{pypkg_prefix}
@@ -151,6 +153,12 @@ LOG_DIR=%{_builddir}/tmp-logs \
   %{_builddir}/fmvenv/bin/python manage.py collectstatic \
       --noinput --verbosity 0 2>/dev/null || :
 
+# ── Compile SELinux policy module ────────────────────────────────────────────
+cd packaging/selinux
+checkmodule -M -m -o flat-manager-nginx.mod flat-manager-nginx.te
+semodule_package -o flat-manager-nginx.pp -m flat-manager-nginx.mod
+cd %{_builddir}/%{name}-%{version}
+
 %install
 # ── Application source → flat-manager-django (noarch) ────────────────────────
 mkdir -p %{buildroot}%{install_dir}/app
@@ -231,6 +239,10 @@ exec /opt/flat-manager/venv/bin/python /opt/flat-manager/app/manage.py "$@"
 EOF
 chmod 0755 %{buildroot}%{_bindir}/flat-manager-manage
 
+# ── SELinux policy module ─────────────────────────────────────────────────────
+install -D -m 0644 packaging/selinux/flat-manager-nginx.pp \
+    %{buildroot}%{_datadir}/selinux/packages/flat-manager-nginx.pp
+
 # ─────────────────────────────────────────────────────────────────────────────
 %pre
 getent group  %{app_group} >/dev/null || groupadd  -r %{app_group}
@@ -252,6 +264,11 @@ if command -v semanage >/dev/null 2>&1; then
     semanage fcontext -a -t httpd_var_run_t '/var/run/flat-manager(/.*)?' 2>/dev/null || \
     semanage fcontext -m -t httpd_var_run_t '/var/run/flat-manager(/.*)?' 2>/dev/null || :
     restorecon -Rv /run/flat-manager/ 2>/dev/null || :
+fi
+
+# Install SELinux policy module (allows httpd_t to connect to daphne socket)
+if command -v semodule >/dev/null 2>&1; then
+    semodule -i %{_datadir}/selinux/packages/flat-manager-nginx.pp 2>/dev/null || :
 fi
 
 if [ $1 -eq 1 ] && [ ! -f %{conf_dir}/flat-manager.env ]; then
@@ -296,6 +313,10 @@ fi
 
 %preun
 %systemd_preun flat-manager-web.service flat-manager-celery.service flat-manager-celery-beat.service flat-manager.target
+# Remove SELinux policy module on final uninstall
+if [ $1 -eq 0 ] && command -v semodule >/dev/null 2>&1; then
+    semodule -r flat-manager-nginx 2>/dev/null || :
+fi
 
 %postun
 %systemd_postun_with_restart flat-manager-web.service flat-manager-celery.service flat-manager-celery-beat.service
@@ -329,6 +350,7 @@ fi
 %config(noreplace) %{_sysconfdir}/nginx/conf.d/flat-manager.conf
 
 %{_bindir}/flat-manager-manage
+%{_datadir}/selinux/packages/flat-manager-nginx.pp
 
 # ─────────────────────────────────────────────────────────────────────────────
 %files          python-libs
