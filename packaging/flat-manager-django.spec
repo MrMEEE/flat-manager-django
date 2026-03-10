@@ -184,13 +184,13 @@ find %{buildroot}%{install_dir}/venv \
     sed -i "s|%{_builddir}/fmvenv|%{install_dir}/venv|g"
 
 # ── Collected static files ────────────────────────────────────────────────────
-mkdir -p %{buildroot}%{data_dir}/staticfiles
+install -d -m 0755 %{buildroot}%{data_dir}/staticfiles
 cp -a %{_builddir}/tmp-static/. %{buildroot}%{data_dir}/staticfiles/ 2>/dev/null || :
 
 # ── Runtime data + log directories (owned by flat-manager) ───────────────────
-install -d -m 0750 %{buildroot}%{data_dir}/repos
+install -d -m 0755 %{buildroot}%{data_dir}/repos
 install -d -m 0750 %{buildroot}%{data_dir}/builds
-install -d -m 0750 %{buildroot}%{data_dir}/media
+install -d -m 0755 %{buildroot}%{data_dir}/media
 install -d -m 0750 %{buildroot}%{log_dir}
 install -d -m 0750 %{buildroot}%{conf_dir}
 
@@ -264,6 +264,15 @@ if command -v semanage >/dev/null 2>&1; then
     semanage fcontext -a -t httpd_var_run_t '/var/run/flat-manager(/.*)?' 2>/dev/null || \
     semanage fcontext -m -t httpd_var_run_t '/var/run/flat-manager(/.*)?' 2>/dev/null || :
     restorecon -Rv /run/flat-manager/ 2>/dev/null || :
+    # Label nginx-served data dirs so httpd_t can read them
+    for path in \
+        '%{data_dir}/repos(/.*)?'  \
+        '%{data_dir}/staticfiles(/.*)?'  \
+        '%{data_dir}/media(/.*)?' ; do
+        semanage fcontext -a -t httpd_sys_content_t "${path}" 2>/dev/null || \
+        semanage fcontext -m -t httpd_sys_content_t "${path}" 2>/dev/null || :
+    done
+    restorecon -Rv %{data_dir}/repos %{data_dir}/staticfiles %{data_dir}/media 2>/dev/null || :
 fi
 
 # Install SELinux policy module (allows httpd_t to connect to daphne socket)
@@ -330,10 +339,10 @@ fi
 %dir                                           %{install_dir}
 %{install_dir}/app/
 
-%dir %attr(0750, %{app_user}, %{app_group})    %{data_dir}
-%dir %attr(0750, %{app_user}, %{app_group})    %{data_dir}/repos
+%dir %attr(0755, %{app_user}, %{app_group})    %{data_dir}
+%dir %attr(0755, %{app_user}, %{app_group})    %{data_dir}/repos
 %dir %attr(0750, %{app_user}, %{app_group})    %{data_dir}/builds
-%dir %attr(0750, %{app_user}, %{app_group})    %{data_dir}/media
+%dir %attr(0755, %{app_user}, %{app_group})    %{data_dir}/media
 %{data_dir}/staticfiles/
 %dir %attr(0750, %{app_user}, %{app_group})    %{log_dir}
 
