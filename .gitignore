@@ -15,6 +15,9 @@ staticfiles/
 celerybeat-schedule
 celerybeat.pid
 
+# Redis
+dump.rdb
+
 # Environment
 .env
 .venv
