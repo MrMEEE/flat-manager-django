@@ -18,6 +18,8 @@
 {% endfor %}
 {% endif %}
 
+<form method="post">
+{% csrf_token %}
 <div class="row">
     <!-- Build Cleanup Settings -->
     <div class="col-lg-6 mb-4">
@@ -31,50 +33,98 @@
                     <strong>once per hour</strong> and removes the oldest failed builds for each
                     package, keeping only the most recent ones.
                 </p>
-                <form method="post">
-                    {% csrf_token %}
-                    <div class="mb-3">
-                        <label for="{{ form.failed_builds_to_keep.id_for_label }}" class="form-label fw-semibold">
-                            {{ form.failed_builds_to_keep.label }}
-                        </label>
-                        <div class="d-flex align-items-center gap-2">
-                            {{ form.failed_builds_to_keep }}
-                            <span class="text-muted">per package</span>
-                        </div>
-                        {% if form.failed_builds_to_keep.help_text %}
-                        <div class="form-text">{{ form.failed_builds_to_keep.help_text }}</div>
-                        {% endif %}
-                        {% if form.failed_builds_to_keep.errors %}
-                        <div class="invalid-feedback d-block">
-                            {% for error in form.failed_builds_to_keep.errors %}{{ error }}{% endfor %}
-                        </div>
-                        {% endif %}
+                <div class="mb-3">
+                    <label for="{{ form.failed_builds_to_keep.id_for_label }}" class="form-label fw-semibold">
+                        {{ form.failed_builds_to_keep.label }}
+                    </label>
+                    <div class="d-flex align-items-center gap-2">
+                        {{ form.failed_builds_to_keep }}
+                        <span class="text-muted">per package</span>
                     </div>
-                    <div class="mb-3">
-                        <label for="{{ form.upstream_version_check_interval_hours.id_for_label }}" class="form-label fw-semibold">
-                            {{ form.upstream_version_check_interval_hours.label }}
-                        </label>
-                        <div class="d-flex align-items-center gap-2">
-                            {{ form.upstream_version_check_interval_hours }}
-                            <span class="text-muted">hours (0 = disabled)</span>
-                        </div>
-                        {% if form.upstream_version_check_interval_hours.help_text %}
-                        <div class="form-text">{{ form.upstream_version_check_interval_hours.help_text }}</div>
-                        {% endif %}
-                        {% if form.upstream_version_check_interval_hours.errors %}
-                        <div class="invalid-feedback d-block">
-                            {% for error in form.upstream_version_check_interval_hours.errors %}{{ error }}{% endfor %}
-                        </div>
-                        {% endif %}
+                    {% if form.failed_builds_to_keep.help_text %}
+                    <div class="form-text">{{ form.failed_builds_to_keep.help_text }}</div>
+                    {% endif %}
+                    {% if form.failed_builds_to_keep.errors %}
+                    <div class="invalid-feedback d-block">
+                        {% for error in form.failed_builds_to_keep.errors %}{{ error }}{% endfor %}
                     </div>
-                    <button type="submit" class="btn btn-primary">
-                        <i class="bi bi-floppy"></i> Save
-                    </button>
-                </form>
+                    {% endif %}
+                </div>
+                <div class="mb-3">
+                    <label for="{{ form.upstream_version_check_interval_hours.id_for_label }}" class="form-label fw-semibold">
+                        {{ form.upstream_version_check_interval_hours.label }}
+                    </label>
+                    <div class="d-flex align-items-center gap-2">
+                        {{ form.upstream_version_check_interval_hours }}
+                        <span class="text-muted">hours (0 = disabled)</span>
+                    </div>
+                    {% if form.upstream_version_check_interval_hours.help_text %}
+                    <div class="form-text">{{ form.upstream_version_check_interval_hours.help_text }}</div>
+                    {% endif %}
+                    {% if form.upstream_version_check_interval_hours.errors %}
+                    <div class="invalid-feedback d-block">
+                        {% for error in form.upstream_version_check_interval_hours.errors %}{{ error }}{% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
             </div>
         </div>
     </div>
 
+    <!-- Flatpak Remote -->
+    <div class="col-lg-6 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-box-arrow-in-down"></i> Flatpak Remote</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-3">
+                    The Flatpak remote used to install SDK and runtime dependencies on the builder.
+                    If the remote is not yet registered on the builder, it will be added automatically
+                    before the first build using the URL below.
+                </p>
+                <div class="mb-3">
+                    <label for="{{ form.flatpak_remote_name.id_for_label }}" class="form-label fw-semibold">
+                        {{ form.flatpak_remote_name.label }}
+                    </label>
+                    {{ form.flatpak_remote_name }}
+                    {% if form.flatpak_remote_name.help_text %}
+                    <div class="form-text">{{ form.flatpak_remote_name.help_text }}</div>
+                    {% endif %}
+                    {% if form.flatpak_remote_name.errors %}
+                    <div class="invalid-feedback d-block">
+                        {% for error in form.flatpak_remote_name.errors %}{{ error }}{% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="mb-3">
+                    <label for="{{ form.flatpak_remote_url.id_for_label }}" class="form-label fw-semibold">
+                        {{ form.flatpak_remote_url.label }}
+                    </label>
+                    {{ form.flatpak_remote_url }}
+                    {% if form.flatpak_remote_url.help_text %}
+                    <div class="form-text">{{ form.flatpak_remote_url.help_text }}</div>
+                    {% endif %}
+                    {% if form.flatpak_remote_url.errors %}
+                    <div class="invalid-feedback d-block">
+                        {% for error in form.flatpak_remote_url.errors %}{{ error }}{% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="row mb-4">
+    <div class="col">
+        <button type="submit" class="btn btn-primary">
+            <i class="bi bi-floppy"></i> Save Configuration
+        </button>
+    </div>
+</div>
+</form>
+
+<div class="row">
     <!-- Run Cleanup Now -->
     <div class="col-lg-6 mb-4">
         <div class="card">

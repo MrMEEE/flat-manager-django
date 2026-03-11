@@ -97,7 +97,12 @@ class SiteConfigForm(forms.ModelForm):
 
     class Meta:
         model = SiteConfig
-        fields = ['failed_builds_to_keep', 'upstream_version_check_interval_hours']
+        fields = [
+            'failed_builds_to_keep',
+            'upstream_version_check_interval_hours',
+            'flatpak_remote_name',
+            'flatpak_remote_url',
+        ]
         widgets = {
             'failed_builds_to_keep': forms.NumberInput(
                 attrs={'class': 'form-control', 'min': '0', 'style': 'width: 130px;'}
@@ -105,8 +110,16 @@ class SiteConfigForm(forms.ModelForm):
             'upstream_version_check_interval_hours': forms.NumberInput(
                 attrs={'class': 'form-control', 'min': '0', 'style': 'width: 130px;'}
             ),
+            'flatpak_remote_name': forms.TextInput(
+                attrs={'class': 'form-control', 'style': 'width: 220px;'}
+            ),
+            'flatpak_remote_url': forms.URLInput(
+                attrs={'class': 'form-control'}
+            ),
         }
         help_texts = {
             'failed_builds_to_keep': 'Maximum number of failed builds to retain per package. Set to 0 to keep all failed builds.',
             'upstream_version_check_interval_hours': 'How often to check for new upstream release tags. Set to 0 to disable automatic checks.',
+            'flatpak_remote_name': 'Name of the Flatpak remote to install SDK/runtime dependencies from (e.g. \'flathub\').',
+            'flatpak_remote_url': 'URL of the .flatpakrepo file. The remote is registered automatically on first use if not already present on the builder.',
         }
