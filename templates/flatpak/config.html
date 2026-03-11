@@ -74,43 +74,71 @@
     <!-- Flatpak Remote -->
     <div class="col-lg-6 mb-4">
         <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0"><i class="bi bi-box-arrow-in-down"></i> Flatpak Remote</h5>
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-box-arrow-in-down"></i> Flatpak Remotes</h5>
             </div>
-            <div class="card-body">
-                <p class="text-muted mb-3">
-                    The Flatpak remote used to install SDK and runtime dependencies on the builder.
-                    If the remote is not yet registered on the builder, it will be added automatically
-                    before the first build using the URL below.
-                </p>
-                <div class="mb-3">
-                    <label for="{{ form.flatpak_remote_name.id_for_label }}" class="form-label fw-semibold">
-                        {{ form.flatpak_remote_name.label }}
-                    </label>
-                    {{ form.flatpak_remote_name }}
-                    {% if form.flatpak_remote_name.help_text %}
-                    <div class="form-text">{{ form.flatpak_remote_name.help_text }}</div>
-                    {% endif %}
-                    {% if form.flatpak_remote_name.errors %}
-                    <div class="invalid-feedback d-block">
-                        {% for error in form.flatpak_remote_name.errors %}{{ error }}{% endfor %}
-                    </div>
-                    {% endif %}
+            <div class="card-body p-0">
+                {% if remotes %}
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Name</th>
+                            <th>Priority</th>
+                            <th>Active</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for remote in remotes %}
+                        <tr class="{% if not remote.is_active %}text-muted{% endif %}">
+                            <td>
+                                <strong>{{ remote.name }}</strong><br>
+                                <small class="text-muted text-truncate d-block" style="max-width:220px;" title="{{ remote.url }}">{{ remote.url }}</small>
+                            </td>
+                            <td>{{ remote.priority }}</td>
+                            <td>
+                                <form method="post" action="{% url 'flatpak:remote_toggle' remote.pk %}" class="d-inline">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-sm {% if remote.is_active %}btn-success{% else %}btn-secondary{% endif %}" title="Toggle active">
+                                        {% if remote.is_active %}<i class="bi bi-toggle-on"></i>{% else %}<i class="bi bi-toggle-off"></i>{% endif %}
+                                    </button>
+                                </form>
+                            </td>
+                            <td>
+                                <form method="post" action="{% url 'flatpak:remote_delete' remote.pk %}" class="d-inline" onsubmit="return confirm('Remove remote {{ remote.name }}?')">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash3"></i></button>
+                                </form>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <div class="p-3 text-muted">
+                    No remotes configured. Add one below — <strong>flathub</strong> is the standard source for SDKs and runtimes.
                 </div>
-                <div class="mb-3">
-                    <label for="{{ form.flatpak_remote_url.id_for_label }}" class="form-label fw-semibold">
-                        {{ form.flatpak_remote_url.label }}
-                    </label>
-                    {{ form.flatpak_remote_url }}
-                    {% if form.flatpak_remote_url.help_text %}
-                    <div class="form-text">{{ form.flatpak_remote_url.help_text }}</div>
-                    {% endif %}
-                    {% if form.flatpak_remote_url.errors %}
-                    <div class="invalid-feedback d-block">
-                        {% for error in form.flatpak_remote_url.errors %}{{ error }}{% endfor %}
+                {% endif %}
+            </div>
+            <div class="card-footer">
+                <form method="post" action="{% url 'flatpak:remote_add' %}" class="row g-2 align-items-end">
+                    {% csrf_token %}
+                    <div class="col-auto">
+                        <label class="form-label small mb-1">Name</label>
+                        {{ remote_form.name }}
                     </div>
-                    {% endif %}
-                </div>
+                    <div class="col">
+                        <label class="form-label small mb-1">URL</label>
+                        {{ remote_form.url }}
+                    </div>
+                    <div class="col-auto">
+                        <label class="form-label small mb-1">Priority</label>
+                        {{ remote_form.priority }}
+                    </div>
+                    <div class="col-auto">
+                        <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> Add</button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>

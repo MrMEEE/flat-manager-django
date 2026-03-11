@@ -39,6 +39,9 @@ urlpatterns = [
     path('promotions/<int:pk>/delete/', views.PromotionDeleteView.as_view(), name='promotion_delete'),
     path('config/', views.ConfigView.as_view(), name='config'),
     path('config/run-cleanup/', views.RunCleanupNowView.as_view(), name='run_cleanup'),
+    path('config/remotes/add/', views.FlatpakRemoteCreateView.as_view(), name='remote_add'),
+    path('config/remotes/<int:pk>/delete/', views.FlatpakRemoteDeleteView.as_view(), name='remote_delete'),
+    path('config/remotes/<int:pk>/toggle/', views.FlatpakRemoteToggleView.as_view(), name='remote_toggle'),
     path('dependencies/', views.dependencies_list, name='dependencies_list'),
     path('repositories/<path:repo_path>', views.serve_repository, name='serve_repository'),
 ]

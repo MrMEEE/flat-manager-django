@@ -1141,11 +1141,20 @@ class PackagePublishView(LoginRequiredMixin, View):
 class ConfigView(LoginRequiredMixin, View):
     """Display and update site-wide configuration."""
 
+    def _context(self, form):
+        from .models import FlatpakRemote
+        from .forms import FlatpakRemoteForm
+        return {
+            'form': form,
+            'remotes': FlatpakRemote.objects.all(),
+            'remote_form': FlatpakRemoteForm(),
+        }
+
     def get(self, request):
         from .forms import SiteConfigForm
         from .models import SiteConfig
         form = SiteConfigForm(instance=SiteConfig.get_solo())
-        return render(request, 'flatpak/config.html', {'form': form})
+        return render(request, 'flatpak/config.html', self._context(form))
 
     def post(self, request):
         from .forms import SiteConfigForm
@@ -1154,7 +1163,46 @@ class ConfigView(LoginRequiredMixin, View):
         if form.is_valid():
             form.save()
             messages.success(request, 'Configuration saved successfully.')
-        return render(request, 'flatpak/config.html', {'form': form})
+        return render(request, 'flatpak/config.html', self._context(form))
+
+
+class FlatpakRemoteCreateView(LoginRequiredMixin, View):
+    """Add a new Flatpak remote."""
+
+    def post(self, request):
+        from .forms import FlatpakRemoteForm
+        form = FlatpakRemoteForm(request.POST)
+        if form.is_valid():
+            form.save()
+            messages.success(request, f"Remote '{form.cleaned_data['name']}' added.")
+        else:
+            for field, errors in form.errors.items():
+                for error in errors:
+                    messages.error(request, f"{field}: {error}")
+        return redirect('flatpak:config')
+
+
+class FlatpakRemoteDeleteView(LoginRequiredMixin, View):
+    """Remove a Flatpak remote."""
+
+    def post(self, request, pk):
+        from .models import FlatpakRemote
+        remote = get_object_or_404(FlatpakRemote, pk=pk)
+        name = remote.name
+        remote.delete()
+        messages.success(request, f"Remote '{name}' removed.")
+        return redirect('flatpak:config')
+
+
+class FlatpakRemoteToggleView(LoginRequiredMixin, View):
+    """Toggle active status of a Flatpak remote."""
+
+    def post(self, request, pk):
+        from .models import FlatpakRemote
+        remote = get_object_or_404(FlatpakRemote, pk=pk)
+        remote.is_active = not remote.is_active
+        remote.save(update_fields=['is_active'])
+        return redirect('flatpak:config')
 
 
 class RunCleanupNowView(LoginRequiredMixin, View):

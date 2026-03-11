@@ -598,9 +598,9 @@ def detect_and_install_dependencies(package, error_message, build=None):
     for dep in dependencies:
         log_build(build, 'info', f"Installing dependency: {dep}")
         try:
-            from apps.flatpak.models import SiteConfig as _SC
-            _cfg = _SC.get_solo()
-            _remote = _cfg.flatpak_remote_name or 'flathub'
+            from apps.flatpak.models import FlatpakRemote as _FR
+            _remotes = list(_FR.objects.filter(is_active=True))
+            _remote = _remotes[0].name if _remotes else 'flathub'
             install_result = subprocess.run(
                 ['flatpak', 'install', '-y', '--noninteractive', _remote, dep],
                 capture_output=True,
@@ -871,14 +871,20 @@ def install_flatpak_dependencies(package, dependencies, build=None):
     install_scope = f"--{package.installation_type}" if hasattr(package, 'installation_type') and package.installation_type else '--system'
     scope_name = package.installation_type if hasattr(package, 'installation_type') and package.installation_type else 'system'
 
-    # Load remote config and ensure the remote is registered
-    from apps.flatpak.models import SiteConfig
-    site_config = SiteConfig.get_solo()
-    remote_name = site_config.flatpak_remote_name or 'flathub'
-    remote_url = site_config.flatpak_remote_url or 'https://dl.flathub.org/repo/flathub.flatpakrepo'
-    ensure_flatpak_remote(remote_name, remote_url, install_scope, build)
+    # Load remote config and ensure all active remotes are registered
+    from apps.flatpak.models import FlatpakRemote
+    active_remotes = list(FlatpakRemote.objects.filter(is_active=True))
+    if not active_remotes:
+        # Fall back to flathub if nothing configured
+        log_build(build, 'warning', "No active Flatpak remotes configured — falling back to flathub")
+        active_remotes_info = [('flathub', 'https://dl.flathub.org/repo/flathub.flatpakrepo')]
+    else:
+        active_remotes_info = [(r.name, r.url) for r in active_remotes]
 
-    log_build(build, 'info', f"Installing {len(refs_to_install)} dependencies from {remote_name} to {scope_name}...")
+    for remote_name, remote_url in active_remotes_info:
+        ensure_flatpak_remote(remote_name, remote_url, install_scope, build)
+
+    log_build(build, 'info', f"Installing {len(refs_to_install)} dependencies to {scope_name} (remotes: {', '.join(n for n,_ in active_remotes_info)})...")
     
     for ref in refs_to_install:
         log_build(build, 'info', f"Checking/installing: {ref}")
@@ -910,35 +916,44 @@ def install_flatpak_dependencies(package, dependencies, build=None):
                 log_build(build, 'info', f"✓ {ref} is already installed in {other_scope_name} (will use that)")
                 continue
             
-            # Install to the specified scope
+            # Install to the specified scope — try each active remote in order
             log_build(build, 'info', f"Installing {ref} to {scope_name}...")
-            install_result = subprocess.run(
-                ['flatpak', 'install', '-y', install_scope, '--noninteractive', remote_name, ref],
-                capture_output=True,
-                text=True,
-                timeout=600
-            )
-            
-            if install_result.returncode == 0:
+            install_result = None
+            for remote_name, _ in active_remotes_info:
+                install_result = subprocess.run(
+                    ['flatpak', 'install', '-y', install_scope, '--noninteractive', remote_name, ref],
+                    capture_output=True,
+                    text=True,
+                    timeout=600
+                )
+                if install_result.returncode == 0:
+                    break
+
+            if install_result and install_result.returncode == 0:
                 log_build(build, 'info', f"✓ Successfully installed {ref} to {scope_name}")
             else:
                 error_msg = install_result.stderr.strip()
                 if 'already installed' in error_msg.lower():
                     log_build(build, 'info', f"✓ {ref} is already installed")
                 elif scope_name == 'system' and ('insufficient permissions' in error_msg.lower() or 'permission denied' in error_msg.lower()):
-                    # Try installing to user space instead
-                    ensure_flatpak_remote(remote_name, remote_url, '--user', build)
+                    # Try installing to user space instead, using each remote
+                    for remote_name, remote_url in active_remotes_info:
+                        ensure_flatpak_remote(remote_name, remote_url, '--user', build)
                     log_build(build, 'warning', f"Cannot install to system (permission denied), trying user installation...")
-                    user_install = subprocess.run(
-                        ['flatpak', 'install', '-y', '--user', '--noninteractive', remote_name, ref],
-                        capture_output=True,
-                        text=True,
-                        timeout=600
-                    )
-                    if user_install.returncode == 0:
+                    user_install = None
+                    for remote_name, _ in active_remotes_info:
+                        user_install = subprocess.run(
+                            ['flatpak', 'install', '-y', '--user', '--noninteractive', remote_name, ref],
+                            capture_output=True,
+                            text=True,
+                            timeout=600
+                        )
+                        if user_install.returncode == 0:
+                            break
+                    if user_install and user_install.returncode == 0:
                         log_build(build, 'info', f"✓ Successfully installed {ref} to user")
                     else:
-                        log_build(build, 'error', f"✗ Failed to install {ref}: {user_install.stderr.strip()}")
+                        log_build(build, 'error', f"✗ Failed to install {ref} to user: {user_install.stderr.strip() if user_install else 'no result'}")
                         return False
                 else:
                     log_build(build, 'error', f"✗ Failed to install {ref}: {error_msg}")

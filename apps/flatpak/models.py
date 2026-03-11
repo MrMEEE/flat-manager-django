@@ -289,17 +289,6 @@ class SiteConfig(models.Model):
         default=1,
         help_text="How often (in hours) to automatically check for new upstream versions. Set to 0 to disable."
     )
-    flatpak_remote_name = models.CharField(
-        max_length=100,
-        default='flathub',
-        help_text="Name of the Flatpak remote used to install SDK/runtime dependencies (e.g. 'flathub')"
-    )
-    flatpak_remote_url = models.URLField(
-        max_length=500,
-        default='https://dl.flathub.org/repo/flathub.flatpakrepo',
-        help_text="URL of the Flatpak remote .flatpakrepo file. Used to register the remote automatically if it is not already present on the builder."
-    )
-
     class Meta:
         verbose_name = 'Site Configuration'
 
@@ -347,3 +336,37 @@ class Promotion(models.Model):
 
     def __str__(self):
         return f"{self.package.package_name} → {self.target_repo.name} (Build #{self.build.build_number})"
+
+
+class FlatpakRemote(models.Model):
+    """
+    A Flatpak remote used by the builder to install SDK and runtime dependencies.
+    Multiple remotes can be configured; they are tried in priority order.
+    """
+    name = models.CharField(
+        max_length=100,
+        unique=True,
+        help_text="Remote name as known to flatpak (e.g. 'flathub')"
+    )
+    url = models.URLField(
+        max_length=500,
+        help_text="URL of the .flatpakrepo file used to register the remote if not already present"
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Only active remotes are used during builds"
+    )
+    priority = models.PositiveIntegerField(
+        default=0,
+        help_text="Remotes with a lower number are tried first (0 = highest priority)"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['priority', 'name']
+        verbose_name = 'Flatpak Remote'
+        verbose_name_plural = 'Flatpak Remotes'
+
+    def __str__(self):
+        status = '' if self.is_active else ' (inactive)'
+        return f"{self.name}{status}"

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import GPGKey, Repository, RepositorySubset, Package, Build, BuildArtifact, BuildLog, Token, SiteConfig
+from .models import GPGKey, Repository, RepositorySubset, Package, Build, BuildArtifact, BuildLog, Token, SiteConfig, FlatpakRemote
 
 
 @admin.register(GPGKey)
@@ -76,15 +76,17 @@ class SiteConfigAdmin(admin.ModelAdmin):
         ('Upstream Version Checks', {
             'fields': ['upstream_version_check_interval_hours'],
         }),
-        ('Flatpak Remote', {
-            'description': 'Configure the Flatpak remote used to install SDK and runtime dependencies on the builder.',
-            'fields': ['flatpak_remote_name', 'flatpak_remote_url'],
-        }),
     ]
 
     def has_add_permission(self, request):
-        # Only allow one instance
         return not SiteConfig.objects.exists()
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+@admin.register(FlatpakRemote)
+class FlatpakRemoteAdmin(admin.ModelAdmin):
+    list_display = ['name', 'url', 'is_active', 'priority', 'created_at']
+    list_editable = ['is_active', 'priority']
+    search_fields = ['name', 'url']
