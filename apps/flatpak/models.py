@@ -289,6 +289,16 @@ class SiteConfig(models.Model):
         default=1,
         help_text="How often (in hours) to automatically check for new upstream versions. Set to 0 to disable."
     )
+    flatpak_remote_name = models.CharField(
+        max_length=100,
+        default='flathub',
+        help_text="Name of the Flatpak remote used to install SDK/runtime dependencies (e.g. 'flathub')"
+    )
+    flatpak_remote_url = models.URLField(
+        max_length=500,
+        default='https://dl.flathub.org/repo/flathub.flatpakrepo',
+        help_text="URL of the Flatpak remote .flatpakrepo file. Used to register the remote automatically if it is not already present on the builder."
+    )
 
     class Meta:
         verbose_name = 'Site Configuration'

@@ -598,8 +598,11 @@ def detect_and_install_dependencies(package, error_message, build=None):
     for dep in dependencies:
         log_build(build, 'info', f"Installing dependency: {dep}")
         try:
+            from apps.flatpak.models import SiteConfig as _SC
+            _cfg = _SC.get_solo()
+            _remote = _cfg.flatpak_remote_name or 'flathub'
             install_result = subprocess.run(
-                ['flatpak', 'install', '-y', '--noninteractive', 'flathub', dep],
+                ['flatpak', 'install', '-y', '--noninteractive', _remote, dep],
                 capture_output=True,
                 text=True,
                 timeout=600
@@ -820,6 +823,32 @@ def parse_manifest_dependencies(package, manifest_file, build=None):
         return {}
 
 
+def ensure_flatpak_remote(remote_name, remote_url, scope_flag, build=None):
+    """Add the Flatpak remote if it is not already registered in the given scope."""
+    check = subprocess.run(
+        ['flatpak', 'remotes', scope_flag],
+        capture_output=True, text=True, timeout=30
+    )
+    if remote_name in check.stdout:
+        return  # already present
+    if build:
+        log_build(build, 'info', f"Adding Flatpak remote '{remote_name}' from {remote_url} ({scope_flag.lstrip('-')})...")
+    try:
+        result = subprocess.run(
+            ['flatpak', 'remote-add', '--if-not-exists', scope_flag, remote_name, remote_url],
+            capture_output=True, text=True, timeout=120
+        )
+        if result.returncode != 0:
+            if build:
+                log_build(build, 'warning', f"Could not add remote '{remote_name}': {result.stderr.strip()}")
+        else:
+            if build:
+                log_build(build, 'info', f"✓ Remote '{remote_name}' added ({scope_flag.lstrip('-')})")
+    except Exception as e:
+        if build:
+            log_build(build, 'warning', f"Error adding remote '{remote_name}': {e}")
+
+
 def install_flatpak_dependencies(package, dependencies, build=None):
     """Install required Flatpak SDK and runtime dependencies."""
     refs_to_install = []
@@ -841,8 +870,15 @@ def install_flatpak_dependencies(package, dependencies, build=None):
     # Determine installation scope from build settings
     install_scope = f"--{package.installation_type}" if hasattr(package, 'installation_type') and package.installation_type else '--system'
     scope_name = package.installation_type if hasattr(package, 'installation_type') and package.installation_type else 'system'
-    
-    log_build(build, 'info', f"Installing {len(refs_to_install)} dependencies from flathub to {scope_name}...")
+
+    # Load remote config and ensure the remote is registered
+    from apps.flatpak.models import SiteConfig
+    site_config = SiteConfig.get_solo()
+    remote_name = site_config.flatpak_remote_name or 'flathub'
+    remote_url = site_config.flatpak_remote_url or 'https://dl.flathub.org/repo/flathub.flatpakrepo'
+    ensure_flatpak_remote(remote_name, remote_url, install_scope, build)
+
+    log_build(build, 'info', f"Installing {len(refs_to_install)} dependencies from {remote_name} to {scope_name}...")
     
     for ref in refs_to_install:
         log_build(build, 'info', f"Checking/installing: {ref}")
@@ -877,7 +913,7 @@ def install_flatpak_dependencies(package, dependencies, build=None):
             # Install to the specified scope
             log_build(build, 'info', f"Installing {ref} to {scope_name}...")
             install_result = subprocess.run(
-                ['flatpak', 'install', '-y', install_scope, '--noninteractive', 'flathub', ref],
+                ['flatpak', 'install', '-y', install_scope, '--noninteractive', remote_name, ref],
                 capture_output=True,
                 text=True,
                 timeout=600
@@ -891,9 +927,10 @@ def install_flatpak_dependencies(package, dependencies, build=None):
                     log_build(build, 'info', f"✓ {ref} is already installed")
                 elif scope_name == 'system' and ('insufficient permissions' in error_msg.lower() or 'permission denied' in error_msg.lower()):
                     # Try installing to user space instead
+                    ensure_flatpak_remote(remote_name, remote_url, '--user', build)
                     log_build(build, 'warning', f"Cannot install to system (permission denied), trying user installation...")
                     user_install = subprocess.run(
-                        ['flatpak', 'install', '-y', '--user', '--noninteractive', 'flathub', ref],
+                        ['flatpak', 'install', '-y', '--user', '--noninteractive', remote_name, ref],
                         capture_output=True,
                         text=True,
                         timeout=600

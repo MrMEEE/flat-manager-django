@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import GPGKey, Repository, RepositorySubset, Package, Build, BuildArtifact, BuildLog, Token
+from .models import GPGKey, Repository, RepositorySubset, Package, Build, BuildArtifact, BuildLog, Token, SiteConfig
 
 
 @admin.register(GPGKey)
@@ -65,3 +65,26 @@ class TokenAdmin(admin.ModelAdmin):
     list_filter = ['token_type', 'is_active', 'created_at']
     search_fields = ['name', 'repository__name']
     readonly_fields = ['token', 'created_at']
+
+
+@admin.register(SiteConfig)
+class SiteConfigAdmin(admin.ModelAdmin):
+    fieldsets = [
+        ('Build Retention', {
+            'fields': ['failed_builds_to_keep'],
+        }),
+        ('Upstream Version Checks', {
+            'fields': ['upstream_version_check_interval_hours'],
+        }),
+        ('Flatpak Remote', {
+            'description': 'Configure the Flatpak remote used to install SDK and runtime dependencies on the builder.',
+            'fields': ['flatpak_remote_name', 'flatpak_remote_url'],
+        }),
+    ]
+
+    def has_add_permission(self, request):
+        # Only allow one instance
+        return not SiteConfig.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
