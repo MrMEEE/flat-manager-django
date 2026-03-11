@@ -181,7 +181,7 @@
         
         function connectWebSocket() {
             const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${wsProtocol}//${window.location.hostname}:8001/ws/notifications/`;
+            const wsUrl = `${wsProtocol}//${window.location.host}/ws/notifications/`;
             
             try {
                 ws = new WebSocket(wsUrl);
