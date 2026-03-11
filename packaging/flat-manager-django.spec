@@ -255,6 +255,7 @@ exit 0
 %systemd_post flat-manager-web.service flat-manager-celery.service flat-manager-celery-beat.service flat-manager.target
 
 chown -R %{app_user}:%{app_group} %{data_dir} %{log_dir} %{conf_dir}
+chown    %{app_user}:%{app_group} %{install_dir}
 systemd-tmpfiles --create %{_tmpfilesdir}/flat-manager.conf 2>/dev/null || :
 
 # Label /var/run/flat-manager/ so nginx (httpd_t) can connect to the UNIX socket.
@@ -336,7 +337,9 @@ fi
 
 # %dir declares the parent directory so it is owned; the trailing-slash glob
 # that follows already implies the directory itself — no %dir needed for it.
-%dir                                           %{install_dir}
+# Must be owned by app_user: this is the home directory for the service account
+# and flatpak user installations write to ~/.local inside it.
+%dir %attr(0755, %{app_user}, %{app_group})    %{install_dir}
 %{install_dir}/app/
 
 %dir %attr(0755, %{app_user}, %{app_group})    %{data_dir}
