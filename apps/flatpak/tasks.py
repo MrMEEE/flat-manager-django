@@ -200,6 +200,7 @@ def package_from_git_task(package_id):
         flatpak_builder_cmd = [
             'flatpak-builder',
             '--force-clean',
+            '--disable-rofiles-fuse',  # rofiles-fuse requires FUSE privs; service user lacks them
             '--repo', build_repo_path,
             '--default-branch', package.branch,
             build_dir,
