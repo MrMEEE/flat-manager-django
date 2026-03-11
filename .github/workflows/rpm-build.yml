@@ -51,6 +51,8 @@ jobs:
             gcc \
             mariadb-connector-c-devel \
             flatpak \
+            checkpolicy \
+            policycoreutils \
             ${{ matrix.python_pkg }}
 
           # python3.11 on CS9 ships without pip — bootstrap it
