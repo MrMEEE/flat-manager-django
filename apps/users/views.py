@@ -48,8 +48,33 @@ class LogoutView(LoginRequiredMixin, View):
 class DashboardView(LoginRequiredMixin, View):
     """Main dashboard view."""
     def get(self, request):
+        from apps.flatpak.models import Repository, Package, Build
+        from django.db.models import Count, Max
+
+        repo_count = Repository.objects.filter(is_active=True).count()
+        package_count = Package.objects.count()
+
+        build_qs = Build.objects.all()
+        builds_building  = build_qs.filter(status='building').count()
+        builds_completed = build_qs.filter(status='completed').count()
+        builds_failed    = build_qs.filter(status='failed').count()
+        builds_published = build_qs.filter(status='published').count()
+
+        recent_builds = (
+            Build.objects
+            .select_related('package', 'package__repository')
+            .order_by('-started_at')[:10]
+        )
+
         context = {
             'user': request.user,
+            'repo_count':        repo_count,
+            'package_count':     package_count,
+            'builds_building':   builds_building,
+            'builds_completed':  builds_completed,
+            'builds_failed':     builds_failed,
+            'builds_published':  builds_published,
+            'recent_builds':     recent_builds,
         }
         return render(request, 'users/dashboard.html', context)
 
