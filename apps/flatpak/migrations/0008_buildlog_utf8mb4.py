@@ -22,6 +22,10 @@ class Migration(migrations.Migration):
     This migration is a no-op on non-MySQL backends.
     """
 
+    # DDL (ALTER TABLE) causes an implicit commit in MySQL; Django must not
+    # wrap this migration in a transaction.
+    atomic = False
+
     dependencies = [
         ("flatpak", "0007_alter_package_unique_together"),
     ]
