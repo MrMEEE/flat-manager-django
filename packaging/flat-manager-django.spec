@@ -72,7 +72,7 @@ Requires:       (redis >= 7 or valkey >= 7)
 Requires:       mariadb
 Requires:       flatpak
 Requires:       flatpak-builder
-Requires:       appstream
+Requires:       appstream-compose
 Requires:       ostree
 Requires:       openssl
 Requires:       policycoreutils-python-utils
