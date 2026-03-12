@@ -11,14 +11,20 @@ Supported distributions: **CentOS Stream 9**, **CentOS Stream 10**, **RHEL 9**, 
 **RHEL 9 / CentOS Stream 9**
 ```bash
 dnf install -y epel-release
-dnf config-manager --set-enabled crb      # enables python3.11-devel etc.
+dnf config-manager --set-enabled crb      # required for appstream-compose (flatpak-builder dep)
 ```
 
 **RHEL 10 / CentOS Stream 10**
 ```bash
 dnf install -y epel-release
-dnf config-manager --set-enabled crb
+dnf config-manager --set-enabled crb      # required for appstream-compose (flatpak-builder dep)
 ```
+
+> **RHEL 9 subscribers:** the CRB repo is named `codeready-builder-for-rhel-9-x86_64-rpms`.
+> Enable it with:
+> ```bash
+> subscription-manager repos --enable codeready-builder-for-rhel-9-x86_64-rpms
+> ```
 
 ### Install system dependencies
 
@@ -29,6 +35,7 @@ dnf install -y \
     redis \           # or: dnf install -y valkey
     flatpak \
     flatpak-builder \
+    appstream-compose \   # required by flatpak-builder; provided by the CRB repo
     ostree
 ```
 
