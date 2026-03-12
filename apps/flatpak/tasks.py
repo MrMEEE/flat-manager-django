@@ -53,9 +53,10 @@ def get_flatpak_builder_cmd(build=None):
         if build:
             log_build(build, 'info', "org.flatpak.Builder installed successfully")
 
-    # --filesystem=host lets the flatpak app reach /tmp build dirs and
-    # /var/lib/flat-manager/repos which are outside the default home sandbox
-    return ['flatpak', 'run', '--user', '--filesystem=host', 'org.flatpak.Builder']
+    # --filesystem=host gives access to the rest of the host but Flatpak always
+    # mounts a private tmpfs for /tmp even with that flag, so we add --filesystem=/tmp
+    # explicitly so the flatpak-builder process can reach /tmp/fmdc_build_* dirs.
+    return ['flatpak', 'run', '--user', '--filesystem=host', '--filesystem=/tmp', 'org.flatpak.Builder']
 
 
 class BuildCancelledError(Exception):
