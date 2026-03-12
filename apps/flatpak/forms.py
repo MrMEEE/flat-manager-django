@@ -97,7 +97,7 @@ class SiteConfigForm(forms.ModelForm):
 
     class Meta:
         model = SiteConfig
-        fields = ['failed_builds_to_keep', 'upstream_version_check_interval_hours']
+        fields = ['failed_builds_to_keep', 'upstream_version_check_interval_hours', 'build_timeout_minutes']
         widgets = {
             'failed_builds_to_keep': forms.NumberInput(
                 attrs={'class': 'form-control', 'min': '0', 'style': 'width: 130px;'}
@@ -105,10 +105,14 @@ class SiteConfigForm(forms.ModelForm):
             'upstream_version_check_interval_hours': forms.NumberInput(
                 attrs={'class': 'form-control', 'min': '0', 'style': 'width: 130px;'}
             ),
+            'build_timeout_minutes': forms.NumberInput(
+                attrs={'class': 'form-control', 'min': '1', 'style': 'width: 130px;'}
+            ),
         }
         help_texts = {
             'failed_builds_to_keep': 'Maximum number of failed builds to retain per package. Set to 0 to keep all failed builds.',
             'upstream_version_check_interval_hours': 'How often to check for new upstream release tags. Set to 0 to disable automatic checks.',
+            'build_timeout_minutes': 'Maximum time (minutes) for a flatpak-builder run. Increase for large packages like GRASS GIS.',
         }
 
 

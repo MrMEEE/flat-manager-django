@@ -23,7 +23,7 @@ def package_from_git_task(package_id):
     3. Exports the build to the build OSTree repository
     4. Updates build status and logs
     """
-    from apps.flatpak.models import Package, Build, BuildLog
+    from apps.flatpak.models import Package, Build, BuildLog, SiteConfig
     
     package = None
     build = None
@@ -207,12 +207,13 @@ def package_from_git_task(package_id):
             manifest_file
         ]
         
+        build_timeout = SiteConfig.get_solo().build_timeout_minutes * 60
         builder_result = subprocess.run(
             flatpak_builder_cmd,
             cwd=source_dir,
             capture_output=True,
             text=True,
-            timeout=1800  # 30 minutes max
+            timeout=build_timeout
         )
         
         # Log output
@@ -237,7 +238,7 @@ def package_from_git_task(package_id):
                         cwd=source_dir,
                         capture_output=True,
                         text=True,
-                        timeout=1800
+                        timeout=build_timeout
                     )
                     
                     if builder_result.stdout:

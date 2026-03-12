@@ -289,6 +289,10 @@ class SiteConfig(models.Model):
         default=1,
         help_text="How often (in hours) to automatically check for new upstream versions. Set to 0 to disable."
     )
+    build_timeout_minutes = models.PositiveIntegerField(
+        default=120,
+        help_text="Maximum time (in minutes) allowed for a single flatpak-builder run. Increase for large packages."
+    )
     class Meta:
         verbose_name = 'Site Configuration'
 
