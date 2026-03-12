@@ -67,6 +67,23 @@
                     </div>
                     {% endif %}
                 </div>
+                <div class="mb-3">
+                    <label for="{{ form.build_timeout_minutes.id_for_label }}" class="form-label fw-semibold">
+                        {{ form.build_timeout_minutes.label }}
+                    </label>
+                    <div class="d-flex align-items-center gap-2">
+                        {{ form.build_timeout_minutes }}
+                        <span class="text-muted">minutes</span>
+                    </div>
+                    {% if form.build_timeout_minutes.help_text %}
+                    <div class="form-text">{{ form.build_timeout_minutes.help_text }}</div>
+                    {% endif %}
+                    {% if form.build_timeout_minutes.errors %}
+                    <div class="invalid-feedback d-block">
+                        {% for error in form.build_timeout_minutes.errors %}{{ error }}{% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
             </div>
         </div>
     </div>
