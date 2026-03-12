@@ -301,8 +301,11 @@ def package_from_git_task(self, package_id):
         # that calls `appstreamcli compose` rather than the removed `appstream-compose`
         # binary.  Falls back to system flatpak-builder if the app is unavailable.
         fb_prefix = get_flatpak_builder_cmd(build)
+        # Pass --user/--system to flatpak-builder so it looks in the right
+        # Flatpak installation for the SDK/runtime (matches installation_type).
+        install_flag = '--user' if getattr(package, 'installation_type', 'user') == 'user' else '--system'
         flatpak_builder_cmd = fb_prefix + [
-            '--user',           # look in the user Flatpak installation for SDK/runtime
+            install_flag,
             '--force-clean',
             '--disable-rofiles-fuse',  # rofiles-fuse requires FUSE privs; service user lacks them
             '--repo', build_repo_path,
