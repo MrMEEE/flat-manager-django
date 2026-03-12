@@ -55,7 +55,7 @@ def get_flatpak_builder_cmd(build=None):
 
     # --filesystem=host lets the flatpak app reach /tmp build dirs and
     # /var/lib/flat-manager/repos which are outside the default home sandbox
-    return ['flatpak', 'run', '--user', '--filesystem=host', 'org.flatpak.Builder', '--']
+    return ['flatpak', 'run', '--user', '--filesystem=host', 'org.flatpak.Builder']
 
 
 class BuildCancelledError(Exception):
