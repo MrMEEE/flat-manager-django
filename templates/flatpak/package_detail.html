@@ -245,6 +245,11 @@
                                             onclick="publishBuildAction({{ package.pk }})">
                                         <i class="bi bi-cloud-upload"></i> Publish
                                     </button>
+                                    {% elif build.status in 'building,committing,publishing' %}
+                                    <button type="button" class="btn btn-sm btn-outline-danger ms-1"
+                                            onclick="cancelBuildRecord({{ build.pk }}, this)">
+                                        <i class="bi bi-x-circle"></i> Cancel
+                                    </button>
                                     {% endif %}
                                 </td>
                             </tr>
@@ -438,6 +443,33 @@
                 }
             } catch (e) { showAlert('Error', e.message); }
         });
+    };
+
+    // Cancel Build Record via AJAX (individual build, not the whole package)
+    window.cancelBuildRecord = async function(id, btn) {
+        if (!confirm('Cancel this build? It will be marked as cancelled.')) return;
+        try {
+            const r = await fetch(`/builds/${id}/cancel/`, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': '{{ csrf_token }}', 'Content-Type': 'application/json' },
+                credentials: 'same-origin'
+            });
+            if (r.ok) {
+                // Replace the cancel button with a cancelled badge in table row
+                const row = btn ? btn.closest('tr') : null;
+                if (row) {
+                    const statusCell = row.querySelector('td:nth-child(2)');
+                    if (statusCell) statusCell.innerHTML = '<span class="badge bg-warning">Cancelled</span>';
+                    if (btn) btn.remove();
+                }
+                // If this is the current build, update header too
+                refreshBuildHistory();
+                updateBuildDetails();
+            } else {
+                const d = await r.json().catch(() => ({}));
+                showAlert('Cancel Failed', d.error || 'Failed to cancel build.', 'danger');
+            }
+        } catch (e) { showAlert('Error', e.message, 'danger'); }
     };
 
     // Cancel build via AJAX
@@ -861,6 +893,7 @@
                         <a href="/builds/${b.id}/" class="btn btn-sm btn-outline-primary"><i class="bi bi-eye"></i> View</a>
                         ${b.status === 'built' ? `<button type="button" class="btn btn-sm btn-outline-info ms-1" onclick="commitBuildAction(${buildId})"><i class="bi bi-check-circle"></i> Commit</button>` : ''}
                         ${b.status === 'committed' ? `<button type="button" class="btn btn-sm btn-outline-success ms-1" onclick="publishBuildAction(${buildId})"><i class="bi bi-cloud-upload"></i> Publish</button>` : ''}
+                        ${'building,committing,publishing'.includes(b.status) ? `<button type="button" class="btn btn-sm btn-outline-danger ms-1" onclick="cancelBuildRecord(${b.id}, this)"><i class="bi bi-x-circle"></i> Cancel</button>` : ''}
                     </td>
                 `;
                 if (isNew) {

@@ -47,6 +47,11 @@
             <i class="bi bi-cloud-upload"></i> Publish
         </button>
         {% endif %}
+        {% if build.status in 'building,committing,publishing' %}
+        <button type="button" class="btn btn-outline-danger" id="btn-cancel" onclick="cancelBuildRecord({{ build.pk }})">
+            <i class="bi bi-x-circle"></i> Cancel Build
+        </button>
+        {% endif %}
         <a href="{% url 'flatpak:package_detail' build.package.pk %}" class="btn btn-outline-secondary">
             <i class="bi bi-arrow-left"></i> Back to Package
         </a>
@@ -374,6 +379,28 @@
                     showError('Publish Failed', d.error || r.statusText || 'Unknown error');
                 }
             } catch (e) { showError('Publish Error', e.message); }
+        });
+    }
+
+    async function cancelBuildRecord(id) {
+        showConfirm('Cancel Build', 'Mark this build as cancelled? The build process will be stopped on next checkpoint.', 'Cancel Build', 'btn-danger', async () => {
+            try {
+                const r = await fetch(`/builds/${id}/cancel/`, {
+                    method: 'POST',
+                    headers: { 'X-CSRFToken': '{{ csrf_token }}', 'Content-Type': 'application/json' },
+                    credentials: 'same-origin'
+                });
+                if (r.ok) {
+                    buildStatus = 'cancelled';
+                    updateStatusBadge('cancelled');
+                    updateActionButtons('cancelled');
+                    const btn = document.getElementById('btn-cancel');
+                    if (btn) btn.remove();
+                } else {
+                    const d = await safeJson(r);
+                    showError('Cancel Failed', d.error || r.statusText || 'Unknown error');
+                }
+            } catch (e) { showError('Cancel Error', e.message); }
         });
     }
 

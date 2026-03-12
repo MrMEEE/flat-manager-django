@@ -820,6 +820,37 @@ class BuildUnpublishView(LoginRequiredMixin, View):
         return JsonResponse({'status': 'ok', 'message': f'Build #{build.build_number} unpublished from build-repo'})
 
 
+class BuildCancelView(LoginRequiredMixin, View):
+    """Cancel an in-progress build (building / committing / publishing)."""
+
+    CANCELLABLE = {'building', 'committing', 'publishing'}
+
+    def post(self, request, pk):
+        build = get_object_or_404(Build, pk=pk)
+        if build.status not in self.CANCELLABLE:
+            return JsonResponse(
+                {'error': f'Build cannot be cancelled in status \'{build.status}\''},
+                status=400
+            )
+
+        build.status = 'cancelled'
+        from django.utils import timezone as tz
+        build.completed_at = tz.now()
+        build.save(update_fields=['status', 'completed_at'])
+
+        # Update package status if this is the current build
+        package = build.package
+        latest = package.builds.order_by('-build_number').first()
+        if latest and latest.pk == build.pk:
+            package.status = 'cancelled'
+            package.save(update_fields=['status'])
+
+        return JsonResponse({
+            'status': 'cancelled',
+            'message': f'Build #{build.build_number} has been cancelled.',
+        })
+
+
 def _ostree_refs(repo_path):
     from apps.flatpak.utils.sync import ostree_refs
     return ostree_refs(repo_path)

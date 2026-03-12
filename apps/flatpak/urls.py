@@ -34,6 +34,7 @@ urlpatterns = [
     path('builds/<int:build_pk>/promote/', views.PromoteView.as_view(), name='promote'),
     path('builds/<int:pk>/promotions/', views.BuildPromotionsApiView.as_view(), name='build_promotions_api'),
     path('builds/<int:pk>/unpublish/', views.BuildUnpublishView.as_view(), name='build_unpublish'),
+    path('builds/<int:pk>/cancel/', views.BuildCancelView.as_view(), name='build_cancel'),
     path('promotions/', views.PromotionListView.as_view(), name='promotion_list'),
     path('promotions/sync/', views.SyncReposView.as_view(), name='promotions_sync'),
     path('promotions/<int:pk>/delete/', views.PromotionDeleteView.as_view(), name='promotion_delete'),
