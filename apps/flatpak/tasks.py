@@ -302,6 +302,7 @@ def package_from_git_task(self, package_id):
         # binary.  Falls back to system flatpak-builder if the app is unavailable.
         fb_prefix = get_flatpak_builder_cmd(build)
         flatpak_builder_cmd = fb_prefix + [
+            '--user',           # look in the user Flatpak installation for SDK/runtime
             '--force-clean',
             '--disable-rofiles-fuse',  # rofiles-fuse requires FUSE privs; service user lacks them
             '--repo', build_repo_path,
