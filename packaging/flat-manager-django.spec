@@ -299,6 +299,26 @@ if [ $1 -eq 1 ] && [ ! -f /etc/pki/tls/certs/flat-manager.crt ]; then
     chmod 0600 /etc/pki/tls/private/flat-manager.key
 fi
 
+# flatpak-builder calls appstream-compose inside a bwrap sandbox.
+# On RHEL9 the bwrap sandbox may not expose the host /bin symlink, and newer
+# Freedesktop SDK runtimes (23.08+) dropped the standalone binary in favour of
+# `appstreamcli compose`.  Create a wrapper at /usr/local/bin so that the binary
+# is reachable under /usr (which bwrap bind-mounts ro from the host).
+if [ ! -f /usr/local/bin/appstream-compose ]; then
+    cat > /usr/local/bin/appstream-compose << 'ACEOF'
+#!/bin/sh
+# appstream-compose wrapper created by flat-manager-django
+# Delegates to appstreamcli compose (available in Freedesktop SDK and on RHEL9)
+if command -v appstreamcli >/dev/null 2>&1; then
+    exec appstreamcli compose "$@"
+elif [ -x /usr/bin/appstream-compose ]; then
+    exec /usr/bin/appstream-compose "$@"
+fi
+exit 0
+ACEOF
+    chmod 0755 /usr/local/bin/appstream-compose
+fi
+
 if [ $1 -eq 1 ]; then
     echo ""
     echo "=================================================================="

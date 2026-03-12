@@ -206,15 +206,53 @@ def package_from_git_task(package_id):
             build_dir,
             manifest_file
         ]
-        
+
+        # flatpak-builder calls appstream-compose inside a bwrap sandbox after each build.
+        # On RHEL9 the bwrap sandbox may not expose the host's /bin even when the binary
+        # is installed (bwrap creates its own namespace where /bin is not a symlink to
+        # /usr/bin).  Newer Freedesktop SDK runtimes (23.08+) also removed the standalone
+        # appstream-compose binary, replacing it with `appstreamcli compose`.
+        #
+        # Fix: always inject a shim as the first entry in PATH.  The shim:
+        #   1. delegates to `appstreamcli compose` if available (present in SDK and RHEL9)
+        #   2. falls back to the real appstream-compose absolute path if found on the host
+        #   3. exits 0 silently — AppStream cache generation is optional; the flatpak works
+        import tempfile as _tmpfile, stat as _stat, shutil as _shutil
+        _stub_dir = _tmpfile.mkdtemp(prefix='fmdc_stub_')
+        _stub_path = os.path.join(_stub_dir, 'appstream-compose')
+        _real_bin = _shutil.which('appstream-compose') or ''
+        with open(_stub_path, 'w') as _f:
+            _f.write(
+                '#!/bin/sh\n'
+                '# appstream-compose shim injected by flat-manager-django\n'
+                '# Delegates to appstreamcli compose (preferred) or the host binary.\n'
+                'if command -v appstreamcli >/dev/null 2>&1; then\n'
+                '    exec appstreamcli compose "$@"\n'
+                f'elif [ -x "{_real_bin}" ]; then\n'
+                f'    exec "{_real_bin}" "$@"\n'
+                'fi\n'
+                '# Neither available — skip quietly (AppStream cache is optional)\n'
+                'exit 0\n'
+            )
+        os.chmod(_stub_path, _stat.S_IRWXU | _stat.S_IRGRP | _stat.S_IXGRP | _stat.S_IROTH | _stat.S_IXOTH)
+        _build_env = os.environ.copy()
+        _build_env['PATH'] = _stub_dir + ':' + _build_env.get('PATH', '/usr/local/bin:/usr/bin:/bin')
+        log_build(build, 'info', f"appstream-compose shim active (real binary: {_real_bin or 'not found'})")
+
         build_timeout = SiteConfig.get_solo().build_timeout_minutes * 60
-        builder_result = subprocess.run(
-            flatpak_builder_cmd,
-            cwd=source_dir,
-            capture_output=True,
-            text=True,
-            timeout=build_timeout
-        )
+        try:
+            builder_result = subprocess.run(
+                flatpak_builder_cmd,
+                cwd=source_dir,
+                capture_output=True,
+                text=True,
+                timeout=build_timeout,
+                env=_build_env,
+            )
+        finally:
+            if os.path.isdir(_stub_dir):
+                import shutil as _shutil2
+                _shutil2.rmtree(_stub_dir, ignore_errors=True)
         
         # Log output
         if builder_result.stdout:
@@ -238,7 +276,8 @@ def package_from_git_task(package_id):
                         cwd=source_dir,
                         capture_output=True,
                         text=True,
-                        timeout=build_timeout
+                        timeout=build_timeout,
+                        env=_build_env,
                     )
                     
                     if builder_result.stdout:
