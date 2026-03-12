@@ -1005,61 +1005,86 @@ def cleanup_stale_builds():
     """
     Periodic task that detects and fails stale builds that are stuck in active states.
     This handles cases where builds were interrupted by service restarts or crashes.
-    Runs every 5 minutes via Celery Beat.
+    Interval and stale threshold are configurable via SiteConfig.
     """
-    from apps.flatpak.models import Package, Build
+    from apps.flatpak.models import Package, Build, SiteConfig
     from datetime import timedelta
-    
-    # Active states that should have activity
+
+    config = SiteConfig.get_solo()
+    interval_seconds = config.stale_build_check_interval_seconds
+    timeout_minutes = config.stale_build_timeout_minutes
+
+    # Sync the beat schedule with the current config value
+    try:
+        from django_celery_beat.models import PeriodicTask, IntervalSchedule
+        if interval_seconds > 0:
+            schedule, _ = IntervalSchedule.objects.get_or_create(
+                every=interval_seconds,
+                period=IntervalSchedule.SECONDS,
+            )
+            PeriodicTask.objects.filter(name='cleanup-stale-builds').update(
+                interval=schedule, enabled=True
+            )
+        else:
+            PeriodicTask.objects.filter(name='cleanup-stale-builds').update(enabled=False)
+            logger.info('Stale build check is disabled (interval=0)')
+            return 'Stale build check disabled'
+    except Exception as e:
+        logger.warning(f'Failed to sync stale build check schedule: {e}')
+
+    # Active states that should have log activity
     active_states = ['building', 'committing', 'publishing']
-    
-    # Consider a build stale if it's been in an active state for more than 30 minutes
-    # with no recent log activity
-    stale_threshold = timezone.now() - timedelta(minutes=30)
-    
+    stale_threshold = timezone.now() - timedelta(minutes=timeout_minutes)
+    recent_activity_threshold = timezone.now() - timedelta(minutes=timeout_minutes)
+
     stale_packages = Package.objects.filter(
         status__in=active_states,
         started_at__lt=stale_threshold
     )
-    
+
     count = 0
     for package in stale_packages:
-        # Get the current Build history record
         build = Build.objects.filter(
             package=package,
             build_number=package.build_number
         ).first()
-        
-        # Check if there are recent logs (within last 5 minutes)
+
+        # Check for recent log activity
         has_recent_logs = False
         if build:
             has_recent_logs = build.logs.filter(
-                timestamp__gte=timezone.now() - timedelta(minutes=5)
+                timestamp__gte=recent_activity_threshold
             ).exists()
-        
+
         if not has_recent_logs:
-            # No recent activity - mark as failed
-            logger.warning(f"Detected stale package {package.package_id} (build #{package.build_number}) in {package.status} state - marking as failed")
-            
+            stuck_status = package.status  # capture before overwrite
+            logger.warning(
+                f'Stale build detected: {package.package_id} (build #{package.build_number}) '
+                f'stuck in \'{stuck_status}\' for >{timeout_minutes} min with no log activity'
+            )
+
             package.status = 'failed'
-            package.error_message = f"Build was interrupted (stuck in '{package.status}' state with no activity). Possibly due to service restart or crash."
-            package.save()
-            
+            package.error_message = (
+                f"Build was interrupted (stuck in '{stuck_status}' state with no log "
+                f"activity for >{timeout_minutes} minutes). "
+                f"Possibly caused by a service restart or crash."
+            )
+            package.save(update_fields=['status', 'error_message'])
+
             if build:
                 build.status = 'failed'
                 build.error_message = package.error_message
                 build.completed_at = timezone.now()
-                build.save()
-                log_build(build, 'error', f"Build marked as failed due to inactivity (was stuck in '{package.status}' state)")
-            
+                build.save(update_fields=['status', 'error_message', 'completed_at'])
+                log_build(build, 'error', f'Build marked as failed: stuck in \'{stuck_status}\' state with no activity')
+
             send_build_status_update(package.id, 'failed', 'Build was interrupted and marked as failed')
-            
             count += 1
-    
+
     if count > 0:
-        logger.info(f"Cleaned up {count} stale build(s)")
-    
-    return f"Checked stale builds: {count} failed"
+        logger.info(f'cleanup_stale_builds: marked {count} stuck build(s) as failed')
+
+    return f'Checked stale builds: {count} failed'
 
 
 @shared_task

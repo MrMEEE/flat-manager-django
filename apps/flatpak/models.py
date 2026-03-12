@@ -293,6 +293,14 @@ class SiteConfig(models.Model):
         default=120,
         help_text="Maximum time (in minutes) allowed for a single flatpak-builder run. Increase for large packages."
     )
+    stale_build_check_interval_seconds = models.PositiveIntegerField(
+        default=30,
+        help_text="How often (in seconds) to check for stuck builds. Set to 0 to disable. Default: 30."
+    )
+    stale_build_timeout_minutes = models.PositiveIntegerField(
+        default=30,
+        help_text="Minutes of log inactivity before an in-progress build is considered stuck and marked as failed."
+    )
     class Meta:
         verbose_name = 'Site Configuration'
 

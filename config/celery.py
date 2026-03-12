@@ -28,9 +28,9 @@ app.conf.beat_schedule = {
     },
     'cleanup-stale-builds': {
         'task': 'apps.flatpak.tasks.cleanup_stale_builds',
-        'schedule': 300.0,  # Run every 5 minutes
+        'schedule': 30.0,  # Default 30 seconds; overridden at runtime by SiteConfig
         'options': {
-            'expires': 60.0,  # Task expires after 1 minute if not executed
+            'expires': 20.0,
         }
     },
     'cleanup-failed-builds': {

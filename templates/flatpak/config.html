@@ -88,6 +88,56 @@
         </div>
     </div>
 
+    <!-- Stale Build Detection -->
+    <div class="col-lg-6 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-exclamation-triangle"></i> Stale Build Detection</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-3">
+                    Periodically checks for builds that are stuck in an active state
+                    (<em>building / committing / publishing</em>) with no recent log activity,
+                    and automatically marks them as failed.
+                </p>
+                <div class="mb-3">
+                    <label for="{{ form.stale_build_check_interval_seconds.id_for_label }}" class="form-label fw-semibold">
+                        {{ form.stale_build_check_interval_seconds.label }}
+                    </label>
+                    <div class="d-flex align-items-center gap-2">
+                        {{ form.stale_build_check_interval_seconds }}
+                        <span class="text-muted">seconds (0 = disabled)</span>
+                    </div>
+                    {% if form.stale_build_check_interval_seconds.help_text %}
+                    <div class="form-text">{{ form.stale_build_check_interval_seconds.help_text }}</div>
+                    {% endif %}
+                    {% if form.stale_build_check_interval_seconds.errors %}
+                    <div class="invalid-feedback d-block">
+                        {% for error in form.stale_build_check_interval_seconds.errors %}{{ error }}{% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="mb-3">
+                    <label for="{{ form.stale_build_timeout_minutes.id_for_label }}" class="form-label fw-semibold">
+                        {{ form.stale_build_timeout_minutes.label }}
+                    </label>
+                    <div class="d-flex align-items-center gap-2">
+                        {{ form.stale_build_timeout_minutes }}
+                        <span class="text-muted">minutes without log activity</span>
+                    </div>
+                    {% if form.stale_build_timeout_minutes.help_text %}
+                    <div class="form-text">{{ form.stale_build_timeout_minutes.help_text }}</div>
+                    {% endif %}
+                    {% if form.stale_build_timeout_minutes.errors %}
+                    <div class="invalid-feedback d-block">
+                        {% for error in form.stale_build_timeout_minutes.errors %}{{ error }}{% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Flatpak Remote -->
     <div class="col-lg-6 mb-4">
         <div class="card">

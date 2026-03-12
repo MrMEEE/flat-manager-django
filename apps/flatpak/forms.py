@@ -97,7 +97,13 @@ class SiteConfigForm(forms.ModelForm):
 
     class Meta:
         model = SiteConfig
-        fields = ['failed_builds_to_keep', 'upstream_version_check_interval_hours', 'build_timeout_minutes']
+        fields = [
+            'failed_builds_to_keep',
+            'upstream_version_check_interval_hours',
+            'build_timeout_minutes',
+            'stale_build_check_interval_seconds',
+            'stale_build_timeout_minutes',
+        ]
         widgets = {
             'failed_builds_to_keep': forms.NumberInput(
                 attrs={'class': 'form-control', 'min': '0', 'style': 'width: 130px;'}
@@ -108,11 +114,19 @@ class SiteConfigForm(forms.ModelForm):
             'build_timeout_minutes': forms.NumberInput(
                 attrs={'class': 'form-control', 'min': '1', 'style': 'width: 130px;'}
             ),
+            'stale_build_check_interval_seconds': forms.NumberInput(
+                attrs={'class': 'form-control', 'min': '0', 'style': 'width: 130px;'}
+            ),
+            'stale_build_timeout_minutes': forms.NumberInput(
+                attrs={'class': 'form-control', 'min': '1', 'style': 'width: 130px;'}
+            ),
         }
         help_texts = {
             'failed_builds_to_keep': 'Maximum number of failed builds to retain per package. Set to 0 to keep all failed builds.',
             'upstream_version_check_interval_hours': 'How often to check for new upstream release tags. Set to 0 to disable automatic checks.',
             'build_timeout_minutes': 'Maximum time (minutes) for a flatpak-builder run. Increase for large packages like GRASS GIS.',
+            'stale_build_check_interval_seconds': 'How often to scan for stuck builds. Set to 0 to disable.',
+            'stale_build_timeout_minutes': 'Minutes without log activity before an in-progress build is marked as failed.',
         }
 
 
