@@ -8,13 +8,111 @@ import os
 import subprocess
 import shutil
 import tempfile
+import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 
-@shared_task
-def package_from_git_task(package_id):
+def get_flatpak_builder_cmd(build=None):
+    """
+    Return the command tokens needed to invoke flatpak-builder.
+
+    Prefers ``org.flatpak.Builder`` (the upstream Flatpak app) over the system
+    RPM because its bundled flatpak-builder correctly uses ``appstreamcli compose``
+    instead of the removed ``appstream-compose`` binary (SDK 23.08+).
+
+    Auto-installs org.flatpak.Builder from flathub on first use (one-time,
+    ~200 MB download).  Falls back to the system ``flatpak-builder`` binary if
+    the install fails for any reason.
+
+    Returns a list of command tokens that should be prepended to the
+    flatpak-builder argument list, e.g.::
+
+        ['flatpak', 'run', '--user', '--filesystem=host', 'org.flatpak.Builder', '--']
+    """
+    check = subprocess.run(
+        ['flatpak', 'info', '--user', 'org.flatpak.Builder'],
+        capture_output=True, text=True
+    )
+    if check.returncode != 0:
+        if build:
+            log_build(build, 'info',
+                      "org.flatpak.Builder not installed — installing from flathub (one-time setup, ~200 MB)...")
+        install = subprocess.run(
+            ['flatpak', 'install', '--user', '-y', '--noninteractive',
+             'flathub', 'org.flatpak.Builder'],
+            capture_output=True, text=True, timeout=600
+        )
+        if install.returncode != 0:
+            if build:
+                log_build(build, 'warning',
+                          f"Failed to install org.flatpak.Builder: {install.stderr.strip()}"
+                          " — falling back to system flatpak-builder (appstream may fail)")
+            return ['flatpak-builder']
+        if build:
+            log_build(build, 'info', "org.flatpak.Builder installed successfully")
+
+    # --filesystem=host lets the flatpak app reach /tmp build dirs and
+    # /var/lib/flat-manager/repos which are outside the default home sandbox
+    return ['flatpak', 'run', '--user', '--filesystem=host', 'org.flatpak.Builder', '--']
+
+
+class BuildCancelledError(Exception):
+    """Raised when the DB build record is set to 'cancelled' during a build."""
+
+
+def run_cancellable(cmd, cwd, build, timeout_seconds):
+    """
+    Run *cmd* as a subprocess, periodically checking whether *build* has been
+    cancelled in the database.  Kills the process and raises
+    :exc:`BuildCancelledError` if cancellation is detected.
+
+    Returns a :class:`subprocess.CompletedProcess` on success (or non-zero exit).
+    """
+    proc = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    poll_interval = 5  # seconds between cancellation checks
+    elapsed = 0
+    try:
+        while proc.poll() is None:
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+            if elapsed >= timeout_seconds:
+                proc.kill()
+                proc.wait()
+                raise RuntimeError(
+                    f"Build timed out after {timeout_seconds // 60} minutes"
+                )
+            # Re-query only the status column to avoid stale-object issues
+            from apps.flatpak.models import Build as _Build
+            current_status = _Build.objects.filter(pk=build.pk).values_list('status', flat=True).first()
+            if current_status == 'cancelled':
+                proc.kill()
+                proc.wait()
+                raise BuildCancelledError("Build was cancelled by user")
+    except BuildCancelledError:
+        raise
+    except RuntimeError:
+        raise
+    except Exception:
+        proc.kill()
+        proc.wait()
+        raise
+
+    stdout, stderr = proc.stdout.read(), proc.stderr.read()
+    return subprocess.CompletedProcess(
+        args=cmd, returncode=proc.returncode, stdout=stdout, stderr=stderr
+    )
+
+
+@shared_task(bind=True)
+def package_from_git_task(self, package_id):
     """
     Build a flatpak from git repository using flatpak-builder.
     This task:
@@ -41,7 +139,8 @@ def package_from_git_task(package_id):
             package=package,
             build_number=package.build_number,
             status='building',
-            started_at=timezone.now()
+            started_at=timezone.now(),
+            celery_task_id=self.request.id or '',
         )
         
         # Update package status
@@ -197,8 +296,11 @@ def package_from_git_task(package_id):
         # Run flatpak-builder
         log_build(build, 'info', "Running flatpak-builder (this may take a while)...")
         
-        flatpak_builder_cmd = [
-            'flatpak-builder',
+        # Use org.flatpak.Builder (flatpak app) which ships a modern flatpak-builder
+        # that calls `appstreamcli compose` rather than the removed `appstream-compose`
+        # binary.  Falls back to system flatpak-builder if the app is unavailable.
+        fb_prefix = get_flatpak_builder_cmd(build)
+        flatpak_builder_cmd = fb_prefix + [
             '--force-clean',
             '--disable-rofiles-fuse',  # rofiles-fuse requires FUSE privs; service user lacks them
             '--repo', build_repo_path,
@@ -207,52 +309,13 @@ def package_from_git_task(package_id):
             manifest_file
         ]
 
-        # flatpak-builder calls appstream-compose inside a bwrap sandbox after each build.
-        # On RHEL9 the bwrap sandbox may not expose the host's /bin even when the binary
-        # is installed (bwrap creates its own namespace where /bin is not a symlink to
-        # /usr/bin).  Newer Freedesktop SDK runtimes (23.08+) also removed the standalone
-        # appstream-compose binary, replacing it with `appstreamcli compose`.
-        #
-        # Fix: always inject a shim as the first entry in PATH.  The shim:
-        #   1. delegates to `appstreamcli compose` if available (present in SDK and RHEL9)
-        #   2. falls back to the real appstream-compose absolute path if found on the host
-        #   3. exits 0 silently — AppStream cache generation is optional; the flatpak works
-        import tempfile as _tmpfile, stat as _stat, shutil as _shutil
-        _stub_dir = _tmpfile.mkdtemp(prefix='fmdc_stub_')
-        _stub_path = os.path.join(_stub_dir, 'appstream-compose')
-        _real_bin = _shutil.which('appstream-compose') or ''
-        with open(_stub_path, 'w') as _f:
-            _f.write(
-                '#!/bin/sh\n'
-                '# appstream-compose shim injected by flat-manager-django\n'
-                '# Delegates to appstreamcli compose (preferred) or the host binary.\n'
-                'if command -v appstreamcli >/dev/null 2>&1; then\n'
-                '    exec appstreamcli compose "$@"\n'
-                f'elif [ -x "{_real_bin}" ]; then\n'
-                f'    exec "{_real_bin}" "$@"\n'
-                'fi\n'
-                '# Neither available — skip quietly (AppStream cache is optional)\n'
-                'exit 0\n'
-            )
-        os.chmod(_stub_path, _stat.S_IRWXU | _stat.S_IRGRP | _stat.S_IXGRP | _stat.S_IROTH | _stat.S_IXOTH)
-        _build_env = os.environ.copy()
-        _build_env['PATH'] = _stub_dir + ':' + _build_env.get('PATH', '/usr/local/bin:/usr/bin:/bin')
-        log_build(build, 'info', f"appstream-compose shim active (real binary: {_real_bin or 'not found'})")
-
         build_timeout = SiteConfig.get_solo().build_timeout_minutes * 60
-        try:
-            builder_result = subprocess.run(
-                flatpak_builder_cmd,
-                cwd=source_dir,
-                capture_output=True,
-                text=True,
-                timeout=build_timeout,
-                env=_build_env,
-            )
-        finally:
-            if os.path.isdir(_stub_dir):
-                import shutil as _shutil2
-                _shutil2.rmtree(_stub_dir, ignore_errors=True)
+        builder_result = run_cancellable(
+            flatpak_builder_cmd,
+            cwd=source_dir,
+            build=build,
+            timeout_seconds=build_timeout,
+        )
         
         # Log output
         if builder_result.stdout:
@@ -271,13 +334,11 @@ def package_from_git_task(package_id):
                     log_build(build, 'info', "Dependencies installed, retrying build...")
                     
                     # Retry flatpak-builder
-                    builder_result = subprocess.run(
+                    builder_result = run_cancellable(
                         flatpak_builder_cmd,
                         cwd=source_dir,
-                        capture_output=True,
-                        text=True,
-                        timeout=build_timeout,
-                        env=_build_env,
+                        build=build,
+                        timeout_seconds=build_timeout,
                     )
                     
                     if builder_result.stdout:

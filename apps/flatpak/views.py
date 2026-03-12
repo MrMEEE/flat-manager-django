@@ -838,6 +838,19 @@ class BuildCancelView(LoginRequiredMixin, View):
         build.completed_at = tz.now()
         build.save(update_fields=['status', 'completed_at'])
 
+        # Revoke + terminate the Celery task so the subprocess is killed
+        if build.celery_task_id:
+            try:
+                from celery import current_app
+                current_app.control.revoke(
+                    build.celery_task_id, terminate=True, signal='SIGTERM'
+                )
+            except Exception as exc:
+                import logging as _log
+                _log.getLogger(__name__).warning(
+                    f"Could not revoke Celery task {build.celery_task_id}: {exc}"
+                )
+
         # Update package status if this is the current build
         package = build.package
         latest = package.builds.order_by('-build_number').first()

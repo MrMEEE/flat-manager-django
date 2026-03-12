@@ -197,6 +197,7 @@ class Build(models.Model):
     # Build state
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='building')
     error_message = models.TextField(blank=True)
+    celery_task_id = models.CharField(max_length=255, blank=True, help_text="Celery task ID — used to revoke/terminate the task on cancel")
     
     # Timestamps
     started_at = models.DateTimeField(auto_now_add=True)
