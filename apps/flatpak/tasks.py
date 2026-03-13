@@ -14,65 +14,54 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-def get_flatpak_builder_cmd(build=None):
+def ensure_appstream_compose_shims(build=None):
     """
-    Return the command tokens needed to invoke flatpak-builder.
+    Ensure an ``appstream-compose`` wrapper exists inside every installed
+    Freedesktop SDK's ``files/bin/`` directory.
 
-    Prefers ``org.flatpak.Builder`` (the upstream Flatpak app) over the system
-    RPM because its bundled flatpak-builder correctly uses ``appstreamcli compose``
-    instead of the removed ``appstream-compose`` binary (SDK 23.08+).
+    flatpak-builder calls ``appstream-compose`` from inside the bwrap sandbox
+    where only the SDK's own ``files/bin`` is on PATH.  SDK 23.08+ dropped the
+    standalone binary in favour of ``appstreamcli compose``.  Writing a tiny
+    wrapper script directly into the SDK's bin dir makes it visible inside the
+    sandbox without any PATH tricks or sandbox flag gymnastics.
 
-    Auto-installs org.flatpak.Builder from flathub on first use (one-time,
-    ~200 MB download).  Falls back to the system ``flatpak-builder`` binary if
-    the install fails for any reason.
-
-    Returns a list of command tokens that should be prepended to the
-    flatpak-builder argument list, e.g.::
-
-        ['flatpak', 'run', '--user', '--filesystem=host', 'org.flatpak.Builder', '--']
+    Safe to call on every build — skips SDKs that already have the wrapper.
     """
-    check = subprocess.run(
-        ['flatpak', 'info', '--user', 'org.flatpak.Builder'],
-        capture_output=True, text=True
-    )
-    if check.returncode != 0:
-        if build:
-            log_build(build, 'info',
-                      "org.flatpak.Builder not installed — installing from flathub (one-time setup, ~200 MB)...")
-        install = subprocess.run(
-            ['flatpak', 'install', '--user', '-y', '--noninteractive',
-             'flathub', 'org.flatpak.Builder'],
-            capture_output=True, text=True, timeout=600
-        )
-        if install.returncode != 0:
-            if build:
-                log_build(build, 'warning',
-                          f"Failed to install org.flatpak.Builder: {install.stderr.strip()}"
-                          " — falling back to system flatpak-builder (appstream may fail)")
-            return ['flatpak-builder']
-        if build:
-            log_build(build, 'info', "org.flatpak.Builder installed successfully")
-
-    # --filesystem=host gives access to the rest of the host but Flatpak always
-    # mounts a private tmpfs for /tmp even with that flag, so we add --filesystem=/tmp
-    # explicitly so the flatpak-builder process can reach /tmp/fmdc_build_* dirs.
-    #
-    # Inside org.flatpak.Builder's sandbox XDG_DATA_HOME is overridden to /var/data
-    # (the sandboxed location mapped to ~/.var/app/org.flatpak.Builder/data on the
-    # host), so the inner flatpak-builder --user would look for SDKs at
-    # /var/data/flatpak instead of ~/.local/share/flatpak.
-    # Fix: pass FLATPAK_USER_DIR pointing at the real user installation, and expose
-    # that directory via --filesystem so it's readable inside the sandbox.
-    import pathlib as _pathlib
-    user_flatpak_dir = str(_pathlib.Path.home() / '.local' / 'share' / 'flatpak')
-    return [
-        'flatpak', 'run', '--user',
-        '--filesystem=host',
-        '--filesystem=/tmp',
-        f'--filesystem={user_flatpak_dir}',
-        f'--env=FLATPAK_USER_DIR={user_flatpak_dir}',
-        'org.flatpak.Builder',
+    import glob as _glob
+    home = str(Path.home())
+    # Cover both user (~/.local/share/flatpak) and system (/var/lib/flatpak)
+    search_roots = [
+        os.path.join(home, '.local', 'share', 'flatpak'),
+        '/var/lib/flatpak',
     ]
+    shim_content = '#!/bin/sh\nexec appstreamcli compose "$@"\n'
+    patched = []
+
+    for root in search_roots:
+        pattern = os.path.join(
+            root, 'runtime', 'org.freedesktop.Sdk',
+            '*', '*', 'active', 'files', 'bin'
+        )
+        for bin_dir in _glob.glob(pattern):
+            compose_path = os.path.join(bin_dir, 'appstream-compose')
+            appstreamcli_path = os.path.join(bin_dir, 'appstreamcli')
+            # Only install shim where appstreamcli exists but appstream-compose doesn't
+            if os.path.exists(appstreamcli_path) and not os.path.exists(compose_path):
+                try:
+                    with open(compose_path, 'w') as _f:
+                        _f.write(shim_content)
+                    os.chmod(compose_path, 0o755)
+                    patched.append(compose_path)
+                except OSError as e:
+                    if build:
+                        log_build(build, 'warning',
+                                  f"Could not write appstream-compose shim to {compose_path}: {e}")
+
+    if patched and build:
+        log_build(build, 'info',
+                  f"Installed appstream-compose shim in {len(patched)} SDK(s): "
+                  + ', '.join(os.path.dirname(p).replace('/files/bin', '') for p in patched))
+
 
 
 class BuildCancelledError(Exception):
@@ -313,14 +302,14 @@ def package_from_git_task(self, package_id):
         # Run flatpak-builder
         log_build(build, 'info', "Running flatpak-builder (this may take a while)...")
 
-        # Use org.flatpak.Builder (flatpak app) which ships a modern flatpak-builder
-        # that calls `appstreamcli compose` rather than the removed `appstream-compose`
-        # binary.  Falls back to system flatpak-builder if the app is unavailable.
-        fb_prefix = get_flatpak_builder_cmd(build)
-        # Pass --user/--system to flatpak-builder so it looks in the right
-        # Flatpak installation for the SDK/runtime (matches installation_type).
+        # Ensure appstream-compose shim exists inside every installed SDK's bin dir.
+        # SDK 23.08+ dropped the standalone binary; flatpak-builder calls it from
+        # inside the bwrap sandbox where only the SDK's files/bin is on PATH.
+        ensure_appstream_compose_shims(build)
+
         install_flag = '--user' if getattr(package, 'installation_type', 'user') == 'user' else '--system'
-        flatpak_builder_cmd = fb_prefix + [
+        flatpak_builder_cmd = [
+            'flatpak-builder',
             install_flag,
             '--force-clean',
             '--disable-rofiles-fuse',  # rofiles-fuse requires FUSE privs; service user lacks them
