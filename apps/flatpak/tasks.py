@@ -56,7 +56,23 @@ def get_flatpak_builder_cmd(build=None):
     # --filesystem=host gives access to the rest of the host but Flatpak always
     # mounts a private tmpfs for /tmp even with that flag, so we add --filesystem=/tmp
     # explicitly so the flatpak-builder process can reach /tmp/fmdc_build_* dirs.
-    return ['flatpak', 'run', '--user', '--filesystem=host', '--filesystem=/tmp', 'org.flatpak.Builder']
+    #
+    # Inside org.flatpak.Builder's sandbox XDG_DATA_HOME is overridden to /var/data
+    # (the sandboxed location mapped to ~/.var/app/org.flatpak.Builder/data on the
+    # host), so the inner flatpak-builder --user would look for SDKs at
+    # /var/data/flatpak instead of ~/.local/share/flatpak.
+    # Fix: pass FLATPAK_USER_DIR pointing at the real user installation, and expose
+    # that directory via --filesystem so it's readable inside the sandbox.
+    import pathlib as _pathlib
+    user_flatpak_dir = str(_pathlib.Path.home() / '.local' / 'share' / 'flatpak')
+    return [
+        'flatpak', 'run', '--user',
+        '--filesystem=host',
+        '--filesystem=/tmp',
+        f'--filesystem={user_flatpak_dir}',
+        f'--env=FLATPAK_USER_DIR={user_flatpak_dir}',
+        'org.flatpak.Builder',
+    ]
 
 
 class BuildCancelledError(Exception):
@@ -296,7 +312,7 @@ def package_from_git_task(self, package_id):
         
         # Run flatpak-builder
         log_build(build, 'info', "Running flatpak-builder (this may take a while)...")
-        
+
         # Use org.flatpak.Builder (flatpak app) which ships a modern flatpak-builder
         # that calls `appstreamcli compose` rather than the removed `appstream-compose`
         # binary.  Falls back to system flatpak-builder if the app is unavailable.
@@ -313,6 +329,7 @@ def package_from_git_task(self, package_id):
             build_dir,
             manifest_file
         ]
+        log_build(build, 'info', f"flatpak-builder cmd: {' '.join(flatpak_builder_cmd)}")
 
         build_timeout = SiteConfig.get_solo().build_timeout_minutes * 60
         builder_result = run_cancellable(
