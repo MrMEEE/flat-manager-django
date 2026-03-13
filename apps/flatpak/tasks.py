@@ -35,24 +35,54 @@ def ensure_appstream_compose_shims(build=None):
         '/var/lib/flatpak',
     ]
     # Translate appstream-compose args to appstreamcli compose args.
-    # flatpak-builder calls: appstream-compose --prefix=P --origin=O --basename=ID [DIR]
-    # appstreamcli compose:  appstreamcli compose --prefix=P --origin=O --components=ID [DIR]
-    # The only incompatible flag is --basename → --components.
-    # Word-splitting on NEWARGS is intentional: flatpak app-ids and SDK paths never contain spaces.
+    # flatpak-builder 1.2.3 calls (from inside bwrap via flatpak build):
+    #   appstream-compose --prefix=PREFIX --origin=O --basename=ID ID
+    # where ID (the app/runtime ID) is passed as the positional SRCDIR.
+    # Inside bwrap that relative path doesn't exist.  appstreamcli compose
+    # uses a completely different invocation style:
+    #   appstreamcli compose --prefix=/ --origin=O --components=ID,ID.desktop \
+    #     --result-root=PREFIX --data-dir=PREFIX/share/app-info/xmls \
+    #     --icons-dir=PREFIX/share/app-info/icons/flatpak  PREFIX
+    # Key insight: use old PREFIX (/app for apps, /usr for runtimes) as the
+    # new SRCDIR (it holds the app data), change --prefix to /, and add the
+    # required --result-root / --data-dir / --icons-dir flags.
     shim_content = (
         '#!/bin/sh\n'
         '# appstream-compose shim installed by flat-manager-django\n'
-        '# SDK 23.08+ replaced appstream-compose with appstreamcli compose;\n'
-        '# translate --basename=X (old) to --components=X (new).\n'
-        'NEWARGS=""\n'
+        '# Translates flatpak-builder 1.2.3 appstream-compose call to appstreamcli compose.\n'
+        '#\n'
+        '# Old call: appstream-compose --prefix=PREFIX --origin=O --basename=ID ID\n'
+        '# New call: appstreamcli compose --prefix=/ --origin=O\n'
+        '#             --components=ID,ID.desktop --result-root=PREFIX\n'
+        '#             --data-dir=PREFIX/share/app-info/xmls\n'
+        '#             --icons-dir=PREFIX/share/app-info/icons/flatpak PREFIX\n'
+        'PREFIX=/app\n'
+        'ORIGIN=flatpak\n'
+        'COMPONENTS=\n'
+        'OTHER_ARGS=\n'
         'for arg; do\n'
         '    case "$arg" in\n'
-        '        --basename=*) NEWARGS="${NEWARGS} --components=${arg#--basename=}" ;;\n'
-        '        *)            NEWARGS="${NEWARGS} ${arg}" ;;\n'
+        '        --prefix=*)   PREFIX="${arg#--prefix=}" ;;\n'
+        '        --origin=*)   ORIGIN="${arg#--origin=}" ;;\n'
+        '        --basename=*) COMPONENTS="${arg#--basename=}" ;;\n'
+        '        --*)          OTHER_ARGS="${OTHER_ARGS} ${arg}" ;;\n'
+        '        *)            : ;;  # Drop old positional SRCDIR (app ID); replaced by PREFIX\n'
         '    esac\n'
         'done\n'
+        'COMPONENTS_ARG=\n'
+        'if [ -n "$COMPONENTS" ]; then\n'
+        '    COMPONENTS_ARG="--components=${COMPONENTS},${COMPONENTS}.desktop"\n'
+        'fi\n'
         '# shellcheck disable=SC2086\n'
-        'exec appstreamcli compose $NEWARGS\n'
+        'exec appstreamcli compose \\\n'
+        '    --prefix=/ \\\n'
+        '    --origin="${ORIGIN}" \\\n'
+        '    ${COMPONENTS_ARG} \\\n'
+        '    --result-root="${PREFIX}" \\\n'
+        '    --data-dir="${PREFIX}/share/app-info/xmls" \\\n'
+        '    --icons-dir="${PREFIX}/share/app-info/icons/flatpak" \\\n'
+        '    ${OTHER_ARGS} \\\n'
+        '    "${PREFIX}"\n'
     )
     patched = []
 
