@@ -34,7 +34,26 @@ def ensure_appstream_compose_shims(build=None):
         os.path.join(home, '.local', 'share', 'flatpak'),
         '/var/lib/flatpak',
     ]
-    shim_content = '#!/bin/sh\nexec appstreamcli compose "$@"\n'
+    # Translate appstream-compose args to appstreamcli compose args.
+    # flatpak-builder calls: appstream-compose --prefix=P --origin=O --basename=ID [DIR]
+    # appstreamcli compose:  appstreamcli compose --prefix=P --origin=O --components=ID [DIR]
+    # The only incompatible flag is --basename → --components.
+    # Word-splitting on NEWARGS is intentional: flatpak app-ids and SDK paths never contain spaces.
+    shim_content = (
+        '#!/bin/sh\n'
+        '# appstream-compose shim installed by flat-manager-django\n'
+        '# SDK 23.08+ replaced appstream-compose with appstreamcli compose;\n'
+        '# translate --basename=X (old) to --components=X (new).\n'
+        'NEWARGS=""\n'
+        'for arg; do\n'
+        '    case "$arg" in\n'
+        '        --basename=*) NEWARGS="${NEWARGS} --components=${arg#--basename=}" ;;\n'
+        '        *)            NEWARGS="${NEWARGS} ${arg}" ;;\n'
+        '    esac\n'
+        'done\n'
+        '# shellcheck disable=SC2086\n'
+        'exec appstreamcli compose $NEWARGS\n'
+    )
     patched = []
 
     for root in search_roots:
@@ -45,17 +64,25 @@ def ensure_appstream_compose_shims(build=None):
         for bin_dir in _glob.glob(pattern):
             compose_path = os.path.join(bin_dir, 'appstream-compose')
             appstreamcli_path = os.path.join(bin_dir, 'appstreamcli')
-            # Only install shim where appstreamcli exists but appstream-compose doesn't
-            if os.path.exists(appstreamcli_path) and not os.path.exists(compose_path):
-                try:
-                    with open(compose_path, 'w') as _f:
-                        _f.write(shim_content)
-                    os.chmod(compose_path, 0o755)
-                    patched.append(compose_path)
-                except OSError as e:
-                    if build:
-                        log_build(build, 'warning',
-                                  f"Could not write appstream-compose shim to {compose_path}: {e}")
+            # Write shim if missing or outdated (idempotent)
+            if os.path.exists(appstreamcli_path):
+                needs_write = True
+                if os.path.exists(compose_path):
+                    try:
+                        with open(compose_path) as _f:
+                            needs_write = _f.read() != shim_content
+                    except OSError:
+                        pass
+                if needs_write:
+                    try:
+                        with open(compose_path, 'w') as _f:
+                            _f.write(shim_content)
+                        os.chmod(compose_path, 0o755)
+                        patched.append(compose_path)
+                    except OSError as e:
+                        if build:
+                            log_build(build, 'warning',
+                                      f"Could not write appstream-compose shim to {compose_path}: {e}")
 
     if patched and build:
         log_build(build, 'info',
