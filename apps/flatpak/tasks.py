@@ -124,50 +124,111 @@ class BuildCancelledError(Exception):
 
 def run_cancellable(cmd, cwd, build, timeout_seconds):
     """
-    Run *cmd* as a subprocess, periodically checking whether *build* has been
+    Run *cmd* as a subprocess, streaming every output line to the build log
+    in real-time, while periodically checking whether *build* has been
     cancelled in the database.  Kills the process and raises
     :exc:`BuildCancelledError` if cancellation is detected.
 
     Returns a :class:`subprocess.CompletedProcess` on success (or non-zero exit).
+    stdout is empty (lines were already logged); stderr contains the collected
+    stderr text for use as an error message on failure.
     """
+    import threading
+    import queue as _queue
+
     proc = subprocess.Popen(
         cmd,
         cwd=cwd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        bufsize=1,  # line-buffered
     )
+
+    # Each reader thread feeds (stream_name, line) into the queue.
+    # A sentinel (stream_name, None) signals EOF for that stream.
+    line_queue = _queue.Queue()
+
+    def _reader(pipe, name):
+        try:
+            for raw_line in pipe:
+                line_queue.put((name, raw_line))
+        finally:
+            line_queue.put((name, None))
+
+    t_out = threading.Thread(target=_reader, args=(proc.stdout, 'stdout'), daemon=True)
+    t_err = threading.Thread(target=_reader, args=(proc.stderr, 'stderr'), daemon=True)
+    t_out.start()
+    t_err.start()
+
     poll_interval = 5  # seconds between cancellation checks
     elapsed = 0
+    stderr_lines = []
+    streams_done = set()
+
     try:
-        while proc.poll() is None:
-            time.sleep(poll_interval)
-            elapsed += poll_interval
-            if elapsed >= timeout_seconds:
-                proc.kill()
-                proc.wait()
-                raise RuntimeError(
-                    f"Build timed out after {timeout_seconds // 60} minutes"
-                )
-            # Re-query only the status column to avoid stale-object issues
-            from apps.flatpak.models import Build as _Build
-            current_status = _Build.objects.filter(pk=build.pk).values_list('status', flat=True).first()
-            if current_status == 'cancelled':
-                proc.kill()
-                proc.wait()
-                raise BuildCancelledError("Build was cancelled by user")
-    except BuildCancelledError:
-        raise
-    except RuntimeError:
+        while len(streams_done) < 2 or proc.poll() is None:
+            # Drain all lines currently available without blocking.
+            drained = 0
+            while True:
+                try:
+                    name, raw = line_queue.get(timeout=0.1)
+                except _queue.Empty:
+                    break
+                drained += 1
+                if raw is None:
+                    streams_done.add(name)
+                    continue
+                line = raw.rstrip('\n')
+                if not line:
+                    continue
+                if name == 'stderr':
+                    stderr_lines.append(line)
+                    log_build(build, 'info', line)
+                else:
+                    log_build(build, 'info', line)
+
+            if len(streams_done) >= 2:
+                # Both pipes closed — process is definitely done.
+                break
+
+            # After draining, sleep briefly then check cancellation/timeout.
+            if drained == 0:
+                time.sleep(poll_interval)
+                elapsed += poll_interval
+
+                if elapsed >= timeout_seconds:
+                    proc.kill()
+                    proc.wait()
+                    raise RuntimeError(
+                        f"Build timed out after {timeout_seconds // 60} minutes"
+                    )
+
+                from apps.flatpak.models import Build as _Build
+                current_status = _Build.objects.filter(
+                    pk=build.pk
+                ).values_list('status', flat=True).first()
+                if current_status == 'cancelled':
+                    proc.kill()
+                    proc.wait()
+                    raise BuildCancelledError("Build was cancelled by user")
+
+    except (BuildCancelledError, RuntimeError):
         raise
     except Exception:
         proc.kill()
         proc.wait()
         raise
 
-    stdout, stderr = proc.stdout.read(), proc.stderr.read()
+    t_out.join(timeout=5)
+    t_err.join(timeout=5)
+    proc.wait()
+
     return subprocess.CompletedProcess(
-        args=cmd, returncode=proc.returncode, stdout=stdout, stderr=stderr
+        args=cmd,
+        returncode=proc.returncode,
+        stdout='',  # already streamed line-by-line above
+        stderr='\n'.join(stderr_lines),
     )
 
 
@@ -353,8 +414,8 @@ def package_from_git_task(self, package_id):
             )
             log_build(build, 'info', "Initialized build-repo")
         
-        # Run flatpak-builder
-        log_build(build, 'info', "Running flatpak-builder (this may take a while)...")
+        # Run flatpak-builder (output is streamed line-by-line to the log in real-time)
+        log_build(build, 'info', "Running flatpak-builder...")
 
         # Ensure appstream-compose shim exists inside every installed SDK's bin dir.
         # SDK 23.08+ dropped the standalone binary; flatpak-builder calls it from
@@ -381,13 +442,7 @@ def package_from_git_task(self, package_id):
             build=build,
             timeout_seconds=build_timeout,
         )
-        
-        # Log output
-        if builder_result.stdout:
-            for line in builder_result.stdout.split('\n'):
-                if line.strip():
-                    log_build(build, 'info', line.strip())
-        
+
         if builder_result.returncode != 0:
             error_msg = builder_result.stderr or "flatpak-builder failed"
             log_build(build, 'error', f"Package build failed: {error_msg}")
@@ -405,12 +460,7 @@ def package_from_git_task(self, package_id):
                         build=build,
                         timeout_seconds=build_timeout,
                     )
-                    
-                    if builder_result.stdout:
-                        for line in builder_result.stdout.split('\n'):
-                            if line.strip():
-                                log_build(build, 'info', line.strip())
-                    
+
                     if builder_result.returncode != 0:
                         error_msg = builder_result.stderr or "flatpak-builder failed after dependency install"
                         log_build(build, 'error', f"Build still failed: {error_msg}")
