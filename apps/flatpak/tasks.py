@@ -747,7 +747,7 @@ def publish_package_task(package_id):
 def log_build(build, level, message):
     """Helper to create build log entries and broadcast via WebSocket."""
     from apps.flatpak.models import BuildLog
-    
+
     log = BuildLog.objects.create(
         build=build,
         message=message,
@@ -757,23 +757,11 @@ def log_build(build, level, message):
         getattr(logging, level.upper(), logging.INFO),
         f"[Build #{build.build_number}] {message}"
     )
-    
-    # Broadcast log via WebSocket
-    channel_layer = get_channel_layer()
-    if channel_layer:
-        async_to_sync(channel_layer.group_send)(
-            'builds',
-            {
-                'type': 'build_log_update',
-                'build_id': build.package.id,
-                'log': {
-                    'id': log.id,
-                    'message': message,
-                    'level': level,
-                    'timestamp': log.timestamp.strftime('%H:%M:%S')
-                }
-            }
-        )
+    # Log lines are fetched by the client via 2-second polling (updateLogs).
+    # We do NOT broadcast individual log lines over WebSocket: during streaming
+    # builds, hundreds of rapid group_send calls overwhelm Channels and cause
+    # WebSocket disconnections.  Status changes are broadcast separately via
+    # send_build_status_update() which is called at coarse-grained state transitions.
 
 
 def detect_and_install_dependencies(package, error_message, build=None):

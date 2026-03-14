@@ -931,36 +931,6 @@
             refreshBuildHistory();
         }
         
-        if (data.type === 'build_log_update' && data.build_id == buildId) {
-            console.log('Build log update via WebSocket:', data.log);
-            
-            // Add new log entry
-            if (data.log && logsDiv) {
-                lastLogCount++;
-                
-                // Remove "waiting" message if it exists
-                const waitingMsg = logsDiv.querySelector('.text-muted');
-                if (waitingMsg && waitingMsg.textContent.includes('Waiting')) {
-                    logsDiv.innerHTML = '';
-                }
-                
-                const logEntry = document.createElement('div');
-                logEntry.className = 'log-entry';
-                
-                let levelClass = '';
-                if (data.log.level === 'error') levelClass = 'text-danger';
-                else if (data.log.level === 'warning') levelClass = 'text-warning';
-                else if (data.log.level === 'info') levelClass = 'text-info';
-                
-                logEntry.innerHTML = `
-                    <span class="text-muted">${data.log.timestamp}</span>
-                    <span class="${levelClass}">[${data.log.level.toUpperCase()}]</span>
-                    ${data.log.message}
-                `;
-                logsDiv.appendChild(logEntry);
-                scrollLogsToBottom();
-            }
-        }
     }
 
     // Open WebSocket for real-time push updates

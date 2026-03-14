@@ -290,7 +290,6 @@
     async function safeJson(response) {
         try { return await response.json(); } catch (_) { return {}; }
     }
-    }
 
     // Update action buttons dynamically when status changes
     function updateActionButtons(status) {
