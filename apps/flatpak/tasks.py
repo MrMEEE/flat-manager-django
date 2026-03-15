@@ -3,6 +3,7 @@ from django.utils import timezone
 from django.conf import settings
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
+import json
 import logging
 import os
 import subprocess
@@ -12,6 +13,87 @@ import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_manifest_libdirs(manifest_file, build=None):
+    """
+    Ensure every cmake-ninja and meson module in the manifest installs
+    libraries to ``lib`` instead of the platform default (``lib64`` on
+    RHEL9/x86_64).  flatpak-builder only puts ``/app/lib/pkgconfig`` on
+    ``PKG_CONFIG_PATH``, so any ``.pc`` file that lands in ``lib64`` will
+    be invisible to later modules.
+
+    Idempotent: options that already carry the correct value are left alone.
+    Writes the manifest back in-place and logs every module it touches.
+    """
+    try:
+        try:
+            import yaml
+            _has_yaml = True
+        except ImportError:
+            _has_yaml = False
+
+        with open(manifest_file, 'r') as fh:
+            content = fh.read()
+
+        is_yaml = manifest_file.endswith(('.yml', '.yaml'))
+        if is_yaml:
+            if not _has_yaml:
+                if build:
+                    log_build(build, 'warning', 'PyYAML not available; skipping manifest libdir normalisation')
+                return
+            manifest = yaml.safe_load(content)
+        else:
+            manifest = json.loads(content)
+
+        if not isinstance(manifest, dict):
+            return
+
+        changed = []
+
+        def _fix_modules(modules):
+            if not isinstance(modules, list):
+                return
+            for mod in modules:
+                if not isinstance(mod, dict):
+                    continue
+                buildsystem = mod.get('buildsystem', '')
+                config_opts = mod.get('config-opts')
+                if config_opts is None:
+                    config_opts = []
+                    mod['config-opts'] = config_opts
+                name = mod.get('name', '<unnamed>')
+                if buildsystem == 'cmake-ninja':
+                    key = '-DCMAKE_INSTALL_LIBDIR=lib'
+                    if not any('CMAKE_INSTALL_LIBDIR' in str(o) for o in config_opts):
+                        config_opts.append(key)
+                        changed.append(f"{name} (cmake-ninja): added {key}")
+                elif buildsystem == 'meson':
+                    key = '--libdir=lib'
+                    if not any('libdir' in str(o) for o in config_opts):
+                        config_opts.append(key)
+                        changed.append(f"{name} (meson): added {key}")
+                # Recurse into nested modules
+                _fix_modules(mod.get('modules', []))
+
+        _fix_modules(manifest.get('modules', []))
+
+        if not changed:
+            return
+
+        with open(manifest_file, 'w') as fh:
+            if is_yaml:
+                yaml.dump(manifest, fh, default_flow_style=False, allow_unicode=True, sort_keys=False)
+            else:
+                json.dump(manifest, fh, indent=2, ensure_ascii=False)
+
+        if build:
+            for msg in changed:
+                log_build(build, 'info', f"[libdir normalisation] {msg}")
+
+    except Exception as exc:
+        if build:
+            log_build(build, 'warning', f"normalize_manifest_libdirs failed (non-fatal): {exc}")
 
 
 def ensure_appstream_compose_shims(build=None):
@@ -378,7 +460,12 @@ def package_from_git_task(self, package_id):
             )
         
         log_build(build, 'info', f"Using manifest: {os.path.basename(manifest_file)}")
-        
+
+        # Normalise cmake/meson library install dirs so .pc files always land in
+        # /app/lib/pkgconfig (the only path on PKG_CONFIG_PATH) rather than
+        # /app/lib64/pkgconfig on RHEL9/x86_64.
+        normalize_manifest_libdirs(manifest_file, build)
+
         # Parse manifest to extract dependencies
         dependencies = parse_manifest_dependencies(package, manifest_file, build)
         if dependencies:
