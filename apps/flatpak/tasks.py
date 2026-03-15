@@ -15,18 +15,60 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def _host_uses_lib64():
+    """
+    Return True when the host OS uses ``lib64`` as its native multilib
+    library directory (RHEL/Fedora/CentOS), False on distros that use
+    ``lib`` (Debian/Ubuntu/Arch).
+
+    Detection heuristic: ``/usr/lib64`` exists as a *real* directory
+    (not a symlink).  On Debian-family systems the path either does not
+    exist or is a compatibility symlink pointing to ``lib``.
+    """
+    return os.path.isdir('/usr/lib64') and not os.path.islink('/usr/lib64')
+
+
 def normalize_manifest_libdirs(manifest_file, build=None):
     """
-    Ensure every cmake-ninja and meson module in the manifest installs
-    libraries to ``lib`` instead of the platform default (``lib64`` on
-    RHEL9/x86_64).  flatpak-builder only puts ``/app/lib/pkgconfig`` on
-    ``PKG_CONFIG_PATH``, so any ``.pc`` file that lands in ``lib64`` will
-    be invisible to later modules.
+    On hosts where CMake/Meson default to ``lib64`` (RHEL9/x86_64 etc.),
+    inject ``-DCMAKE_INSTALL_LIBDIR=lib`` / ``--libdir=lib`` into every
+    cmake-ninja / meson module in the manifest.
 
-    Idempotent: options that already carry the correct value are left alone.
-    Writes the manifest back in-place and logs every module it touches.
+    flatpak-builder only puts ``/app/lib/pkgconfig`` on ``PKG_CONFIG_PATH``,
+    so ``.pc`` files that land in ``lib64/pkgconfig`` are invisible to
+    subsequent modules — causing ``configure: error: Unable to locate …``
+    failures on RHEL9 that do not reproduce on Debian/Ubuntu.
+
+    The function is a no-op on distros that already default to ``lib``.
+    Idempotent: skips modules that already carry the correct option.
+    Writes the manifest back in-place only when changes are needed.
     """
     try:
+        import platform
+
+        machine = platform.machine()
+        uses_lib64 = _host_uses_lib64()
+
+        if not uses_lib64:
+            if build:
+                log_build(build, 'info',
+                    f"[libdir normalisation] host uses 'lib' by default "
+                    f"(arch={machine}) — no manifest patching needed")
+            return
+
+        # Identify the distro for the log message
+        try:
+            import distro
+            distro_desc = f"{distro.name()} {distro.version()}"
+        except Exception:
+            distro_desc = 'unknown distro'
+
+        if build:
+            log_build(build, 'info',
+                f"[libdir normalisation] detected lib64 host "
+                f"({distro_desc}, arch={machine}) — patching cmake-ninja "
+                f"and meson modules to install into lib/")
+
         try:
             import yaml
             _has_yaml = True
@@ -40,7 +82,8 @@ def normalize_manifest_libdirs(manifest_file, build=None):
         if is_yaml:
             if not _has_yaml:
                 if build:
-                    log_build(build, 'warning', 'PyYAML not available; skipping manifest libdir normalisation')
+                    log_build(build, 'warning',
+                        '[libdir normalisation] PyYAML not available; skipping')
                 return
             manifest = yaml.safe_load(content)
         else:
@@ -79,6 +122,9 @@ def normalize_manifest_libdirs(manifest_file, build=None):
         _fix_modules(manifest.get('modules', []))
 
         if not changed:
+            if build:
+                log_build(build, 'info',
+                    '[libdir normalisation] all modules already have correct libdir — nothing to patch')
             return
 
         with open(manifest_file, 'w') as fh:
@@ -89,7 +135,7 @@ def normalize_manifest_libdirs(manifest_file, build=None):
 
         if build:
             for msg in changed:
-                log_build(build, 'info', f"[libdir normalisation] {msg}")
+                log_build(build, 'info', f"[libdir normalisation] patched: {msg}")
 
     except Exception as exc:
         if build:
