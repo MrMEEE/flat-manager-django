@@ -1716,3 +1716,29 @@ def check_all_upstream_versions():
         check_upstream_version_task.delay(p.id)
     logger.info(f"Queued upstream version check for {count} package(s)")
     return f"Queued {count} upstream version check(s)"
+
+
+@shared_task
+def retry_pending_promotions():
+    """
+    Periodic beat task: find any Promotion records stuck in 'pending' status
+    and dispatch promote_build_task for each one.
+
+    A promotion ends up stuck in 'pending' when the web request that created
+    it fails to enqueue the Celery task (e.g. broker blip, worker restart,
+    or — as fix v0.1.37 addressed — an ImportError in the task module).
+    Running this every 60 s ensures they are always picked up.
+    """
+    from apps.flatpak.models import Promotion
+    pending = Promotion.objects.filter(status='pending').select_related('build', 'package')
+    count = 0
+    for promotion in pending:
+        logger.info(
+            f"retry_pending_promotions: dispatching promotion {promotion.id} "
+            f"({promotion.package.package_id} → {promotion.target_repo_id})"
+        )
+        promote_build_task.delay(promotion.id)
+        count += 1
+    if count:
+        logger.info(f"retry_pending_promotions: queued {count} pending promotion(s)")
+    return f"Queued {count} pending promotion(s)"
