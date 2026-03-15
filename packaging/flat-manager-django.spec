@@ -383,6 +383,9 @@ fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 %changelog
+* Sun Mar 15 2026 Release Bot <noreply@example.com> - 0.1.39-1
+- Release 0.1.39
+
 * Sun Mar 15 2026 Release Bot <noreply@example.com> - 0.1.38-1
 - Release 0.1.38
 
