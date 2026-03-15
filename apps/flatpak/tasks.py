@@ -1468,6 +1468,8 @@ def sync_repo_state():
     return stats
 
 
+@shared_task
+def promote_build_task(promotion_id):
     """
     Celery task that promotes a published build to a child repository.
     Always pulls from build-repo to avoid OSTree collection-ID binding
