@@ -422,8 +422,13 @@
                     if (log.level === 'error') levelColor = '#f48771';
                     else if (log.level === 'warning') levelColor = '#dcdcaa';
                     else if (log.level === 'info') levelColor = '#4ec9b0';
-                    
-                    const timestamp = new Date(log.timestamp).toLocaleTimeString('en-US', {hour12: false});
+
+                    // API returns pre-formatted HH:MM:SS; guard against ISO
+                    // format too so this keeps working if the API is ever changed.
+                    let timestamp = log.timestamp || '';
+                    if (timestamp.includes('T')) {
+                        timestamp = new Date(timestamp).toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+                    }
                     logEntry.innerHTML = `
                         <span style="color: #858585;">${timestamp}</span>
                         <span style="color: ${levelColor};">[${log.level.toUpperCase()}]</span>
