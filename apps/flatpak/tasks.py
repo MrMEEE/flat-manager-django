@@ -1566,28 +1566,91 @@ def send_build_status_update(package_id, status, message='', repository_id=None)
     )
 
 
+def _parse_version_from_tag(tag):
+    """
+    Extract a sortable version tuple and a pre-release flag from a tag name.
+
+    Handles common formats:
+      v8.4.2          → (8, 4, 2),  is_prerelease=False
+      8.4.2           → (8, 4, 2),  is_prerelease=False
+      grass_8_4_2     → (8, 4, 2),  is_prerelease=False
+      grass_7_6_1RC1  → (7, 6, 1),  is_prerelease=True
+      release-3.10.1  → (3, 10, 1), is_prerelease=False
+      v2.0.0-beta.1   → (2, 0, 0),  is_prerelease=True
+
+    Returns ``(tuple_of_ints, is_prerelease)`` or ``(None, True)`` if no
+    version numbers could be extracted.
+    """
+    import re
+    # Normalise separators to dots: underscores → dots
+    normalised = tag.replace('_', '.')
+    # Strip common non-numeric prefixes (v, V, release-, rel-, grass.)
+    normalised = re.sub(r'^(?:[vV]|release[-.]|rel[-.]|[a-zA-Z]+[-.])', '', normalised)
+    # Pre-release marker check (case-insensitive) — before we strip letters
+    is_prerelease = bool(re.search(r'[._-]?(alpha|beta|rc|dev|pre|a\d|b\d)[._\-\d]*$',
+                                   normalised, re.IGNORECASE))
+    # Extract leading numeric components only
+    nums = re.match(r'^(\d+(?:\.\d+)*)', normalised)
+    if not nums:
+        return None, True
+    parts = tuple(int(x) for x in nums.group(1).split('.'))
+    return parts, is_prerelease
+
+
 def _fetch_latest_upstream_tag(url):
     """
-    Fetch the latest version tag from a remote git repository using
-    ``git ls-remote --tags --refs --sort=-version:refname``.
+    Fetch the latest *stable* version tag from a remote git repository.
 
-    Returns ``(version_string, error_string)`` where exactly one value is
-    non-None.  Any leading 'v' or 'V' is stripped from the tag name.
+    Uses ``git ls-remote --tags --refs`` and then sorts / filters entirely
+    in Python so that unusual tag formats (e.g. ``grass_8_4_2``) are handled
+    correctly.  git's own ``--sort=-version:refname`` only works reliably for
+    semver-style ``vX.Y.Z`` tags.
+
+    Strategy:
+    1. Pull all tags.
+    2. Parse each into a numeric version tuple.
+    3. Prefer stable releases; fall back to pre-releases only when no stable
+       tag is found at all.
+    4. Return the highest version's original tag string.
+
+    Returns ``(version_string, error_string)`` where exactly one is non-None.
     """
     import re
     try:
         result = subprocess.run(
-            ['git', 'ls-remote', '--tags', '--refs', '--sort=-version:refname', url],
+            ['git', 'ls-remote', '--tags', '--refs', url],
             capture_output=True, text=True, timeout=30,
         )
+        if result.returncode != 0:
+            return None, result.stderr.strip() or 'git ls-remote failed'
+
         lines = [l for l in result.stdout.strip().splitlines() if '\t' in l]
         if not lines:
             return '', None  # repository has no tags
-        tag = lines[0].split('\t', 1)[-1].replace('refs/tags/', '').strip()
+
+        candidates = []
+        for line in lines:
+            raw_tag = line.split('\t', 1)[-1].replace('refs/tags/', '').strip()
+            version_tuple, is_prerelease = _parse_version_from_tag(raw_tag)
+            if version_tuple is not None:
+                candidates.append((version_tuple, is_prerelease, raw_tag))
+
+        if not candidates:
+            # Nothing parseable — fall back to the last tag alphabetically
+            last = sorted(lines)[-1].split('\t', 1)[-1].replace('refs/tags/', '').strip()
+            return last, None
+
+        # Prefer stable releases; fall back to pre-releases if nothing stable exists
+        stable = [(v, tag) for v, pre, tag in candidates if not pre]
+        pool = stable if stable else [(v, tag) for v, pre, tag in candidates]
+        best_tag = max(pool, key=lambda x: x[0])[1]
+
         # Strip a leading 'v' or 'V' only when followed immediately by a digit
-        if re.match(r'^[vV]\d', tag):
-            tag = tag[1:]
-        return tag, None
+        if re.match(r'^[vV]\d', best_tag):
+            best_tag = best_tag[1:]
+
+        return best_tag, None
+
     except subprocess.TimeoutExpired:
         return None, 'Timed out after 30 s'
     except FileNotFoundError:
