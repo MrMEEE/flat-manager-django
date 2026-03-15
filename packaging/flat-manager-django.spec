@@ -298,6 +298,17 @@ if [ $1 -eq 1 ] && [ ! -f /etc/pki/tls/certs/flat-manager.crt ]; then
     chmod 0600 /etc/pki/tls/private/flat-manager.key
 fi
 
+# On upgrade: run migrations and restart the web service
+if [ $1 -ge 2 ]; then
+    echo "Running database migrations..."
+    flat-manager-manage migrate --noinput 2>&1 || \
+        echo "WARNING: migrate failed — run 'flat-manager-manage migrate' manually"
+    if systemctl is-active --quiet flat-manager-web.service; then
+        echo "Restarting flat-manager-web..."
+        systemctl restart flat-manager-web.service 2>/dev/null || :
+    fi
+fi
+
 if [ $1 -eq 1 ]; then
     echo ""
     echo "=================================================================="
