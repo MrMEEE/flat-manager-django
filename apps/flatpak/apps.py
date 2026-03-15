@@ -43,8 +43,10 @@ class FlatpakConfig(AppConfig):
         from django_celery_beat.models import PeriodicTask, IntervalSchedule
         from .models import SiteConfig
         config = SiteConfig.get_solo()
+
+        # ── Upstream version check (configurable interval, default 1 h) ──────
         interval_hours = config.upstream_version_check_interval_hours or 1
-        schedule, _ = IntervalSchedule.objects.get_or_create(
+        hour_schedule, _ = IntervalSchedule.objects.get_or_create(
             every=interval_hours,
             period=IntervalSchedule.HOURS,
         )
@@ -52,16 +54,35 @@ class FlatpakConfig(AppConfig):
             name='Check all upstream versions',
             defaults={
                 'task': 'apps.flatpak.tasks.check_all_upstream_versions',
-                'interval': schedule,
+                'interval': hour_schedule,
                 'args': json.dumps([]),
                 'enabled': config.upstream_version_check_interval_hours > 0,
             },
         )
         if not created:
-            # Update schedule and enabled state in case config changed
-            task.interval = schedule
+            task.interval = hour_schedule
             task.enabled = config.upstream_version_check_interval_hours > 0
             task.save(update_fields=['interval', 'enabled'])
+
+        # ── Retry stuck pending promotions (configurable, default 1 min) ─────
+        retry_minutes = config.promotion_retry_interval_minutes or 1
+        retry_schedule, _ = IntervalSchedule.objects.get_or_create(
+            every=retry_minutes,
+            period=IntervalSchedule.MINUTES,
+        )
+        promo_task, promo_created = PeriodicTask.objects.get_or_create(
+            name='Retry pending promotions',
+            defaults={
+                'task': 'apps.flatpak.tasks.retry_pending_promotions',
+                'interval': retry_schedule,
+                'args': json.dumps([]),
+                'enabled': config.promotion_retry_interval_minutes > 0,
+            },
+        )
+        if not promo_created:
+            promo_task.interval = retry_schedule
+            promo_task.enabled = config.promotion_retry_interval_minutes > 0
+            promo_task.save(update_fields=['interval', 'enabled'])
 
     def _check_and_init_repositories(self):
         """Check all repositories and initialize missing OSTree repos."""

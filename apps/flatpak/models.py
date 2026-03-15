@@ -302,6 +302,10 @@ class SiteConfig(models.Model):
         default=30,
         help_text="Minutes of log inactivity before an in-progress build is considered stuck and marked as failed."
     )
+    promotion_retry_interval_minutes = models.PositiveIntegerField(
+        default=1,
+        help_text="How often (in minutes) to check for and retry pending promotions. Set to 0 to disable."
+    )
     class Meta:
         verbose_name = 'Site Configuration'
 
