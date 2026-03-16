@@ -138,7 +138,7 @@ jobs:
         with:
           files: release-rpms/**/*.rpm
           generate_release_notes: true
-          draft: true
+          draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
           fail_on_unmatched_files: true
           body: |
