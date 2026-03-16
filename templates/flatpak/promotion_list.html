@@ -303,7 +303,10 @@
                 </thead>
                 <tbody>
                     {% for promotion in promotions %}
-                    <tr>
+                    <tr data-promotion-id="{{ promotion.pk }}"
+                        data-promotion-status="{{ promotion.status }}"
+                        data-pkg-name="{{ promotion.package.package_name|escapejs }}"
+                        data-repo-name="{{ promotion.target_repo.name|escapejs }}">
                         <td>
                             <a href="{% url 'flatpak:build_detail' promotion.build.pk %}">#{{ promotion.build.build_number }}</a>
                         </td>
@@ -322,7 +325,7 @@
                                 {{ promotion.target_repo.name }}
                             </a>
                         </td>
-                        <td>
+                        <td data-role="status-cell">
                             {% if promotion.status == 'promoted' %}
                             <span class="badge bg-success">Promoted</span>
                             {% elif promotion.status == 'promoting' %}
@@ -346,7 +349,7 @@
                             {{ promotion.created_at|date:"M d, H:i" }}
                             {% endif %}
                         </td>
-                        <td>
+                        <td data-role="actions-cell" data-build-pk="{{ promotion.build.pk }}">
                             <a href="{% url 'flatpak:build_detail' promotion.build.pk %}" class="btn btn-sm btn-outline-primary">
                                 <i class="bi bi-eye"></i>
                             </a>
@@ -475,27 +478,95 @@
     bindPagination();
     updateClearBtn();
 
-    // ── Auto-refresh while any promotion is in-flight ────────────────────────
+    // ── Live status updates while any promotion is in-flight ─────────────────
+    // Instead of replacing the entire results container, we fetch only the
+    // status fields for active rows and update those cells in-place.
     var _pollTimer = null;
 
-    function hasActiveBadge() {
-        return !!document.querySelector(
-            '#results-container .badge.bg-secondary, #results-container .badge.bg-primary'
-        );
+    function getActiveRows() {
+        return Array.from(document.querySelectorAll('tr[data-promotion-id]')).filter(function (tr) {
+            var s = tr.dataset.promotionStatus;
+            return s === 'pending' || s === 'promoting';
+        });
+    }
+
+    function renderStatusBadge(status, errorMessage) {
+        if (status === 'promoted') {
+            return '<span class="badge bg-success">Promoted</span>';
+        }
+        if (status === 'promoting') {
+            return '<span class="badge bg-primary"><span class="spinner-border spinner-border-sm me-1"></span>Promoting</span>';
+        }
+        if (status === 'pending') {
+            return '<span class="badge bg-secondary">Pending</span>';
+        }
+        if (status === 'failed') {
+            var html = '<span class="badge bg-danger">Failed</span>';
+            if (errorMessage) {
+                html += '<br><small class="text-danger">' +
+                    errorMessage.substring(0, 80).replace(/</g, '&lt;').replace(/>/g, '&gt;') +
+                    '</small>';
+            }
+            return html;
+        }
+        return '';
+    }
+
+    function renderActionButtons(promotionPk, status, pkgName, repoName, buildPk) {
+        var eyeBtn = '<a href="/builds/' + buildPk + '/" class="btn btn-sm btn-outline-primary"><i class="bi bi-eye"></i></a>';
+        if (status === 'promoted') {
+            return eyeBtn + ' <button class="btn btn-sm btn-outline-danger ms-1" onclick="confirmDeletePromotion(' + promotionPk + ', \'' + pkgName.replace(/'/g, "\\'"  ) + '\', \'' + repoName.replace(/'/g, "\\'") + '\')">' +
+                '<i class="bi bi-trash3"></i> Delete</button>';
+        }
+        if (status === 'failed') {
+            return eyeBtn +
+                ' <button class="btn btn-sm btn-warning ms-1" onclick="retryPromotion(' + promotionPk + ', \'' + pkgName.replace(/'/g, "\\'" ) + '\', \'' + repoName.replace(/'/g, "\\'") + '\')">' +
+                '<i class="bi bi-arrow-clockwise"></i> Retry</button>' +
+                ' <button class="btn btn-sm btn-outline-secondary ms-1" onclick="confirmDeletePromotion(' + promotionPk + ', \'' + pkgName.replace(/'/g, "\\'" ) + '\', \'' + repoName.replace(/'/g, "\\'") + '\')">' +
+                '<i class="bi bi-x-circle"></i> Dismiss</button>';
+        }
+        if (status === 'pending') {
+            return eyeBtn +
+                ' <button class="btn btn-sm btn-warning ms-1" onclick="retryPromotion(' + promotionPk + ', \'' + pkgName.replace(/'/g, "\\'" ) + '\', \'' + repoName.replace(/'/g, "\\'") + '\')">' +
+                '<i class="bi bi-arrow-clockwise"></i> Retry</button>';
+        }
+        return eyeBtn;
+    }
+
+    function pollPromotionStatuses() {
+        var activeRows = getActiveRows();
+        if (activeRows.length === 0) {
+            stopPolling();
+            return;
+        }
+        var ids = activeRows.map(function (tr) { return tr.dataset.promotionId; }).join(',');
+        fetch('/promotions/status/?ids=' + ids, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                activeRows.forEach(function (tr) {
+                    var id = tr.dataset.promotionId;
+                    var info = data[id];
+                    if (!info || info.status === tr.dataset.promotionStatus) return;
+                    tr.dataset.promotionStatus = info.status;
+                    var statusCell = tr.querySelector('[data-role="status-cell"]');
+                    if (statusCell) statusCell.innerHTML = renderStatusBadge(info.status, info.error_message);
+                    var actionsCell = tr.querySelector('[data-role="actions-cell"]');
+                    if (actionsCell) {
+                        actionsCell.innerHTML = renderActionButtons(
+                            id, info.status,
+                            tr.dataset.pkgName, tr.dataset.repoName,
+                            actionsCell.dataset.buildPk
+                        );
+                    }
+                });
+                if (getActiveRows().length === 0) stopPolling();
+            })
+            .catch(function () {});
     }
 
     function startPolling() {
         if (_pollTimer) return;
-        _pollTimer = setInterval(function () {
-            if (!hasActiveBadge()) {
-                stopPolling();
-                return;
-            }
-            if (!busy) {
-                var params = new URLSearchParams(location.search);
-                loadUrl(location.pathname + '?' + params.toString(), false);
-            }
-        }, 3000);
+        _pollTimer = setInterval(pollPromotionStatuses, 3000);
     }
 
     function stopPolling() {
@@ -503,18 +574,7 @@
         _pollTimer = null;
     }
 
-    // Restart poll check after every AJAX load so newly-appeared active rows
-    // are also picked up.
-    var _origLoadUrl = loadUrl;
-    loadUrl = function (url, pushState) {
-        _origLoadUrl(url, pushState);
-        setTimeout(function () {
-            if (hasActiveBadge()) startPolling();
-            else stopPolling();
-        }, 200);
-    };
-
-    if (hasActiveBadge()) startPolling();
+    if (getActiveRows().length > 0) startPolling();
 })();
 </script>
 

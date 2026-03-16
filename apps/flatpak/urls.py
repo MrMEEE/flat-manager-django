@@ -37,6 +37,7 @@ urlpatterns = [
     path('builds/<int:pk>/unpublish/', views.BuildUnpublishView.as_view(), name='build_unpublish'),
     path('builds/<int:pk>/cancel/', views.BuildCancelView.as_view(), name='build_cancel'),
     path('promotions/', views.PromotionListView.as_view(), name='promotion_list'),
+    path('promotions/status/', views.PromotionStatusBulkView.as_view(), name='promotion_status_bulk'),
     path('promotions/sync/', views.SyncReposView.as_view(), name='promotions_sync'),
     path('promotions/<int:pk>/delete/', views.PromotionDeleteView.as_view(), name='promotion_delete'),
     path('promotions/<int:pk>/retry/', views.PromotionRetryView.as_view(), name='promotion_retry'),

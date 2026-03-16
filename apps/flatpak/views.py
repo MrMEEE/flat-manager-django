@@ -780,6 +780,29 @@ def _collect_child_promotions(build, parent_repo, visited=None):
     return results
 
 
+class PromotionStatusBulkView(LoginRequiredMixin, View):
+    """AJAX — return current status for multiple Promotion PKs.
+
+    GET /promotions/status/?ids=1,2,3  →  {"1": {status, error_message, completed_at}, ...}
+    """
+
+    def get(self, request):
+        raw = request.GET.get('ids', '')
+        try:
+            pks = [int(x) for x in raw.split(',') if x.strip()]
+        except ValueError:
+            return JsonResponse({}, status=400)
+        result = {}
+        for p in Promotion.objects.filter(pk__in=pks).select_related('promoted_by'):
+            result[str(p.pk)] = {
+                'status': p.status,
+                'error_message': p.error_message,
+                'promoted_by': p.promoted_by.username if p.promoted_by else None,
+                'completed_at': p.completed_at.strftime('%b %d, %H:%M') if p.completed_at else None,
+            }
+        return JsonResponse(result)
+
+
 class PromotionDeleteView(LoginRequiredMixin, View):
     """Delete a promotion (and all descendant-repo promotions) and remove OSTree refs."""
 
