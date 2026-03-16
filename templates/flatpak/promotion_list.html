@@ -83,24 +83,26 @@
                     </tr>
                 </thead>
                 <tbody>
-                    {% for build in ready_to_commit %}
-                    <tr id="commit-row-{{ build.package.pk }}">
-                        <td><input type="checkbox" class="form-check-input commit-chk" value="{{ build.package.pk }}"></td>
+                    {% for package in ready_to_commit %}
+                    {% with build=package.builds.first %}
+                    <tr id="commit-row-{{ package.pk }}">
+                        <td><input type="checkbox" class="form-check-input commit-chk" value="{{ package.pk }}"></td>
                         <td>
-                            <a href="{% url 'flatpak:package_detail' build.package.pk %}">{{ build.package.package_name }}</a>
-                            <br><small class="text-muted"><code>{{ build.package.package_id }}</code></small>
+                            <a href="{% url 'flatpak:package_detail' package.pk %}">{{ package.package_name }}</a>
+                            <br><small class="text-muted"><code>{{ package.package_id }}</code></small>
                         </td>
                         <td>{{ build.version|default:"-" }}</td>
-                        <td><a href="{% url 'flatpak:repo_detail' build.package.repository.pk %}">{{ build.package.repository.name }}</a></td>
-                        <td><a href="{% url 'flatpak:build_detail' build.pk %}">#{{ build.build_number }}</a></td>
+                        <td><a href="{% url 'flatpak:repo_detail' package.repository.pk %}">{{ package.repository.name }}</a></td>
+                        <td>{% if build %}<a href="{% url 'flatpak:build_detail' build.pk %}">#{{ build.build_number }}</a>{% else %}-{% endif %}</td>
                         <td>{{ build.completed_at|date:"M d, H:i"|default:"-" }}</td>
                         <td>
                             <button class="btn btn-sm btn-warning"
-                                    onclick="singleAction('commit', {{ build.package.pk }}, '{{ build.package.package_name|escapejs }}')">
+                                    onclick="singleAction('commit', {{ package.pk }}, '{{ package.package_name|escapejs }}')">
                                 <i class="bi bi-box-arrow-in-down-right"></i> Commit
                             </button>
                         </td>
                     </tr>
+                    {% endwith %}
                     {% endfor %}
                 </tbody>
             </table>
@@ -138,24 +140,26 @@
                     </tr>
                 </thead>
                 <tbody>
-                    {% for build in ready_to_publish %}
-                    <tr id="publish-row-{{ build.package.pk }}">
-                        <td><input type="checkbox" class="form-check-input publish-chk" value="{{ build.package.pk }}"></td>
+                    {% for package in ready_to_publish %}
+                    {% with build=package.builds.first %}
+                    <tr id="publish-row-{{ package.pk }}">
+                        <td><input type="checkbox" class="form-check-input publish-chk" value="{{ package.pk }}"></td>
                         <td>
-                            <a href="{% url 'flatpak:package_detail' build.package.pk %}">{{ build.package.package_name }}</a>
-                            <br><small class="text-muted"><code>{{ build.package.package_id }}</code></small>
+                            <a href="{% url 'flatpak:package_detail' package.pk %}">{{ package.package_name }}</a>
+                            <br><small class="text-muted"><code>{{ package.package_id }}</code></small>
                         </td>
                         <td>{{ build.version|default:"-" }}</td>
-                        <td><a href="{% url 'flatpak:repo_detail' build.package.repository.pk %}">{{ build.package.repository.name }}</a></td>
-                        <td><a href="{% url 'flatpak:build_detail' build.pk %}">#{{ build.build_number }}</a></td>
+                        <td><a href="{% url 'flatpak:repo_detail' package.repository.pk %}">{{ package.repository.name }}</a></td>
+                        <td>{% if build %}<a href="{% url 'flatpak:build_detail' build.pk %}">#{{ build.build_number }}</a>{% else %}-{% endif %}</td>
                         <td>{{ build.completed_at|date:"M d, H:i"|default:"-" }}</td>
                         <td>
                             <button class="btn btn-sm btn-success"
-                                    onclick="singleAction('publish', {{ build.package.pk }}, '{{ build.package.package_name|escapejs }}')">
+                                    onclick="singleAction('publish', {{ package.pk }}, '{{ package.package_name|escapejs }}')">
                                 <i class="bi bi-cloud-upload"></i> Publish
                             </button>
                         </td>
                     </tr>
+                    {% endwith %}
                     {% endfor %}
                 </tbody>
             </table>
@@ -295,9 +299,18 @@
                                 <i class="bi bi-trash3"></i> Delete
                             </button>
                             {% elif promotion.status == 'failed' %}
+                            <button class="btn btn-sm btn-warning ms-1"
+                                    onclick="retryPromotion({{ promotion.pk }}, '{{ promotion.package.package_name|escapejs }}', '{{ promotion.target_repo.name|escapejs }}')">
+                                <i class="bi bi-arrow-clockwise"></i> Retry
+                            </button>
                             <button class="btn btn-sm btn-outline-secondary ms-1"
                                     onclick="confirmDeletePromotion({{ promotion.pk }}, '{{ promotion.package.package_name|escapejs }}', '{{ promotion.target_repo.name|escapejs }}')">
                                 <i class="bi bi-x-circle"></i> Dismiss
+                            </button>
+                            {% elif promotion.status == 'pending' %}
+                            <button class="btn btn-sm btn-warning ms-1"
+                                    onclick="retryPromotion({{ promotion.pk }}, '{{ promotion.package.package_name|escapejs }}', '{{ promotion.target_repo.name|escapejs }}')">
+                                <i class="bi bi-arrow-clockwise"></i> Retry
                             </button>
                             {% endif %}
                         </td>
@@ -570,6 +583,26 @@ function confirmUnpublish(buildPk, pkgName, buildRef) {
                 if (r.ok) { location.reload(); }
                 else { showErrorModal('Unpublish Failed', d.error || r.statusText); }
             } catch (e) { showErrorModal('Unpublish Error', e.message); }
+        }
+    );
+}
+
+function retryPromotion(promotionPk, pkgName, repoName) {
+    showDeleteConfirm(
+        'Retry Promotion',
+        `<p>Re-queue promotion of <strong>${pkgName}</strong> to <strong>${repoName}</strong>?</p>`,
+        'Retry',
+        async () => {
+            try {
+                const r = await fetch(`/promotions/${promotionPk}/retry/`, {
+                    method: 'POST',
+                    headers: { 'X-CSRFToken': _csrf },
+                    credentials: 'same-origin'
+                });
+                const d = await r.json();
+                if (r.ok) { location.reload(); }
+                else { showErrorModal('Retry Failed', d.error || r.statusText); }
+            } catch (e) { showErrorModal('Retry Error', e.message); }
         }
     );
 }

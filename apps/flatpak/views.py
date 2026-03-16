@@ -708,6 +708,24 @@ class PromoteView(LoginRequiredMixin, View):
         return JsonResponse({'status': 'ok', 'promotion_id': promotion.id})
 
 
+class PromotionRetryView(LoginRequiredMixin, View):
+    """Re-queue a pending or failed promotion."""
+
+    def post(self, request, pk):
+        from apps.flatpak.tasks import promote_build_task
+        promotion = get_object_or_404(Promotion, pk=pk)
+        if promotion.status not in ('pending', 'failed'):
+            return JsonResponse(
+                {'error': f'Promotion is {promotion.status}, only pending/failed can be retried'},
+                status=400
+            )
+        promotion.status = 'pending'
+        promotion.error_message = ''
+        promotion.save(update_fields=['status', 'error_message'])
+        promote_build_task.delay(promotion.id)
+        return JsonResponse({'status': 'ok'})
+
+
 def _delete_promotion_from_repo(promotion):
     """Remove the OSTree ref from the promotion's target repo and delete the Promotion record."""
     if promotion.status == 'promoted':
@@ -920,17 +938,21 @@ class PromotionListView(LoginRequiredMixin, ListView):
         if pub_repo:
             pub_qs = pub_qs.filter(package__repository_id=pub_repo)
         context['published_builds'] = pub_qs
+        # Use Package.status (canonical truth) so we always see the current
+        # state of each package, not stale Build rows from previous attempts.
         context['ready_to_commit'] = (
-            Build.objects
+            Package.objects
             .filter(status='built')
-            .select_related('package', 'package__repository')
-            .order_by('-completed_at')
+            .select_related('repository')
+            .prefetch_related('builds')
+            .order_by('package_name')
         )
         context['ready_to_publish'] = (
-            Build.objects
+            Package.objects
             .filter(status='committed')
-            .select_related('package', 'package__repository')
-            .order_by('-completed_at')
+            .select_related('repository')
+            .prefetch_related('builds')
+            .order_by('package_name')
         )
         context['repositories'] = Repository.objects.filter(is_active=True)
         context['promo_status_choices'] = Promotion.STATUS_CHOICES

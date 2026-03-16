@@ -38,6 +38,7 @@ urlpatterns = [
     path('promotions/', views.PromotionListView.as_view(), name='promotion_list'),
     path('promotions/sync/', views.SyncReposView.as_view(), name='promotions_sync'),
     path('promotions/<int:pk>/delete/', views.PromotionDeleteView.as_view(), name='promotion_delete'),
+    path('promotions/<int:pk>/retry/', views.PromotionRetryView.as_view(), name='promotion_retry'),
     path('config/', views.ConfigView.as_view(), name='config'),
     path('config/run-cleanup/', views.RunCleanupNowView.as_view(), name='run_cleanup'),
     path('config/remotes/add/', views.FlatpakRemoteCreateView.as_view(), name='remote_add'),
