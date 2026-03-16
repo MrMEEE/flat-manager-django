@@ -1191,6 +1191,14 @@ class PackageCommitView(LoginRequiredMixin, View):
         })
 
 
+class PackageStatusView(LoginRequiredMixin, View):
+    """Return the current status of a package as JSON (used for polling)."""
+
+    def get(self, request, pk):
+        package = get_object_or_404(Package, pk=pk)
+        return JsonResponse({'status': package.status})
+
+
 class PackagePublishView(LoginRequiredMixin, View):
     """Publish a committed build to the repository."""
     

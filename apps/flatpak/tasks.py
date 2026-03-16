@@ -1069,6 +1069,28 @@ def parse_manifest_dependencies(package, manifest_file, build=None):
                                         version = match.group(1)
                                         log_build(build, 'info', f"Extracted version from file path: {version}")
                                         break
+
+                            elif source_type == 'extra-data':
+                                # Apps like Chrome use extra-data with a download URL.
+                                # Some manifests also carry an explicit 'version' field.
+                                if source.get('version'):
+                                    version = str(source['version'])
+                                    log_build(build, 'info', f"Found version in extra-data version field: {version}")
+                                    break
+                                url = source.get('url', '')
+                                if url:
+                                    patterns = [
+                                        r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)',
+                                        r'/(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/',
+                                    ]
+                                    for pattern in patterns:
+                                        match = re.search(pattern, url)
+                                        if match:
+                                            version = match.group(1)
+                                            log_build(build, 'info', f"Extracted version from extra-data URL: {version}")
+                                            break
+                                if version:
+                                    break
                     if version:
                         break
         

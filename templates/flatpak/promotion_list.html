@@ -484,6 +484,35 @@ async function _runAction(type, pkgPk) {
     return r;
 }
 
+/**
+ * Poll package statuses until none are in `activeStatuses`, then reload.
+ * activeStatuses: statuses that mean the task is still queued/running.
+ */
+async function _pollAllUntilDone(pkgPks, activeStatuses, maxWait) {
+    maxWait = maxWait || 120000;
+    // Brief initial wait so the task has a chance to start.
+    await new Promise(function (resolve) { setTimeout(resolve, 600); });
+    var start = Date.now();
+    var pending = new Set(pkgPks);
+    while (pending.size > 0 && Date.now() - start < maxWait) {
+        for (var pk of Array.from(pending)) {
+            try {
+                var r = await fetch('/packages/' + pk + '/status/', { credentials: 'same-origin' });
+                if (r.ok) {
+                    var d = await r.json();
+                    if (activeStatuses.indexOf(d.status) === -1) {
+                        pending.delete(pk);
+                    }
+                }
+            } catch (e) { pending.delete(pk); }
+        }
+        if (pending.size > 0) {
+            await new Promise(function (resolve) { setTimeout(resolve, 1500); });
+        }
+    }
+    location.reload();
+}
+
 function _markRowProcessing(type, pkgPk) {
     var row = document.getElementById(type + '-row-' + pkgPk);
     if (row) {
@@ -505,8 +534,10 @@ function singleAction(type, pkgPk, pkgName) {
             try {
                 var r = await _runAction(type, pkgPk);
                 var d = await r.json();
-                if (r.ok) { setTimeout(function () { location.reload(); }, 600); }
-                else { showErrorModal(label + ' Failed', d.error || r.statusText); }
+                if (r.ok) {
+                    var activeStatuses = type === 'commit' ? ['built', 'committing'] : ['committed', 'publishing'];
+                    _pollAllUntilDone([pkgPk], activeStatuses);
+                } else { showErrorModal(label + ' Failed', d.error || r.statusText); }
             } catch (e) { showErrorModal(label + ' Error', e.message); }
         }
     );
@@ -538,7 +569,8 @@ async function bulkAction(type) {
             if (errors.length) {
                 showErrorModal(label + ' Errors', errors.map(function (e) { return '<div>' + e + '</div>'; }).join(''));
             }
-            setTimeout(function () { location.reload(); }, 800);
+            var activeStatuses = type === 'commit' ? ['built', 'committing'] : ['committed', 'publishing'];
+            _pollAllUntilDone(pks, activeStatuses);
         }
     );
 }
