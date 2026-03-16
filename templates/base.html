@@ -190,6 +190,7 @@
                     console.log('WebSocket connected');
                     document.getElementById('ws-indicator').className = 'ws-indicator ws-connected';
                     document.getElementById('ws-status').textContent = 'Connected';
+                    if (typeof onWebSocketReconnect === 'function') { onWebSocketReconnect(); }
                 };
                 
                 ws.onmessage = function(e) {

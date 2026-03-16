@@ -522,24 +522,62 @@
         return eyeBtn;
     }
 
+    function _applyPromotionUpdate(id, status, errorMessage) {
+        var tr = document.querySelector('tr[data-promotion-id="' + id + '"]');
+        if (!tr || tr.dataset.promotionStatus === status) return;
+        tr.dataset.promotionStatus = status;
+        var statusCell = tr.querySelector('[data-role="status-cell"]');
+        if (statusCell) statusCell.innerHTML = renderStatusBadge(status, errorMessage);
+        var actionsCell = tr.querySelector('[data-role="actions-cell"]');
+        if (actionsCell) actionsCell.innerHTML = renderActionButtons(id, status, tr.dataset.pkgName, tr.dataset.repoName, actionsCell.dataset.buildPk);
+    }
+
     function onWebSocketMessage(data) {
         if (data.type !== 'promotion_status_update') return;
-        var id = String(data.promotion_id);
-        var tr = document.querySelector('tr[data-promotion-id="' + id + '"]');
-        if (!tr) return;
-        tr.dataset.promotionStatus = data.status;
-        var statusCell = tr.querySelector('[data-role="status-cell"]');
-        if (statusCell) statusCell.innerHTML = renderStatusBadge(data.status, data.error_message);
-        var actionsCell = tr.querySelector('[data-role="actions-cell"]');
-        if (actionsCell) {
-            actionsCell.innerHTML = renderActionButtons(
-                id, data.status,
-                tr.dataset.pkgName, tr.dataset.repoName,
-                actionsCell.dataset.buildPk
-            );
-        }
+        _applyPromotionUpdate(String(data.promotion_id), data.status, data.error_message);
     }
+
+    // Reload only the results container without dropping the WebSocket connection.
+    window._reloadPromotionsTable = function () {
+        var params = new URLSearchParams(location.search);
+        loadUrl(location.pathname + '?' + params.toString(), false);
+        // After the AJAX reload settles, sync rows that may have already finished.
+        setTimeout(function () { window._syncPromotionStatuses(); }, 800);
+    };
+
+    // One-shot REST sync for pending/promoting rows — used on page load and WS reconnect
+    // to catch transitions that happened while the socket was down.
+    window._syncPromotionStatuses = function () {
+        var rows = Array.from(document.querySelectorAll('tr[data-promotion-id]')).filter(function (tr) {
+            var s = tr.dataset.promotionStatus;
+            return s === 'pending' || s === 'promoting';
+        });
+        if (rows.length === 0) return;
+        var ids = rows.map(function (tr) { return tr.dataset.promotionId; }).join(',');
+        fetch('/promotions/status/?ids=' + ids, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                rows.forEach(function (tr) {
+                    var info = data[tr.dataset.promotionId];
+                    if (info) _applyPromotionUpdate(tr.dataset.promotionId, info.status, info.error_message);
+                });
+            })
+            .catch(function () {});
+    };
+
+    // Sync immediately in case any rows already finished before we loaded the page.
+    window._syncPromotionStatuses();
 })();
+</script>
+
+<script>
+// Called by base.html when the WebSocket (re)connects — catches any status
+// transitions that happened while the connection was down.
+function onWebSocketReconnect() {
+    if (typeof window._syncPromotionStatuses === 'function') {
+        window._syncPromotionStatuses();
+    }
+}
 </script>
 
 <!-- Confirm modal -->
@@ -763,8 +801,15 @@ function promoteFromList(buildPk, repoId, repoName, pkgName) {
             try {
                 const r = await _doPromote(buildPk, repoId);
                 const d = await r.json();
-                if (r.ok) { setTimeout(function () { location.reload(); }, 600); }
-                else { showErrorModal('Promote Failed', d.error || r.statusText); }
+                if (r.ok) {
+                    // AJAX-reload the results table so the WebSocket connection stays alive.
+                    // The WS will then deliver the final status update without being interrupted.
+                    if (typeof window._reloadPromotionsTable === 'function') {
+                        window._reloadPromotionsTable();
+                    } else {
+                        location.reload();
+                    }
+                } else { showErrorModal('Promote Failed', d.error || r.statusText); }
             } catch (e) { showErrorModal('Promote Error', e.message); }
         }
     );
@@ -814,7 +859,11 @@ async function bulkPromote() {
             if (errors.length) {
                 showErrorModal('Promote Errors', errors.map(function(e){ return '<div>' + e + '</div>'; }).join(''));
             }
-            setTimeout(function () { location.reload(); }, 600);
+            if (typeof window._reloadPromotionsTable === 'function') {
+                window._reloadPromotionsTable();
+            } else {
+                location.reload();
+            }
         }
     );
 }
