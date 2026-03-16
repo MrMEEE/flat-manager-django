@@ -104,7 +104,7 @@ def run_repo_sync() -> dict:
         if not repo.parent_repos.exists():
             continue
 
-        repo_path = os.path.join(settings.REPOS_BASE_PATH, repo.name)
+        repo_path = repo.repo_path
         repo_refs = ostree_refs(repo_path)
 
         # ── Create missing Promotion records ──────────────────────────────────

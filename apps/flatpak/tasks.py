@@ -787,7 +787,7 @@ def publish_package_task(package_id):
         
         # Get repositories
         build_repo_path = os.path.join(settings.REPOS_BASE_PATH, 'build-repo')
-        target_repo_path = os.path.join(settings.REPOS_BASE_PATH, package.repository.name)
+        target_repo_path = package.repository.repo_path
         
         if not os.path.exists(os.path.join(target_repo_path, 'config')):
             raise FileNotFoundError(f"Target repository {package.repository.name} not found")
@@ -1458,7 +1458,7 @@ def promote_build_task(promotion_id):
 
         # Always pull from build-repo (source of truth, no collection-id issues)
         build_repo_path = os.path.join(settings.REPOS_BASE_PATH, 'build-repo')
-        target_repo_path = os.path.join(settings.REPOS_BASE_PATH, target_repo.name)
+        target_repo_path = target_repo.repo_path
 
         if not os.path.exists(os.path.join(target_repo_path, 'config')):
             raise FileNotFoundError(f"Target repository '{target_repo.name}' not found on disk")

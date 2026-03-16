@@ -51,25 +51,20 @@ class Repository(models.Model):
         return self.name
     
     @property
-    def repo_path(self):
-        """Get the filesystem path for this repository."""
-        return os.path.join(settings.REPOS_BASE_PATH, self.name)
-    
-    def get_public_key_path(self):
-        """Get the path where the public GPG key should be stored."""
-        if self.gpg_key:
-            return os.path.join(settings.REPOS_BASE_PATH, f"{self.name}.gpg")
-        return None
+    def folder_name(self):
+        """Filesystem-safe version of the repository name (spaces → hyphens)."""
+        return self.name.replace(' ', '-')
 
     @property
     def repo_path(self):
         """Get the filesystem path for this repository."""
-        return os.path.join(settings.REPOS_BASE_PATH, self.name)
-    
+        return os.path.join(settings.REPOS_BASE_PATH, self.folder_name)
+
     def get_public_key_path(self):
         """Get the path where the public GPG key should be stored."""
         if self.gpg_key:
-            return os.path.join(settings.REPOS_BASE_PATH, f"{self.name}.gpg")
+            return os.path.join(settings.REPOS_BASE_PATH, f"{self.folder_name}.gpg")
+        return None
 class RepositorySubset(models.Model):
     """
     Repository subset configuration for partial repository mirrors.

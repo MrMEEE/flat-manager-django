@@ -711,7 +711,7 @@ class PromoteView(LoginRequiredMixin, View):
 def _delete_promotion_from_repo(promotion):
     """Remove the OSTree ref from the promotion's target repo and delete the Promotion record."""
     if promotion.status == 'promoted':
-        target_repo_path = os.path.join(settings.REPOS_BASE_PATH, promotion.target_repo.name)
+        target_repo_path = promotion.target_repo.repo_path
         ref_name = (
             f'app/{promotion.package.package_id}'
             f'/{promotion.package.arch}/{promotion.package.branch}'
