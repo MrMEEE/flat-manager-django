@@ -212,8 +212,9 @@ def ensure_appstream_compose_shims(build=None):
     patched = []
 
     for root in search_roots:
+        # Match all SDK runtimes (org.freedesktop.Sdk, org.kde.Sdk, org.gnome.Sdk, …)
         pattern = os.path.join(
-            root, 'runtime', 'org.freedesktop.Sdk',
+            root, 'runtime', '*.Sdk',
             '*', '*', 'active', 'files', 'bin'
         )
         for bin_dir in _glob.glob(pattern):
