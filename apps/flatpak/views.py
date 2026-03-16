@@ -920,6 +920,18 @@ class PromotionListView(LoginRequiredMixin, ListView):
         if pub_repo:
             pub_qs = pub_qs.filter(package__repository_id=pub_repo)
         context['published_builds'] = pub_qs
+        context['ready_to_commit'] = (
+            Build.objects
+            .filter(status='built')
+            .select_related('package', 'package__repository')
+            .order_by('-completed_at')
+        )
+        context['ready_to_publish'] = (
+            Build.objects
+            .filter(status='committed')
+            .select_related('package', 'package__repository')
+            .order_by('-completed_at')
+        )
         context['repositories'] = Repository.objects.filter(is_active=True)
         context['promo_status_choices'] = Promotion.STATUS_CHOICES
         context['filter_q'] = self.request.GET.get('q', '')

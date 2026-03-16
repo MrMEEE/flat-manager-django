@@ -55,6 +55,117 @@
 </div>
 
 <div id="results-container">
+
+<!-- ═══ Ready to Commit ══════════════════════════════════════════════════════ -->
+<div class="card mb-4 border-warning">
+    <div class="card-header d-flex justify-content-between align-items-center bg-warning bg-opacity-10">
+        <h5 class="mb-0"><i class="bi bi-box-arrow-in-down-right text-warning"></i> Ready to Commit
+            {% if ready_to_commit %}<span class="badge bg-warning text-dark ms-2">{{ ready_to_commit|length }}</span>{% endif %}
+        </h5>
+        <button class="btn btn-sm btn-warning d-none" id="commit-selected-btn"
+                onclick="bulkAction('commit')">
+            <i class="bi bi-box-arrow-in-down-right"></i> Commit Selected
+        </button>
+    </div>
+    <div class="card-body p-0">
+        {% if ready_to_commit %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0" id="commit-table">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width:2.5rem"><input type="checkbox" class="form-check-input" id="commit-select-all" title="Select all"></th>
+                        <th>Package</th>
+                        <th>Version</th>
+                        <th>Repository</th>
+                        <th>Build</th>
+                        <th>Finished</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for build in ready_to_commit %}
+                    <tr id="commit-row-{{ build.package.pk }}">
+                        <td><input type="checkbox" class="form-check-input commit-chk" value="{{ build.package.pk }}"></td>
+                        <td>
+                            <a href="{% url 'flatpak:package_detail' build.package.pk %}">{{ build.package.package_name }}</a>
+                            <br><small class="text-muted"><code>{{ build.package.package_id }}</code></small>
+                        </td>
+                        <td>{{ build.version|default:"-" }}</td>
+                        <td><a href="{% url 'flatpak:repo_detail' build.package.repository.pk %}">{{ build.package.repository.name }}</a></td>
+                        <td><a href="{% url 'flatpak:build_detail' build.pk %}">#{{ build.build_number }}</a></td>
+                        <td>{{ build.completed_at|date:"M d, H:i"|default:"-" }}</td>
+                        <td>
+                            <button class="btn btn-sm btn-warning"
+                                    onclick="singleAction('commit', {{ build.package.pk }}, '{{ build.package.package_name|escapejs }}')">
+                                <i class="bi bi-box-arrow-in-down-right"></i> Commit
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="p-3 text-muted">No builds waiting to be committed.</div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- ═══ Ready to Publish ═════════════════════════════════════════════════════ -->
+<div class="card mb-4 border-success">
+    <div class="card-header d-flex justify-content-between align-items-center bg-success bg-opacity-10">
+        <h5 class="mb-0"><i class="bi bi-cloud-upload text-success"></i> Ready to Publish
+            {% if ready_to_publish %}<span class="badge bg-success ms-2">{{ ready_to_publish|length }}</span>{% endif %}
+        </h5>
+        <button class="btn btn-sm btn-success d-none" id="publish-selected-btn"
+                onclick="bulkAction('publish')">
+            <i class="bi bi-cloud-upload"></i> Publish Selected
+        </button>
+    </div>
+    <div class="card-body p-0">
+        {% if ready_to_publish %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0" id="publish-table">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width:2.5rem"><input type="checkbox" class="form-check-input" id="publish-select-all" title="Select all"></th>
+                        <th>Package</th>
+                        <th>Version</th>
+                        <th>Repository</th>
+                        <th>Build</th>
+                        <th>Finished</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for build in ready_to_publish %}
+                    <tr id="publish-row-{{ build.package.pk }}">
+                        <td><input type="checkbox" class="form-check-input publish-chk" value="{{ build.package.pk }}"></td>
+                        <td>
+                            <a href="{% url 'flatpak:package_detail' build.package.pk %}">{{ build.package.package_name }}</a>
+                            <br><small class="text-muted"><code>{{ build.package.package_id }}</code></small>
+                        </td>
+                        <td>{{ build.version|default:"-" }}</td>
+                        <td><a href="{% url 'flatpak:repo_detail' build.package.repository.pk %}">{{ build.package.repository.name }}</a></td>
+                        <td><a href="{% url 'flatpak:build_detail' build.pk %}">#{{ build.build_number }}</a></td>
+                        <td>{{ build.completed_at|date:"M d, H:i"|default:"-" }}</td>
+                        <td>
+                            <button class="btn btn-sm btn-success"
+                                    onclick="singleAction('publish', {{ build.package.pk }}, '{{ build.package.package_name|escapejs }}')">
+                                <i class="bi bi-cloud-upload"></i> Publish
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="p-3 text-muted">No builds waiting to be published.</div>
+        {% endif %}
+    </div>
+</div>
+
 <div class="card mb-4">
     <div class="card-header">
         <h5 class="mb-0"><i class="bi bi-cloud-upload"></i> Published to Build Repository</h5>
@@ -315,6 +426,110 @@
 <script>
 const _csrf = '{{ csrf_token }}';
 const _promotionChildRepos = {{ promotion_child_repos_json|safe }};
+
+// ── Ready-to-commit / ready-to-publish checkbox + bulk action logic ──────────
+(function () {
+    function setupTable(selectAllId, chkClass, bulkBtnId) {
+        var selectAll = document.getElementById(selectAllId);
+        var bulkBtn  = document.getElementById(bulkBtnId);
+        if (!selectAll) return;
+
+        function syncBulkBtn() {
+            var checked = document.querySelectorAll('.' + chkClass + ':checked').length;
+            bulkBtn.classList.toggle('d-none', checked === 0);
+        }
+
+        selectAll.addEventListener('change', function () {
+            document.querySelectorAll('.' + chkClass).forEach(function (c) {
+                c.checked = selectAll.checked;
+            });
+            syncBulkBtn();
+        });
+
+        document.querySelectorAll('.' + chkClass).forEach(function (c) {
+            c.addEventListener('change', function () {
+                var all = document.querySelectorAll('.' + chkClass);
+                var checked = document.querySelectorAll('.' + chkClass + ':checked');
+                selectAll.indeterminate = checked.length > 0 && checked.length < all.length;
+                selectAll.checked = checked.length === all.length;
+                syncBulkBtn();
+            });
+        });
+    }
+
+    setupTable('commit-select-all',  'commit-chk',  'commit-selected-btn');
+    setupTable('publish-select-all', 'publish-chk', 'publish-selected-btn');
+})();
+
+async function _runAction(type, pkgPk) {
+    var url = '/packages/' + pkgPk + '/' + type + '/';
+    var r = await fetch(url, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': _csrf },
+        credentials: 'same-origin'
+    });
+    return r;
+}
+
+function _markRowProcessing(type, pkgPk) {
+    var row = document.getElementById(type + '-row-' + pkgPk);
+    if (row) {
+        row.style.opacity = '0.4';
+        row.querySelectorAll('button, input[type=checkbox]').forEach(function (el) {
+            el.disabled = true;
+        });
+    }
+}
+
+function singleAction(type, pkgPk, pkgName) {
+    var label = type === 'commit' ? 'Commit' : 'Publish';
+    showDeleteConfirm(
+        label + ' ' + pkgName,
+        '<p>' + label + ' <strong>' + pkgName + '</strong>?</p>',
+        label,
+        async function () {
+            _markRowProcessing(type, pkgPk);
+            try {
+                var r = await _runAction(type, pkgPk);
+                var d = await r.json();
+                if (r.ok) { setTimeout(function () { location.reload(); }, 600); }
+                else { showErrorModal(label + ' Failed', d.error || r.statusText); }
+            } catch (e) { showErrorModal(label + ' Error', e.message); }
+        }
+    );
+}
+
+async function bulkAction(type) {
+    var chkClass = type === 'commit' ? 'commit-chk' : 'publish-chk';
+    var label    = type === 'commit' ? 'Commit' : 'Publish';
+    var pks = Array.from(document.querySelectorAll('.' + chkClass + ':checked'))
+                   .map(function (c) { return parseInt(c.value, 10); });
+    if (pks.length === 0) return;
+
+    showDeleteConfirm(
+        label + ' ' + pks.length + ' build' + (pks.length > 1 ? 's' : ''),
+        '<p>' + label + ' <strong>' + pks.length + ' selected build' + (pks.length > 1 ? 's' : '') + '</strong>?</p>',
+        label + ' All',
+        async function () {
+            var errors = [];
+            for (var i = 0; i < pks.length; i++) {
+                _markRowProcessing(type, pks[i]);
+                try {
+                    var r = await _runAction(type, pks[i]);
+                    if (!r.ok) {
+                        var d = await r.json().catch(function () { return {}; });
+                        errors.push(d.error || r.statusText);
+                    }
+                } catch (e) { errors.push(e.message); }
+            }
+            if (errors.length) {
+                showErrorModal(label + ' Errors', errors.map(function (e) { return '<div>' + e + '</div>'; }).join(''));
+            }
+            setTimeout(function () { location.reload(); }, 800);
+        }
+    );
+}
+
 
 function showDeleteConfirm(title, body, okLabel, onOk) {
     document.getElementById('deleteConfirmTitle').textContent = title;
