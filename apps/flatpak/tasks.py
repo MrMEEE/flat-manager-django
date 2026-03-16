@@ -229,6 +229,10 @@ def ensure_appstream_compose_shims(build=None):
                             needs_write = _f.read() != shim_content
                     except OSError:
                         pass
+                    except UnicodeDecodeError:
+                        # Existing file is a real binary (SDK ships its own
+                        # appstream-compose) — no shim needed, leave it alone.
+                        needs_write = False
                 if needs_write:
                     try:
                         with open(compose_path, 'w') as _f:
@@ -270,7 +274,8 @@ def run_cancellable(cmd, cwd, build, timeout_seconds):
         cwd=cwd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
+        encoding='utf-8',
+        errors='replace',  # Replace un-decodable bytes (e.g. binary download progress) with ?
         bufsize=1,  # line-buffered
     )
 
