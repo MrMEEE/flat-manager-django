@@ -1474,6 +1474,7 @@ def promote_build_task(promotion_id):
 
         promotion.status = 'promoting'
         promotion.save()
+        send_promotion_status_update(promotion)
 
         package = promotion.package
         target_repo = promotion.target_repo
@@ -1501,6 +1502,7 @@ def promote_build_task(promotion_id):
         promotion.status = 'promoted'
         promotion.completed_at = timezone.now()
         promotion.save()
+        send_promotion_status_update(promotion)
         logger.info(f"Promotion {promotion_id} complete: {ref_name} → {target_repo.name}")
         # Kick off a sync so any indirect state drift is caught immediately
         sync_repo_state.delay()
@@ -1515,8 +1517,29 @@ def promote_build_task(promotion_id):
             p.error_message = str(e)
             p.completed_at = timezone.now()
             p.save()
+            send_promotion_status_update(p)
         except Exception:
             pass
+
+
+def send_promotion_status_update(promotion):
+    """
+    Send promotion status via WebSocket to the notifications group.
+    """
+    channel_layer = get_channel_layer()
+    if channel_layer is None:
+        return
+    async_to_sync(channel_layer.group_send)(
+        'notifications',
+        {
+            'type': 'promotion_status_update',
+            'promotion_id': promotion.id,
+            'status': promotion.status,
+            'error_message': promotion.error_message,
+            'promoted_by': promotion.promoted_by.username if promotion.promoted_by else None,
+            'completed_at': promotion.completed_at.strftime('%b %d, %H:%M') if promotion.completed_at else None,
+        }
+    )
 
 
 def send_build_status_update(package_id, status, message='', repository_id=None):

@@ -125,6 +125,17 @@ class NotificationsConsumer(AsyncWebsocketConsumer):
             'message': event.get('message', '')
         }))
 
+    async def promotion_status_update(self, event):
+        """Forward promotion status updates"""
+        await self.send(text_data=json.dumps({
+            'type': 'promotion_status_update',
+            'promotion_id': event.get('promotion_id'),
+            'status': event.get('status'),
+            'error_message': event.get('error_message', ''),
+            'promoted_by': event.get('promoted_by'),
+            'completed_at': event.get('completed_at'),
+        }))
+
 
 class RepoStatusConsumer(AsyncWebsocketConsumer):
     """

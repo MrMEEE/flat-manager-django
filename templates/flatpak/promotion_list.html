@@ -478,18 +478,7 @@
     bindPagination();
     updateClearBtn();
 
-    // ── Live status updates while any promotion is in-flight ─────────────────
-    // Instead of replacing the entire results container, we fetch only the
-    // status fields for active rows and update those cells in-place.
-    var _pollTimer = null;
-
-    function getActiveRows() {
-        return Array.from(document.querySelectorAll('tr[data-promotion-id]')).filter(function (tr) {
-            var s = tr.dataset.promotionStatus;
-            return s === 'pending' || s === 'promoting';
-        });
-    }
-
+    // ── Live status updates via WebSocket ────────────────────────────────────
     function renderStatusBadge(status, errorMessage) {
         if (status === 'promoted') {
             return '<span class="badge bg-success">Promoted</span>';
@@ -533,48 +522,23 @@
         return eyeBtn;
     }
 
-    function pollPromotionStatuses() {
-        var activeRows = getActiveRows();
-        if (activeRows.length === 0) {
-            stopPolling();
-            return;
+    function onWebSocketMessage(data) {
+        if (data.type !== 'promotion_status_update') return;
+        var id = String(data.promotion_id);
+        var tr = document.querySelector('tr[data-promotion-id="' + id + '"]');
+        if (!tr) return;
+        tr.dataset.promotionStatus = data.status;
+        var statusCell = tr.querySelector('[data-role="status-cell"]');
+        if (statusCell) statusCell.innerHTML = renderStatusBadge(data.status, data.error_message);
+        var actionsCell = tr.querySelector('[data-role="actions-cell"]');
+        if (actionsCell) {
+            actionsCell.innerHTML = renderActionButtons(
+                id, data.status,
+                tr.dataset.pkgName, tr.dataset.repoName,
+                actionsCell.dataset.buildPk
+            );
         }
-        var ids = activeRows.map(function (tr) { return tr.dataset.promotionId; }).join(',');
-        fetch('/promotions/status/?ids=' + ids, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-            .then(function (r) { return r.json(); })
-            .then(function (data) {
-                activeRows.forEach(function (tr) {
-                    var id = tr.dataset.promotionId;
-                    var info = data[id];
-                    if (!info || info.status === tr.dataset.promotionStatus) return;
-                    tr.dataset.promotionStatus = info.status;
-                    var statusCell = tr.querySelector('[data-role="status-cell"]');
-                    if (statusCell) statusCell.innerHTML = renderStatusBadge(info.status, info.error_message);
-                    var actionsCell = tr.querySelector('[data-role="actions-cell"]');
-                    if (actionsCell) {
-                        actionsCell.innerHTML = renderActionButtons(
-                            id, info.status,
-                            tr.dataset.pkgName, tr.dataset.repoName,
-                            actionsCell.dataset.buildPk
-                        );
-                    }
-                });
-                if (getActiveRows().length === 0) stopPolling();
-            })
-            .catch(function () {});
     }
-
-    function startPolling() {
-        if (_pollTimer) return;
-        _pollTimer = setInterval(pollPromotionStatuses, 3000);
-    }
-
-    function stopPolling() {
-        clearInterval(_pollTimer);
-        _pollTimer = null;
-    }
-
-    if (getActiveRows().length > 0) startPolling();
 })();
 </script>
 
