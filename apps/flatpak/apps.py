@@ -26,13 +26,19 @@ class FlatpakConfig(AppConfig):
     
     def _check_repositories_signal(self, sender, **kwargs):
         """Signal handler to check repositories after migrations."""
-        try:
-            self._check_and_init_repositories()
-        except Exception as e:
-            # Log but don't crash the application
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.warning(f"Failed to check/initialize repositories on startup: {e}")
+        # Skip the OSTree repo check when post_migrate fires during a
+        # management command (e.g. `manage.py migrate` in the RPM %post
+        # scriptlet).  The command runs as root without the service
+        # environment, so ostree calls will fail with permission errors.
+        # Task registration is safe to run in both contexts.
+        running_mgmt_cmd = sys.argv[0].endswith('manage.py')
+        if not running_mgmt_cmd:
+            try:
+                self._check_and_init_repositories()
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to check/initialize repositories on startup: {e}")
         try:
             self._register_periodic_tasks()
         except Exception as e:

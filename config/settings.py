@@ -134,7 +134,11 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 STATIC_URL = 'static/'
 STATIC_ROOT = os.environ.get('STATIC_ROOT', str(BASE_DIR / 'staticfiles'))
-STATICFILES_DIRS = [BASE_DIR / 'static']
+# Only add the project-level static/ source dir when it actually exists.
+# During production deployment only STATIC_ROOT (staticfiles/) is present;
+# including a non-existent path triggers Django's staticfiles.W004 warning.
+_static_src = BASE_DIR / 'static'
+STATICFILES_DIRS = [_static_src] if _static_src.exists() else []
 
 MEDIA_URL = 'media/'
 MEDIA_ROOT = os.environ.get('MEDIA_ROOT', str(BASE_DIR / 'media'))
