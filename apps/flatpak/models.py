@@ -137,6 +137,15 @@ class Package(models.Model):
         null=True, blank=True,
         help_text="When the upstream version was last checked"
     )
+    upstream_version_script = models.TextField(
+        blank=True,
+        help_text=(
+            "Optional script to determine the latest upstream version. "
+            "Include a shebang line (#!/bin/bash or #!/usr/bin/env python3). "
+            "Print the version to stdout. "
+            "Falls back to git tag detection if empty or if the script fails."
+        )
+    )
 
     # Build results
     source_commit = models.CharField(max_length=255, blank=True, help_text="Git commit hash that was built")

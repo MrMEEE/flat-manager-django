@@ -962,7 +962,7 @@ class PackageCreateView(LoginRequiredMixin, CreateView):
     """Create new package."""
     model = Package
     template_name = 'flatpak/package_form.html'
-    fields = ['repository', 'package_id', 'package_name', 'version', 'git_repo_url', 'git_branch', 'upstream_url', 'branch', 'arch', 'installation_type']
+    fields = ['repository', 'package_id', 'package_name', 'version', 'git_repo_url', 'git_branch', 'upstream_url', 'upstream_version_script', 'branch', 'arch', 'installation_type']
     
     def get_form(self, form_class=None):
         form = super().get_form(form_class)
@@ -1012,7 +1012,7 @@ class PackageUpdateView(LoginRequiredMixin, UpdateView):
     """Edit package details."""
     model = Package
     template_name = 'flatpak/package_form.html'
-    fields = ['repository', 'package_id', 'package_name', 'version', 'branch', 'arch', 'git_repo_url', 'git_branch', 'upstream_url', 'installation_type']
+    fields = ['repository', 'package_id', 'package_name', 'version', 'branch', 'arch', 'git_repo_url', 'git_branch', 'upstream_url', 'upstream_version_script', 'installation_type']
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)

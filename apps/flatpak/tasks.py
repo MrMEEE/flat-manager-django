@@ -1071,39 +1071,6 @@ def parse_manifest_dependencies(package, manifest_file, build=None):
                                         break
                     if version:
                         break
-            
-            # 3. If still not found, try all modules' sources (not just main app)
-            if not version:
-                for module in manifest.get('modules', []):
-                    if isinstance(module, str):
-                        continue
-                    
-                    for source in module.get('sources', []):
-                        if isinstance(source, str):
-                            continue
-                        
-                        source_type = source.get('type', '')
-                        
-                        # Check git tags
-                        if source_type == 'git':
-                            tag = source.get('tag', '')
-                            if tag and re.match(r'v?\d+\.\d+', tag):
-                                version = tag.lstrip('v')
-                                log_build(build, 'info', f"Found version in git tag: {version}")
-                                break
-                        
-                        # Check archive URLs
-                        elif source_type == 'archive':
-                            url = source.get('url', '')
-                            if url:
-                                match = re.search(r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', url)
-                                if match:
-                                    version = match.group(1)
-                                    log_build(build, 'info', f"Found version in archive URL: {version}")
-                                    break
-                    
-                    if version:
-                        break
         
         # If version found, save it to both package and build
         if version:
@@ -1661,20 +1628,107 @@ def _fetch_latest_upstream_tag(url):
         return None, str(e)
 
 
+def _run_version_script(script_text, package_id):
+    """
+    Execute a user-supplied version script and return (version, error).
+
+    The script's shebang line determines the interpreter:
+      #!/usr/bin/env python3  /  #!/usr/bin/python*  → python3
+      anything else (or no shebang)                  → /bin/bash
+
+    stdout is captured; the first non-empty stripped line is the version.
+    A 30-second timeout is enforced; non-zero exit codes are treated as errors.
+    """
+    import stat
+    import tempfile
+
+    first_line = script_text.strip().splitlines()[0] if script_text.strip() else ''
+    if 'python' in first_line:
+        interpreter = 'python3'
+    else:
+        interpreter = '/bin/bash'
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode='w', suffix='.sh', prefix='fmd_verscript_', delete=False
+        ) as tmp:
+            tmp.write(script_text)
+            tmp_path = tmp.name
+
+        os.chmod(tmp_path, stat.S_IRWXU)
+
+        result = subprocess.run(
+            [interpreter, tmp_path],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        os.unlink(tmp_path)
+
+        if result.returncode != 0:
+            stderr = result.stderr.strip()
+            return None, f"Script exited {result.returncode}: {stderr[:200]}"
+
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if line:
+                return line, None
+
+        return None, "Script produced no output"
+
+    except subprocess.TimeoutExpired:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+        return None, "Script timed out after 30 seconds"
+    except Exception as e:
+        return None, str(e)
+
+
 @shared_task
 def check_upstream_version_task(package_id):
-    """Check and store the latest upstream version for a single package."""
+    """Check and store the latest upstream version for a single package.
+
+    Version resolution order:
+      1. Run ``upstream_version_script`` if set; use its stdout as the version.
+      2. Fall back to git-tag detection via ``upstream_url`` (if set) when the
+         script is absent, empty, or fails.
+    """
     from apps.flatpak.models import Package
     try:
         package = Package.objects.get(id=package_id)
     except Package.DoesNotExist:
         return None
-    if not package.upstream_url:
+
+    version = None
+
+    # --- Step 1: custom version script ---
+    if package.upstream_version_script.strip():
+        version, script_error = _run_version_script(
+            package.upstream_version_script, package.package_id
+        )
+        if script_error:
+            logger.warning(
+                f"Version script failed for {package.package_id}: {script_error}"
+            )
+        else:
+            logger.info(
+                f"Version script returned {version!r} for {package.package_id}"
+            )
+
+    # --- Step 2: git tag detection (fallback or primary when no script) ---
+    if not version and package.upstream_url:
+        version, error = _fetch_latest_upstream_tag(package.upstream_url)
+        if error:
+            logger.warning(
+                f"Upstream tag check failed for {package.package_id}: {error}"
+            )
+
+    if not version:
         return None
-    version, error = _fetch_latest_upstream_tag(package.upstream_url)
-    if error:
-        logger.warning(f"Upstream check failed for {package.package_id}: {error}")
-        return None
+
     package.upstream_version = version
     package.upstream_checked_at = timezone.now()
     package.save(update_fields=['upstream_version', 'upstream_checked_at'])
@@ -1711,8 +1765,10 @@ def check_all_upstream_versions():
         return "Upstream version check disabled"
 
     packages = Package.objects.filter(upstream_url__isnull=False).exclude(upstream_url='')
-    count = packages.count()
-    for p in packages:
+    script_only = Package.objects.filter(upstream_url='').exclude(upstream_version_script='')
+    all_packages = (packages | script_only).distinct()
+    count = all_packages.count()
+    for p in all_packages:
         check_upstream_version_task.delay(p.id)
     logger.info(f"Queued upstream version check for {count} package(s)")
     return f"Queued {count} upstream version check(s)"
