@@ -76,7 +76,7 @@
                     <dd class="col-sm-9" id="build-version">{{ package.version }}</dd>
                     {% endif %}
 
-                    {% if package.upstream_url %}
+                    {% if package.upstream_url or package.upstream_version_script %}
                     <dt class="col-sm-3">Upstream Version:</dt>
                     <dd class="col-sm-9">
                         <span id="upstream-version-value">
@@ -102,12 +102,14 @@
                             <i class="bi bi-arrow-clockwise"></i> Check now
                         </button>
                     </dd>
+                    {% if package.upstream_url %}
                     <dt class="col-sm-3">Upstream URL:</dt>
                     <dd class="col-sm-9">
                         <a href="{{ package.upstream_url }}" target="_blank" rel="noopener">
                             {{ package.upstream_url }}
                         </a>
                     </dd>
+                    {% endif %}
                     {% endif %}
 
                     <dt class="col-sm-3">Repository:</dt>
