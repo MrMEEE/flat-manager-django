@@ -543,13 +543,25 @@ class PackageCheckUpstreamView(LoginRequiredMixin, View):
 
     def post(self, request, pk):
         from django.utils import timezone as tz
-        from apps.flatpak.tasks import _fetch_latest_upstream_tag
+        from apps.flatpak.tasks import _fetch_latest_upstream_tag, _run_version_script
         package = get_object_or_404(Package, pk=pk)
-        if not package.upstream_url:
-            return JsonResponse({'error': 'No upstream URL configured for this package'}, status=400)
-        version, error = _fetch_latest_upstream_tag(package.upstream_url)
-        if error is not None:
-            return JsonResponse({'error': error}, status=502)
+        if not package.upstream_url and not package.upstream_version_script.strip():
+            return JsonResponse({'error': 'No upstream URL or version script configured for this package'}, status=400)
+
+        version = None
+        error = None
+
+        # Step 1: custom version script
+        if package.upstream_version_script.strip():
+            version, error = _run_version_script(package.upstream_version_script, package.package_id)
+
+        # Step 2: git tag fallback
+        if not version and package.upstream_url:
+            version, error = _fetch_latest_upstream_tag(package.upstream_url)
+
+        if not version:
+            return JsonResponse({'error': error or 'Could not determine upstream version'}, status=502)
+
         package.upstream_version = version
         package.upstream_checked_at = tz.now()
         package.save(update_fields=['upstream_version', 'upstream_checked_at'])
