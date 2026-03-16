@@ -954,6 +954,27 @@ class PromotionListView(LoginRequiredMixin, ListView):
             .prefetch_related('builds')
             .order_by('package_name')
         )
+        # Build list items with available promotion targets for the
+        # "Ready to Promote" card.  We use the latest published Build per
+        # package so the promote endpoint has the correct build_pk.
+        ready_to_promote = []
+        promote_builds = (
+            Build.objects
+            .filter(status='published')
+            .select_related('package', 'package__repository')
+            .prefetch_related('promotions', 'promotions__target_repo')
+            .order_by('package__package_name', '-build_number')
+        )
+        seen_packages = set()
+        for build in promote_builds:
+            # Only show the latest published build per package
+            if build.package_id in seen_packages:
+                continue
+            targets = get_available_promotion_targets(build)
+            if targets:
+                ready_to_promote.append({'build': build, 'targets': targets})
+                seen_packages.add(build.package_id)
+        context['ready_to_promote'] = ready_to_promote
         context['repositories'] = Repository.objects.filter(is_active=True)
         context['promo_status_choices'] = Promotion.STATUS_CHOICES
         context['filter_q'] = self.request.GET.get('q', '')

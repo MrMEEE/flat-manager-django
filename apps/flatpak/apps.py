@@ -9,17 +9,20 @@ class FlatpakConfig(AppConfig):
     
     def ready(self):
         """Initialize missing OSTree repositories on startup."""
-        # Don't run during migrations or when managing.py commands that shouldn't trigger this
-        if 'migrate' in sys.argv or 'makemigrations' in sys.argv:
-            return
-        
-        # Only run in the main process (not in reloader process)
-        if os.environ.get('RUN_MAIN') != 'true':
-            return
-        
-        # Use post_migrate signal to avoid database access during app initialization
+        # Connect post_migrate so that tasks are (re-)registered after every
+        # migration run, regardless of the process type.
         from django.db.models.signals import post_migrate
         post_migrate.connect(self._check_repositories_signal, sender=self)
+
+        # Also attempt task registration on every normal process startup
+        # (gunicorn, celery worker, celery beat).  Skip management commands
+        # like migrate/makemigrations where the DB may not be fully ready.
+        if 'migrate' not in sys.argv and 'makemigrations' not in sys.argv:
+            try:
+                self._register_periodic_tasks()
+            except Exception:
+                # DB might not be ready yet; post_migrate will catch it.
+                pass
     
     def _check_repositories_signal(self, sender, **kwargs):
         """Signal handler to check repositories after migrations."""

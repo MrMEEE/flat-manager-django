@@ -170,6 +170,55 @@
     </div>
 </div>
 
+<!-- ═══ Ready to Promote ═════════════════════════════════════════════════════ -->
+<div class="card mb-4 border-primary">
+    <div class="card-header d-flex justify-content-between align-items-center bg-primary bg-opacity-10">
+        <h5 class="mb-0"><i class="bi bi-arrow-up-right text-primary"></i> Ready to Promote
+            {% if ready_to_promote %}<span class="badge bg-primary ms-2">{{ ready_to_promote|length }}</span>{% endif %}
+        </h5>
+    </div>
+    <div class="card-body p-0">
+        {% if ready_to_promote %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0" id="promote-table">
+                <thead class="table-light">
+                    <tr>
+                        <th>Package</th>
+                        <th>Version</th>
+                        <th>Source Repo</th>
+                        <th>Build</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in ready_to_promote %}
+                    <tr id="promote-row-{{ item.build.pk }}">
+                        <td>
+                            <a href="{% url 'flatpak:package_detail' item.build.package.pk %}">{{ item.build.package.package_name }}</a>
+                            <br><small class="text-muted"><code>{{ item.build.package.package_id }}</code></small>
+                        </td>
+                        <td>{{ item.build.version|default:"-" }}</td>
+                        <td><a href="{% url 'flatpak:repo_detail' item.build.package.repository.pk %}">{{ item.build.package.repository.name }}</a></td>
+                        <td><a href="{% url 'flatpak:build_detail' item.build.pk %}">#{{ item.build.build_number }}</a></td>
+                        <td>
+                            {% for repo in item.targets %}
+                            <button class="btn btn-sm btn-primary me-1"
+                                    onclick="promoteFromList({{ item.build.pk }}, {{ repo.pk }}, '{{ repo.name|escapejs }}', '{{ item.build.package.package_name|escapejs }}')">
+                                <i class="bi bi-arrow-up-right"></i> Promote to {{ repo.name }}
+                            </button>
+                            {% endfor %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="p-3 text-muted">No published builds waiting to be promoted.</div>
+        {% endif %}
+    </div>
+</div>
+
 <div class="card mb-4">
     <div class="card-header">
         <h5 class="mb-0"><i class="bi bi-cloud-upload"></i> Published to Build Repository</h5>
@@ -615,6 +664,29 @@ function confirmUnpublish(buildPk, pkgName, buildRef) {
                 if (r.ok) { location.reload(); }
                 else { showErrorModal('Unpublish Failed', d.error || r.statusText); }
             } catch (e) { showErrorModal('Unpublish Error', e.message); }
+        }
+    );
+}
+
+function promoteFromList(buildPk, repoId, repoName, pkgName) {
+    showDeleteConfirm(
+        'Promote Build',
+        `<p>Promote <strong>${pkgName}</strong> to <strong>${repoName}</strong>?</p>`,
+        'Promote',
+        async function () {
+            var row = document.getElementById('promote-row-' + buildPk);
+            if (row) { row.style.opacity = '0.4'; row.querySelectorAll('button').forEach(function(b){b.disabled=true;}); }
+            try {
+                const r = await fetch('/builds/' + buildPk + '/promote/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': _csrf },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ target_repo_id: repoId })
+                });
+                const d = await r.json();
+                if (r.ok) { setTimeout(function () { location.reload(); }, 600); }
+                else { showErrorModal('Promote Failed', d.error || r.statusText); }
+            } catch (e) { showErrorModal('Promote Error', e.message); }
         }
     );
 }
