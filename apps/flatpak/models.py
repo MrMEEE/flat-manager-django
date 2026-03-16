@@ -310,6 +310,13 @@ class SiteConfig(models.Model):
         default=1,
         help_text="How often (in minutes) to check for and retry pending promotions. Set to 0 to disable."
     )
+    promotion_stale_timeout_minutes = models.PositiveIntegerField(
+        default=10,
+        help_text=(
+            "Minutes after which a pending or in-progress promotion is considered stuck and marked as failed. "
+            "Set to 0 to never expire."
+        )
+    )
     class Meta:
         verbose_name = 'Site Configuration'
 

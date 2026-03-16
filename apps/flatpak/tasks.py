@@ -1777,24 +1777,61 @@ def check_all_upstream_versions():
 @shared_task
 def retry_pending_promotions():
     """
-    Periodic beat task: find any Promotion records stuck in 'pending' status
-    and dispatch promote_build_task for each one.
+    Periodic beat task: manages stuck promotions.
 
-    A promotion ends up stuck in 'pending' when the web request that created
-    it fails to enqueue the Celery task (e.g. broker blip, worker restart,
-    or — as fix v0.1.37 addressed — an ImportError in the task module).
-    Running this every 60 s ensures they are always picked up.
+    Step 1 — Expire stale promotions:
+        Any promotion in 'pending' or 'promoting' state whose created_at is
+        older than SiteConfig.promotion_stale_timeout_minutes is marked as
+        'failed'.  Set the timeout to 0 to disable expiry.
+
+    Step 2 — Re-queue recent pending promotions:
+        Remaining 'pending' promotions (not yet stale, or when expiry is
+        disabled) are dispatched to promote_build_task so they are always
+        picked up even if the original task message was dropped.
     """
-    from apps.flatpak.models import Promotion
+    from apps.flatpak.models import Promotion, SiteConfig
+    from datetime import timedelta
+    config = SiteConfig.get_solo()
+    timeout_minutes = config.promotion_stale_timeout_minutes
+
+    expired_count = 0
+    if timeout_minutes > 0:
+        stale_cutoff = timezone.now() - timedelta(minutes=timeout_minutes)
+        stale = Promotion.objects.filter(
+            status__in=['pending', 'promoting'],
+            created_at__lt=stale_cutoff,
+        ).select_related('package')
+        for promotion in stale:
+            logger.warning(
+                f"retry_pending_promotions: promotion {promotion.id} "
+                f"({promotion.package.package_id} → {promotion.target_repo_id}) "
+                f"stuck in '{promotion.status}' for >{timeout_minutes} min — marking failed"
+            )
+            promotion.status = 'failed'
+            promotion.error_message = (
+                f"Promotion timed out after {timeout_minutes} minute(s) "
+                f"in '{promotion.status}' state and was automatically failed."
+            )
+            promotion.save(update_fields=['status', 'error_message'])
+            expired_count += 1
+
+    # Re-queue any remaining (non-stale) pending promotions
     pending = Promotion.objects.filter(status='pending').select_related('build', 'package')
-    count = 0
+    queued_count = 0
     for promotion in pending:
         logger.info(
             f"retry_pending_promotions: dispatching promotion {promotion.id} "
             f"({promotion.package.package_id} → {promotion.target_repo_id})"
         )
         promote_build_task.delay(promotion.id)
-        count += 1
-    if count:
-        logger.info(f"retry_pending_promotions: queued {count} pending promotion(s)")
-    return f"Queued {count} pending promotion(s)"
+        queued_count += 1
+
+    summary = []
+    if expired_count:
+        summary.append(f"Expired {expired_count} stale promotion(s)")
+    if queued_count:
+        summary.append(f"Queued {queued_count} pending promotion(s)")
+    result = "; ".join(summary) if summary else "Nothing to do"
+    if expired_count or queued_count:
+        logger.info(f"retry_pending_promotions: {result}")
+    return result
