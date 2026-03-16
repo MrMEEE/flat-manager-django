@@ -488,6 +488,7 @@ class PackageListView(LoginRequiredMixin, ListView):
         get_params = self.request.GET.copy()
         get_params.pop('page', None)
         ctx['filter_params'] = get_params.urlencode()
+        ctx['failed_count'] = Package.objects.filter(status__in=['failed', 'cancelled']).count()
         return ctx
 
 
@@ -1193,6 +1194,26 @@ class PackageDeleteView(LoginRequiredMixin, DeleteView):
         messages.success(request, f'Package {package_id} deleted successfully.')
         # TODO: Clean up build artifacts from build-repo
         return super().delete(request, *args, **kwargs)
+
+
+class PackageRetryAllFailedView(LoginRequiredMixin, View):
+    """Retry all packages currently in failed or cancelled status."""
+
+    def post(self, request):
+        from django.http import JsonResponse
+        packages = Package.objects.filter(status__in=['failed', 'cancelled'])
+        retried = []
+        for package in packages:
+            package.build_number += 1
+            package.status = 'pending'
+            package.error_message = ''
+            package.save()
+            retried.append(package.package_name)
+        return JsonResponse({
+            'status': 'success',
+            'retried': len(retried),
+            'packages': retried,
+        })
 
 
 class PackageRetryView(LoginRequiredMixin, View):

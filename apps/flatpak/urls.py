@@ -20,6 +20,7 @@ urlpatterns = [
     path('subsets/<int:pk>/edit/', views.RepositorySubsetUpdateView.as_view(), name='subset_edit'),
     path('subsets/<int:pk>/delete/', views.RepositorySubsetDeleteView.as_view(), name='subset_delete'),
     path('packages/', views.PackageListView.as_view(), name='package_list'),
+    path('packages/retry-all-failed/', views.PackageRetryAllFailedView.as_view(), name='package_retry_all_failed'),
     path('packages/create/', views.PackageCreateView.as_view(), name='package_create'),
     path('packages/<int:pk>/', views.PackageDetailView.as_view(), name='package_detail'),
     path('packages/<int:pk>/edit/', views.PackageUpdateView.as_view(), name='package_edit'),
