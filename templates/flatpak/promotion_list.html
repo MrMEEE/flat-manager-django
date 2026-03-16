@@ -176,6 +176,10 @@
         <h5 class="mb-0"><i class="bi bi-arrow-up-right text-primary"></i> Ready to Promote
             {% if ready_to_promote %}<span class="badge bg-primary ms-2">{{ ready_to_promote|length }}</span>{% endif %}
         </h5>
+        <button class="btn btn-sm btn-primary d-none" id="promote-selected-btn"
+                onclick="bulkPromote()">
+            <i class="bi bi-arrow-up-right"></i> Promote Selected
+        </button>
     </div>
     <div class="card-body p-0">
         {% if ready_to_promote %}
@@ -183,6 +187,7 @@
             <table class="table table-hover mb-0" id="promote-table">
                 <thead class="table-light">
                     <tr>
+                        <th style="width:2.5rem"><input type="checkbox" class="form-check-input" id="promote-select-all" title="Select all"></th>
                         <th>Package</th>
                         <th>Version</th>
                         <th>Source Repo</th>
@@ -193,6 +198,9 @@
                 <tbody>
                     {% for item in ready_to_promote %}
                     <tr id="promote-row-{{ item.build.pk }}">
+                        <td><input type="checkbox" class="form-check-input promote-chk"
+                                   value="{{ item.build.pk }}"
+                                   data-targets="[{% for repo in item.targets %}{&quot;id&quot;:{{ repo.pk }},&quot;name&quot;:&quot;{{ repo.name|escapejs }}&quot;}{% if not forloop.last %},{% endif %}{% endfor %}]"></td>
                         <td>
                             <a href="{% url 'flatpak:package_detail' item.build.package.pk %}">{{ item.build.package.package_name }}</a>
                             <br><small class="text-muted"><code>{{ item.build.package.package_id }}</code></small>
@@ -465,6 +473,48 @@
     });
 
     bindPagination();
+    updateClearBtn();
+
+    // ── Auto-refresh while any promotion is in-flight ────────────────────────
+    var _pollTimer = null;
+
+    function hasActiveBadge() {
+        return !!document.querySelector(
+            '#results-container .badge.bg-secondary, #results-container .badge.bg-primary'
+        );
+    }
+
+    function startPolling() {
+        if (_pollTimer) return;
+        _pollTimer = setInterval(function () {
+            if (!hasActiveBadge()) {
+                stopPolling();
+                return;
+            }
+            if (!busy) {
+                var params = new URLSearchParams(location.search);
+                loadUrl(location.pathname + '?' + params.toString(), false);
+            }
+        }, 3000);
+    }
+
+    function stopPolling() {
+        clearInterval(_pollTimer);
+        _pollTimer = null;
+    }
+
+    // Restart poll check after every AJAX load so newly-appeared active rows
+    // are also picked up.
+    var _origLoadUrl = loadUrl;
+    loadUrl = function (url, pushState) {
+        _origLoadUrl(url, pushState);
+        setTimeout(function () {
+            if (hasActiveBadge()) startPolling();
+            else stopPolling();
+        }, 200);
+    };
+
+    if (hasActiveBadge()) startPolling();
 })();
 </script>
 
@@ -521,6 +571,7 @@ const _promotionChildRepos = {{ promotion_child_repos_json|safe }};
 
     setupTable('commit-select-all',  'commit-chk',  'commit-selected-btn');
     setupTable('publish-select-all', 'publish-chk', 'publish-selected-btn');
+    setupTable('promote-select-all', 'promote-chk', 'promote-selected-btn');
 })();
 
 async function _runAction(type, pkgPk) {
@@ -668,6 +719,15 @@ function confirmUnpublish(buildPk, pkgName, buildRef) {
     );
 }
 
+async function _doPromote(buildPk, repoId) {
+    return fetch('/builds/' + buildPk + '/promote/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': _csrf },
+        credentials: 'same-origin',
+        body: JSON.stringify({ target_repo_id: repoId })
+    });
+}
+
 function promoteFromList(buildPk, repoId, repoName, pkgName) {
     showDeleteConfirm(
         'Promote Build',
@@ -675,18 +735,62 @@ function promoteFromList(buildPk, repoId, repoName, pkgName) {
         'Promote',
         async function () {
             var row = document.getElementById('promote-row-' + buildPk);
-            if (row) { row.style.opacity = '0.4'; row.querySelectorAll('button').forEach(function(b){b.disabled=true;}); }
+            if (row) { row.style.opacity = '0.4'; row.querySelectorAll('button, input[type=checkbox]').forEach(function(b){b.disabled=true;}); }
             try {
-                const r = await fetch('/builds/' + buildPk + '/promote/', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': _csrf },
-                    credentials: 'same-origin',
-                    body: JSON.stringify({ target_repo_id: repoId })
-                });
+                const r = await _doPromote(buildPk, repoId);
                 const d = await r.json();
                 if (r.ok) { setTimeout(function () { location.reload(); }, 600); }
                 else { showErrorModal('Promote Failed', d.error || r.statusText); }
             } catch (e) { showErrorModal('Promote Error', e.message); }
+        }
+    );
+}
+
+async function bulkPromote() {
+    var selected = Array.from(document.querySelectorAll('.promote-chk:checked'));
+    if (selected.length === 0) return;
+
+    // Collect a flat list of {buildPk, repoId, repoName} from checked rows
+    var actions = [];
+    selected.forEach(function (chk) {
+        var buildPk = parseInt(chk.value, 10);
+        var targets = JSON.parse(chk.dataset.targets || '[]');
+        targets.forEach(function (t) {
+            actions.push({ buildPk: buildPk, repoId: t.id, repoName: t.name });
+        });
+    });
+
+    // Build a summary of what will happen
+    var lines = selected.map(function (chk) {
+        var targets = JSON.parse(chk.dataset.targets || '[]').map(function(t){ return t.name; }).join(', ');
+        var row = document.getElementById('promote-row-' + chk.value);
+        var pkg = row ? row.querySelector('a') ? row.querySelector('a').textContent.trim() : chk.value : chk.value;
+        return '<li><strong>' + pkg + '</strong> → ' + targets + '</li>';
+    }).join('');
+
+    showDeleteConfirm(
+        'Promote ' + selected.length + ' build' + (selected.length > 1 ? 's' : ''),
+        '<ul class="mb-0">' + lines + '</ul>',
+        'Promote All',
+        async function () {
+            selected.forEach(function (chk) {
+                var row = document.getElementById('promote-row-' + chk.value);
+                if (row) { row.style.opacity = '0.4'; row.querySelectorAll('button, input[type=checkbox]').forEach(function(b){b.disabled=true;}); }
+            });
+            var errors = [];
+            for (var i = 0; i < actions.length; i++) {
+                try {
+                    var r = await _doPromote(actions[i].buildPk, actions[i].repoId);
+                    if (!r.ok) {
+                        var d = await r.json().catch(function(){ return {}; });
+                        errors.push((d.error || r.statusText) + ' (' + actions[i].repoName + ')');
+                    }
+                } catch (e) { errors.push(e.message); }
+            }
+            if (errors.length) {
+                showErrorModal('Promote Errors', errors.map(function(e){ return '<div>' + e + '</div>'; }).join(''));
+            }
+            setTimeout(function () { location.reload(); }, 600);
         }
     );
 }
