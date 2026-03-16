@@ -127,10 +127,24 @@
                         {% endif %}
                     </div>
 
+                    <div class="mb-3">
+                        <label for="id_upstream_version_script" class="form-label">Upstream Version Script</label>
+                        <textarea class="form-control font-monospace" id="id_upstream_version_script" name="upstream_version_script"
+                                  rows="6" placeholder="#!/bin/bash&#10;# Print the latest version to stdout&#10;curl -s https://api.github.com/repos/owner/repo/releases/latest \&#10;  | grep '&quot;tag_name&quot;' | cut -d'&quot;' -f4 | sed 's/^v//'">{{ form.upstream_version_script.value|default:'' }}</textarea>
+                        <div class="form-text">
+                            Optional script to fetch the latest upstream version. Include a shebang line
+                            (<code>#!/bin/bash</code> or <code>#!/usr/bin/env python3</code>). Print the version to
+                            stdout. Falls back to git tag detection if empty or if the script fails.
+                        </div>
+                        {% if form.upstream_version_script.errors %}
+                        <div class="text-danger">{{ form.upstream_version_script.errors }}</div>
+                        {% endif %}
+                    </div>
+
                     <hr class="my-4">
 
                     <h5>Build Configuration</h5>
-                    
+
                     <div class="mb-3">
                         <label for="id_branch" class="form-label">Flatpak Branch *</label>
                         <input type="text" class="form-control" id="id_branch" name="branch" 
