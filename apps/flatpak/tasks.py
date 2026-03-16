@@ -1636,9 +1636,12 @@ def _fetch_latest_upstream_tag(url):
         pool = stable if stable else [(v, tag) for v, pre, tag in candidates]
         best_tag = max(pool, key=lambda x: x[0])[1]
 
-        # Strip a leading 'v' or 'V' only when followed immediately by a digit
-        if re.match(r'^[vV]\d', best_tag):
-            best_tag = best_tag[1:]
+        # Strip common non-numeric tag prefixes so the stored value is a bare
+        # version number that can be compared directly with the package version.
+        # Handles: v1.2, V1.2, release_5.8.0, release-5.8.0, version-1.2, etc.
+        m = re.match(r'^[a-zA-Z][a-zA-Z0-9_-]*?(\d)', best_tag)
+        if m:
+            best_tag = best_tag[best_tag.index(m.group(1)):]
 
         return best_tag, None
 
