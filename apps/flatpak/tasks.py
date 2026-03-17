@@ -1106,6 +1106,8 @@ def parse_manifest_dependencies(package, manifest_file, build=None):
             _m = re.match(r'^[a-zA-Z][a-zA-Z0-9_.+-]*?(\d)', version)
             if _m:
                 version = version[version.index(_m.group(1)):]
+            # Normalise underscore-separated versions (e.g. "1_4_3" → "1.4.3")
+            version = re.sub(r'(\d)_(\d)', r'\1.\2', version)
             package.version = version
             package.save(update_fields=['version'])
             build.version = version
