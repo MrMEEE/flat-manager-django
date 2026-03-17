@@ -41,8 +41,8 @@
                 <div class="card-body d-flex align-items-center gap-3">
                     <i class="bi bi-check-circle fs-2 opacity-75"></i>
                     <div>
-                        <div class="display-6 fw-bold lh-1">{{ builds_completed }}</div>
-                        <div class="small opacity-75">Completed</div>
+                        <div class="display-6 fw-bold lh-1">{{ packages_built }}</div>
+                        <div class="small opacity-75">Built</div>
                     </div>
                 </div>
             </div>
@@ -55,7 +55,7 @@
                 <div class="card-body d-flex align-items-center gap-3">
                     <i class="bi bi-x-circle fs-2 opacity-75"></i>
                     <div>
-                        <div class="display-6 fw-bold lh-1">{{ builds_failed }}</div>
+                        <div class="display-6 fw-bold lh-1">{{ packages_failed }}</div>
                         <div class="small opacity-75">Failed</div>
                     </div>
                 </div>
@@ -71,7 +71,7 @@
             <div class="card-body d-flex align-items-center gap-3">
                 <i class="bi bi-hammer fs-2 text-warning opacity-75"></i>
                 <div>
-                    <div class="display-6 fw-bold lh-1">{{ builds_building }}</div>
+                    <div class="display-6 fw-bold lh-1">{{ packages_building }}</div>
                     <div class="small text-muted">Building now</div>
                 </div>
             </div>
@@ -83,13 +83,25 @@
             <div class="card-body d-flex align-items-center gap-3">
                 <i class="bi bi-cloud-upload fs-2 text-info opacity-75"></i>
                 <div>
-                    <div class="display-6 fw-bold lh-1">{{ builds_published }}</div>
+                    <div class="display-6 fw-bold lh-1">{{ packages_published }}</div>
                     <div class="small text-muted">Published</div>
                 </div>
             </div>
         </div>
     </div>
-</div>
+    <div class="col-6 col-md-3">
+        <a href="{% url 'flatpak:package_list' %}" class="text-decoration-none">
+            <div class="card border-secondary h-100">
+                <div class="card-body d-flex align-items-center gap-3">
+                    <i class="bi bi-arrow-up-circle fs-2 text-secondary opacity-75"></i>
+                    <div>
+                        <div class="display-6 fw-bold lh-1">{{ packages_outdated }}</div>
+                        <div class="small text-muted">Outdated</div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div></div>
 
 <!-- ── Main content ───────────────────────────────────────────────────────── -->
 <div class="row g-3">

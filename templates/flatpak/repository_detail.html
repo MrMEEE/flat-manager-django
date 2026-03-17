@@ -66,11 +66,11 @@
                     
                     <dt class="col-sm-3">Installation URL:</dt>
                     <dd class="col-sm-9">
-                        <code>{{ request.scheme }}://{{ request.get_host }}/repositories/{{ repository.name }}</code>
-                        <button class="btn btn-sm btn-outline-secondary ms-2" onclick="copyToClipboard('{{ request.scheme }}://{{ request.get_host }}/repositories/{{ repository.name }}')">
+                        <code>{{ request.scheme }}://{{ request.get_host }}/repositories/{{ repository.folder_name }}</code>
+                        <button class="btn btn-sm btn-outline-secondary ms-2" onclick="copyToClipboard('{{ request.scheme }}://{{ request.get_host }}/repositories/{{ repository.folder_name }}')">
                             <i class="bi bi-clipboard"></i> Copy
                         </button>
-                        <br><small class="text-muted">Add this repository with: <code>flatpak remote-add {{ repository.name }} {{ request.scheme }}://{{ request.get_host }}/repositories/{{ repository.name }}</code></small>
+                        <br><small class="text-muted">Add this repository with: <code>flatpak remote-add {{ repository.name }} {{ request.scheme }}://{{ request.get_host }}/repositories/{{ repository.folder_name }}</code></small>
                     </dd>
                     
                     <dt class="col-sm-3">GPG Key:</dt>

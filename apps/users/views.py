@@ -54,11 +54,14 @@ class DashboardView(LoginRequiredMixin, View):
         repo_count = Repository.objects.filter(is_active=True).count()
         package_count = Package.objects.count()
 
-        build_qs = Build.objects.all()
-        builds_building  = build_qs.filter(status='building').count()
-        builds_completed = build_qs.filter(status='completed').count()
-        builds_failed    = build_qs.filter(status='failed').count()
-        builds_published = build_qs.filter(status='published').count()
+        from django.db.models import F
+        packages_building  = Package.objects.filter(status__in=['building', 'committing', 'committed', 'publishing']).count()
+        packages_built     = Package.objects.filter(status='built').count()
+        packages_failed    = Package.objects.filter(status__in=['failed', 'cancelled']).count()
+        packages_published = Package.objects.filter(status='published').count()
+        packages_outdated  = Package.objects.filter(
+            upstream_version__isnull=False
+        ).exclude(upstream_version='').exclude(upstream_version=F('version')).count()
 
         recent_builds = (
             Build.objects
@@ -68,13 +71,14 @@ class DashboardView(LoginRequiredMixin, View):
 
         context = {
             'user': request.user,
-            'repo_count':        repo_count,
-            'package_count':     package_count,
-            'builds_building':   builds_building,
-            'builds_completed':  builds_completed,
-            'builds_failed':     builds_failed,
-            'builds_published':  builds_published,
-            'recent_builds':     recent_builds,
+            'repo_count':          repo_count,
+            'package_count':       package_count,
+            'packages_building':   packages_building,
+            'packages_built':      packages_built,
+            'packages_failed':     packages_failed,
+            'packages_published':  packages_published,
+            'packages_outdated':   packages_outdated,
+            'recent_builds':       recent_builds,
         }
         return render(request, 'users/dashboard.html', context)
 

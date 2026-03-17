@@ -1102,6 +1102,10 @@ def parse_manifest_dependencies(package, manifest_file, build=None):
         
         # If version found, save it to both package and build
         if version:
+            # Strip leading word prefix (e.g. "RELEASE.2.5.0" → "2.5.0", "version-1.0" → "1.0")
+            _m = re.match(r'^[a-zA-Z][a-zA-Z0-9_.+-]*?(\d)', version)
+            if _m:
+                version = version[version.index(_m.group(1)):]
             package.version = version
             package.save(update_fields=['version'])
             build.version = version
