@@ -476,6 +476,9 @@ class PackageListView(LoginRequiredMixin, ListView):
             qs = qs.filter(
                 upstream_version__isnull=False
             ).exclude(upstream_version='').exclude(upstream_version=F('version'))
+        elif status == 'building':
+            # Match all in-progress states (mirrors the dashboard counter)
+            qs = qs.filter(status__in=['building', 'committing', 'committed', 'publishing'])
         elif status:
             qs = qs.filter(status=status)
         if repo:
