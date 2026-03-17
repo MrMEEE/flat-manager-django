@@ -1067,14 +1067,21 @@ def parse_manifest_dependencies(package, manifest_file, build=None):
                                     break
                             
                             elif source_type == 'file':
-                                # Check filename
-                                path = source.get('path', '')
-                                if path:
-                                    match = re.search(r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', path)
+                                # Check URL first (e.g. JetBrains direct-download tarballs),
+                                # then fall back to local path
+                                for _candidate in [source.get('url', ''), source.get('path', '')]:
+                                    if not _candidate:
+                                        continue
+                                    match = re.search(
+                                        r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', _candidate
+                                    )
                                     if match:
                                         version = match.group(1)
-                                        log_build(build, 'info', f"Extracted version from file path: {version}")
+                                        log_build(build, 'info',
+                                            f"Extracted version from file source: {version}")
                                         break
+                                if version:
+                                    break
 
                             elif source_type == 'extra-data':
                                 # Apps like Chrome use extra-data with a download URL.
