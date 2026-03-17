@@ -36,7 +36,7 @@
     </div>
 
     <div class="col-6 col-md-3">
-        <a href="{% url 'flatpak:build_list' %}" class="text-decoration-none">
+        <a href="{% url 'flatpak:package_list' %}?status=built" class="text-decoration-none">
             <div class="card text-white bg-success h-100">
                 <div class="card-body d-flex align-items-center gap-3">
                     <i class="bi bi-check-circle fs-2 opacity-75"></i>
@@ -50,7 +50,7 @@
     </div>
 
     <div class="col-6 col-md-3">
-        <a href="{% url 'flatpak:build_list' %}" class="text-decoration-none">
+        <a href="{% url 'flatpak:package_list' %}?status=failed" class="text-decoration-none">
             <div class="card text-white bg-danger h-100">
                 <div class="card-body d-flex align-items-center gap-3">
                     <i class="bi bi-x-circle fs-2 opacity-75"></i>
@@ -90,7 +90,7 @@
         </div>
     </div>
     <div class="col-6 col-md-3">
-        <a href="{% url 'flatpak:package_list' %}" class="text-decoration-none">
+        <a href="{% url 'flatpak:package_list' %}?status=outdated" class="text-decoration-none">
             <div class="card border-secondary h-100">
                 <div class="card-body d-flex align-items-center gap-3">
                     <i class="bi bi-arrow-up-circle fs-2 text-secondary opacity-75"></i>

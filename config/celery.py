@@ -53,3 +53,56 @@ app.conf.beat_schedule = {
 @app.task(bind=True, ignore_result=True)
 def debug_task(self):
     print(f'Request: {self.request!r}')
+
+
+# ── Worker lifecycle: fail any packages that were mid-flight ──────────────────
+
+IN_PROGRESS_STATUSES = ['building', 'committing', 'committed', 'publishing']
+
+
+def _fail_stuck_packages(reason: str) -> None:
+    """Mark packages stuck in an in-progress state as failed.
+    Called on worker startup (handles previous crash) and graceful shutdown.
+    """
+    try:
+        import django
+        django.setup()  # no-op if already set up
+        from django.utils import timezone
+        from apps.flatpak.models import Package, Build
+
+        stuck_ids = list(
+            Package.objects.filter(status__in=IN_PROGRESS_STATUSES)
+            .values_list('pk', flat=True)
+        )
+        if not stuck_ids:
+            return
+
+        now = timezone.now()
+        # Fail the associated in-progress / built builds first
+        Build.objects.filter(
+            package_id__in=stuck_ids,
+            status__in=IN_PROGRESS_STATUSES + ['built'],
+        ).update(status='failed', error_message=reason, completed_at=now)
+
+        Package.objects.filter(pk__in=stuck_ids).update(
+            status='failed',
+            error_message=reason,
+        )
+        print(f'[flat-manager] Marked {len(stuck_ids)} stuck package(s) as failed: {reason}')
+    except Exception as exc:  # pragma: no cover
+        print(f'[flat-manager] Warning: could not reset stuck packages: {exc}')
+
+
+from celery.signals import worker_ready, worker_shutdown  # noqa: E402
+
+
+@worker_ready.connect
+def on_worker_ready(sender, **kwargs):
+    """On startup, fail packages that were building when the last worker died."""
+    _fail_stuck_packages('Celery worker restarted — build was interrupted')
+
+
+@worker_shutdown.connect
+def on_worker_shutdown(sender, **kwargs):
+    """On graceful shutdown, fail packages that are still in progress."""
+    _fail_stuck_packages('Celery worker shut down — build was interrupted')

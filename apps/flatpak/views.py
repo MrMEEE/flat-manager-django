@@ -465,14 +465,18 @@ class PackageListView(LoginRequiredMixin, ListView):
     paginate_by = 20
 
     def get_queryset(self):
-        from django.db.models import Q
+        from django.db.models import Q, F
         qs = Package.objects.select_related('repository').order_by('-created_at')
         q = self.request.GET.get('q', '').strip()
         status = self.request.GET.get('status', '').strip()
         repo = self.request.GET.get('repo', '').strip()
         if q:
             qs = qs.filter(Q(package_name__icontains=q) | Q(package_id__icontains=q))
-        if status:
+        if status == 'outdated':
+            qs = qs.filter(
+                upstream_version__isnull=False
+            ).exclude(upstream_version='').exclude(upstream_version=F('version'))
+        elif status:
             qs = qs.filter(status=status)
         if repo:
             qs = qs.filter(repository_id=repo)
@@ -481,7 +485,7 @@ class PackageListView(LoginRequiredMixin, ListView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx['repositories'] = Repository.objects.filter(is_active=True)
-        ctx['status_choices'] = Package.STATUS_CHOICES
+        ctx['status_choices'] = list(Package.STATUS_CHOICES) + [('outdated', 'Outdated')]
         ctx['filter_q'] = self.request.GET.get('q', '')
         ctx['filter_status'] = self.request.GET.get('status', '')
         ctx['filter_repo'] = self.request.GET.get('repo', '')
