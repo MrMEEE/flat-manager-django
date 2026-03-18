@@ -142,6 +142,16 @@ class Package(models.Model):
         )
     )
 
+    # Available version tracking (manifest/repo scan, without a full build)
+    available_version = models.CharField(
+        max_length=100, blank=True,
+        help_text="Version detected from manifest/repo without a full build (auto-refreshed)"
+    )
+    available_version_checked_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="When the available version was last scanned"
+    )
+
     # Build results
     source_commit = models.CharField(max_length=255, blank=True, help_text="Git commit hash that was built")
     commit_hash = models.CharField(max_length=255, blank=True, help_text="OSTree commit hash")
@@ -293,6 +303,10 @@ class SiteConfig(models.Model):
     upstream_version_check_interval_hours = models.PositiveIntegerField(
         default=1,
         help_text="How often (in hours) to automatically check for new upstream versions. Set to 0 to disable."
+    )
+    available_version_check_interval_hours = models.PositiveIntegerField(
+        default=6,
+        help_text="How often (in hours) to scan git repos for an available version. Set to 0 to disable."
     )
     build_timeout_minutes = models.PositiveIntegerField(
         default=120,
