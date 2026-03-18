@@ -412,7 +412,7 @@ def package_from_git_task(self, package_id):
         # Clone git repository
         log_build(build, 'info', f"Cloning {package.git_repo_url} (branch: {package.git_branch})")
         clone_result = subprocess.run(
-            ['git', 'clone', '--branch', package.git_branch, '--depth', '1', '--recurse-submodules', '--shallow-submodules', package.git_repo_url, 'source'],
+            ['git', 'clone', '--branch', package.git_branch, '--depth', '1', '--recurse-submodules', package.git_repo_url, 'source'],
             cwd=temp_dir,
             capture_output=True,
             text=True,
@@ -457,8 +457,9 @@ def package_from_git_task(self, package_id):
         else:
             log_build(build, 'info', "No submodules found by git submodule status")
         
-        # Ensure submodules are fully initialized (in case --recurse-submodules didn't work)
-        log_build(build, 'info', "Running git submodule update --init --recursive...")
+        # Ensure submodules are fully initialized (in case --recurse-submodules didn't work).
+        # First attempt: shallow clone (fast, sufficient for most submodules).
+        log_build(build, 'info', "Running git submodule update --init --recursive --depth 1...")
         submodule_init_result = subprocess.run(
             ['git', 'submodule', 'update', '--init', '--recursive', '--depth', '1'],
             cwd=source_dir,
@@ -466,21 +467,36 @@ def package_from_git_task(self, package_id):
             text=True,
             timeout=300
         )
-        
+
         if submodule_init_result.returncode != 0:
-            log_build(build, 'error', f"Submodule init failed: {submodule_init_result.stderr}")
+            log_build(build, 'warning',
+                      f"Shallow submodule init failed (exit {submodule_init_result.returncode}): "
+                      f"{submodule_init_result.stderr.strip()}")
+            log_build(build, 'info', "Retrying git submodule update without --depth 1...")
+            submodule_init_result = subprocess.run(
+                ['git', 'submodule', 'update', '--init', '--recursive'],
+                cwd=source_dir,
+                capture_output=True,
+                text=True,
+                timeout=600
+            )
+            if submodule_init_result.returncode != 0:
+                raise RuntimeError(
+                    f"Git submodule update failed: {submodule_init_result.stderr.strip()}"
+                )
+
+        if submodule_init_result.stdout.strip():
+            log_build(build, 'info', f"Submodule update output: {submodule_init_result.stdout.strip()}")
         else:
-            if submodule_init_result.stdout.strip():
-                log_build(build, 'info', f"Submodule update output: {submodule_init_result.stdout.strip()}")
-            else:
-                log_build(build, 'info', "Submodule update completed (no output)")
-        
-        # Verify shared-modules directory exists
+            log_build(build, 'info', "Submodule update completed (no output)")
+
+        # Verify shared-modules directory if the manifest uses it
         shared_modules_path = os.path.join(source_dir, 'shared-modules')
         if os.path.exists(shared_modules_path):
             log_build(build, 'info', f"shared-modules directory exists: {os.listdir(shared_modules_path)[:10]}")
-        else:
-            log_build(build, 'error', "shared-modules directory NOT FOUND after submodule init!")
+        elif os.path.exists(os.path.join(source_dir, '.gitmodules')):
+            # .gitmodules present → submodules were expected; raise so the cause is clear
+            raise RuntimeError("shared-modules directory NOT FOUND after submodule init — check that all submodule URLs are accessible")
         
         # Get commit hash
         commit_result = subprocess.run(
@@ -971,6 +987,79 @@ def detect_and_install_dependencies(package, error_message, build=None):
     return True
 
 
+def _get_freedesktop_sdk_version(sdk, arch, sdk_version, scope_flag, build=None):
+    """Return the org.freedesktop.Sdk version that *sdk* is based on.
+
+    For SDKs like org.kde.Sdk that are layered on top of org.freedesktop.Sdk,
+    extensions belonging to org.freedesktop.Sdk.Extension.* must be installed
+    with the *freedesktop* version, not the KDE/GNOME SDK version.
+
+    Strategy:
+    1. Query ``flatpak info --show-metadata`` for the installed SDK and look for
+       a line such as ``sdk=org.freedesktop.Sdk//24.08``.
+    2. If the SDK is not yet installed (metadata unavailable), fall back to
+       ``flatpak list --runtime`` and return the highest installed
+       org.freedesktop.Sdk version.
+    """
+    import re as _re
+
+    def _parse_metadata(output):
+        for line in output.splitlines():
+            line = line.strip()
+            for prefix in (
+                'sdk=org.freedesktop.Sdk//',
+                'runtime=org.freedesktop.Platform//',
+                'base=org.freedesktop.Sdk//',
+            ):
+                if line.startswith(prefix):
+                    ver = line.split('//')[-1].strip()
+                    if ver:
+                        return ver
+        return None
+
+    # Try to query from the installed SDK metadata
+    try:
+        result = subprocess.run(
+            ['flatpak', 'info', '--show-metadata', scope_flag,
+             f"{sdk}/{arch}/{sdk_version}"],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode == 0:
+            ver = _parse_metadata(result.stdout)
+            if ver:
+                if build:
+                    log_build(build, 'info',
+                              f"Resolved freedesktop SDK version {ver} from {sdk}/{sdk_version} metadata")
+                return ver
+    except Exception as e:
+        if build:
+            log_build(build, 'warning', f"Could not query {sdk} metadata: {e}")
+
+    # Fallback: find installed org.freedesktop.Sdk runtimes
+    try:
+        result = subprocess.run(
+            ['flatpak', 'list', '--runtime', '--columns=ref', scope_flag],
+            capture_output=True, text=True, timeout=30
+        )
+        versions = []
+        for line in result.stdout.splitlines():
+            m = _re.match(r'org\.freedesktop\.Sdk/[^/]+/(.+)', line.strip())
+            if m:
+                versions.append(m.group(1))
+        if versions:
+            # Return the lexicographically largest (most recent) version
+            ver = sorted(versions)[-1]
+            if build:
+                log_build(build, 'info',
+                          f"Freedesktop SDK version {ver} found via flatpak list (fallback)")
+            return ver
+    except Exception as e:
+        if build:
+            log_build(build, 'warning', f"Could not list runtimes for freedesktop SDK version: {e}")
+
+    return None
+
+
 def parse_manifest_dependencies(package, manifest_file, build=None):
     """Parse flatpak manifest file to extract SDK and runtime dependencies."""
     import yaml
@@ -1150,15 +1239,49 @@ def parse_manifest_dependencies(package, manifest_file, build=None):
             sdk_extensions = manifest['sdk-extensions']
             dependencies['sdk_extensions'] = []
             sdk_version = dependencies.get('sdk_version', '')
+            sdk_name = dependencies.get('sdk', '')
             arch = package.arch or 'x86_64'
-            
+
+            # Determine install scope for metadata queries
+            _scope = (
+                f"--{package.installation_type}"
+                if hasattr(package, 'installation_type') and package.installation_type
+                else '--system'
+            )
+            # Cache the freedesktop version so we only query once per manifest
+            _fd_version_cache = {}
+
             for extension in sdk_extensions:
-                extension_full = f"{extension}/{arch}/{sdk_version}"
+                ext_version = sdk_version
+
+                # org.freedesktop.Sdk.Extension.* extensions are versioned by the
+                # freedesktop SDK, not by the parent SDK (KDE, GNOME, etc.)
+                if (
+                    extension.startswith('org.freedesktop.Sdk.Extension.')
+                    and not sdk_name.startswith('org.freedesktop.Sdk')
+                ):
+                    cache_key = f"{sdk_name}/{arch}/{sdk_version}"
+                    if cache_key not in _fd_version_cache:
+                        _fd_version_cache[cache_key] = _get_freedesktop_sdk_version(
+                            sdk_name, arch, sdk_version, _scope, build
+                        )
+                    fd_ver = _fd_version_cache[cache_key]
+                    if fd_ver:
+                        log_build(build, 'info',
+                                  f"Extension {extension}: using freedesktop SDK version "
+                                  f"{fd_ver} (instead of {sdk_version})")
+                        ext_version = fd_ver
+                    else:
+                        log_build(build, 'warning',
+                                  f"Could not resolve freedesktop SDK version for {extension}; "
+                                  f"falling back to {sdk_version}")
+
+                extension_full = f"{extension}/{arch}/{ext_version}"
                 dependencies['sdk_extensions'].append({
                     'name': extension,
                     'full': extension_full
                 })
-            
+
             log_build(build, 'info', f"Found SDK extensions: {[ext['name'] for ext in dependencies['sdk_extensions']]}")
         
         log_build(build, 'info', f"Parsed manifest dependencies: {json.dumps(dependencies, indent=2)}")
