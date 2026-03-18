@@ -67,7 +67,8 @@
                         <th>Package ID</th>
                         <th>Repository</th>
                         <th>Status</th>
-                        <th>Version</th>
+                        <th>Last Build Version</th>
+                        <th>Available Version</th>
                         <th>Upstream Version</th>
                         <th>Branch</th>
                         <th>Arch</th>
@@ -113,6 +114,17 @@
                             {% endif %}
                         </td>
                         <td>{{ package.version|default:"-" }}</td>
+                        <td>
+                            {% if package.available_version %}
+                            {{ package.available_version }}
+                            {% if package.version and package.available_version != package.version %}
+                            <span class="badge bg-info text-dark ms-1"
+                                  title="Available version differs from last build"><i class="bi bi-arrow-repeat"></i></span>
+                            {% endif %}
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
                         <td>
                             {% if package.upstream_version %}
                             {{ package.upstream_version }}

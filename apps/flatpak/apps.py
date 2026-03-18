@@ -73,6 +73,26 @@ class FlatpakConfig(AppConfig):
             task.enabled = config.upstream_version_check_interval_hours > 0
             task.save(update_fields=['interval', 'enabled'])
 
+        # ── Available version check (configurable interval, default 6 h) ─────
+        avail_hours = config.available_version_check_interval_hours or 6
+        avail_schedule, _ = IntervalSchedule.objects.get_or_create(
+            every=avail_hours,
+            period=IntervalSchedule.HOURS,
+        )
+        avail_task, avail_created = PeriodicTask.objects.get_or_create(
+            name='Check all available versions',
+            defaults={
+                'task': 'apps.flatpak.tasks.check_all_available_versions',
+                'interval': avail_schedule,
+                'args': json.dumps([]),
+                'enabled': config.available_version_check_interval_hours > 0,
+            },
+        )
+        if not avail_created:
+            avail_task.interval = avail_schedule
+            avail_task.enabled = config.available_version_check_interval_hours > 0
+            avail_task.save(update_fields=['interval', 'enabled'])
+
         # ── Retry stuck pending promotions (configurable, default 1 min) ─────
         retry_minutes = config.promotion_retry_interval_minutes or 1
         retry_schedule, _ = IntervalSchedule.objects.get_or_create(

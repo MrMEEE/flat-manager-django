@@ -987,6 +987,121 @@ def detect_and_install_dependencies(package, error_message, build=None):
     return True
 
 
+def _extract_version_from_manifest(package_id, manifest_file):
+    """Detect an application's version from a flatpak manifest file.
+
+    Mirrors the version-detection logic in ``parse_manifest_dependencies`` but
+    has **no side effects** — it never writes to the database or emits build
+    log messages.  Returns the version string, or ``None`` if no version could
+    be determined.
+    """
+    import re
+    try:
+        import yaml
+        import json as _json
+
+        with open(manifest_file, 'r') as fh:
+            if manifest_file.endswith(('.yml', '.yaml')):
+                manifest = yaml.safe_load(fh)
+            else:
+                manifest = _json.load(fh)
+
+        if not manifest:
+            return None
+
+        version = None
+
+        # 1. Explicit top-level version fields
+        if 'version' in manifest:
+            version = str(manifest['version'])
+        elif 'app-version' in manifest:
+            version = str(manifest['app-version'])
+        elif 'build-options' in manifest and 'app-version' in manifest.get('build-options', {}):
+            version = str(manifest['build-options']['app-version'])
+
+        # 2. Module scan (same logic as parse_manifest_dependencies)
+        if not version and 'modules' in manifest:
+            app_name = package_id.split('.')[-1].lower() if package_id else None
+            for module in reversed(manifest['modules']):
+                if isinstance(module, str):
+                    continue
+                module_name = module.get('name', '').lower()
+                is_likely_match = False
+                if app_name:
+                    is_likely_match = (
+                        app_name in module_name or module_name in app_name
+                        or module_name.replace('-', '') == app_name
+                        or module_name.replace('_', '') == app_name
+                    )
+                if not is_likely_match:
+                    continue
+                for source in module.get('sources', []):
+                    if isinstance(source, str):
+                        continue
+                    source_type = source.get('type', '')
+                    if source_type == 'git':
+                        tag = source.get('tag', '')
+                        if tag:
+                            version = tag.lstrip('v')
+                            break
+                        branch = source.get('branch', '')
+                        if branch and branch[0].isdigit():
+                            version = branch
+                            break
+                    elif source_type == 'archive':
+                        url = source.get('url', '')
+                        for pattern in [
+                            r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)',
+                            r'/(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/',
+                        ]:
+                            m = re.search(pattern, url)
+                            if m:
+                                version = m.group(1)
+                                break
+                        if version:
+                            break
+                    elif source_type == 'file':
+                        for _candidate in [source.get('url', ''), source.get('path', '')]:
+                            if not _candidate:
+                                continue
+                            m = re.search(r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', _candidate)
+                            if m:
+                                version = m.group(1)
+                                break
+                        if version:
+                            break
+                    elif source_type == 'extra-data':
+                        if source.get('version'):
+                            version = str(source['version'])
+                            break
+                        url = source.get('url', '')
+                        for pattern in [
+                            r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)',
+                            r'/(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/',
+                        ]:
+                            m = re.search(pattern, url)
+                            if m:
+                                version = m.group(1)
+                                break
+                        if version:
+                            break
+                if version:
+                    break
+
+        if not version:
+            return None
+
+        # Strip leading word prefix (e.g. "RELEASE.2.5.0" → "2.5.0")
+        _m = re.match(r'^[a-zA-Z][a-zA-Z0-9_.+-]*?(\d)', version)
+        if _m:
+            version = version[version.index(_m.group(1)):]
+        # Normalise underscore-separated versions (e.g. "1_4_3" → "1.4.3")
+        version = re.sub(r'(\d)_(\d)', r'\1.\2', version)
+        return version
+    except Exception:
+        return None
+
+
 def _get_freedesktop_sdk_version(sdk, arch, sdk_version, scope_flag, build=None):
     """Return the org.freedesktop.Sdk version that *sdk* is based on.
 
@@ -1875,6 +1990,129 @@ def _run_version_script(script_text, package_id):
         return None, "Script timed out after 30 seconds"
     except Exception as e:
         return None, str(e)
+
+
+@shared_task
+def check_available_version_task(package_id):
+    """Detect and store the *available* version for a single git-based package.
+
+    The available version is determined by cloning the package's git repository
+    (shallow, no submodules) and reading the version out of its flatpak
+    manifest — the same detection logic used during a full build — without
+    actually building anything.
+
+    The result is written to ``package.available_version`` and
+    ``package.available_version_checked_at``.
+    """
+    from apps.flatpak.models import Package
+    try:
+        package = Package.objects.get(id=package_id)
+    except Package.DoesNotExist:
+        return None
+
+    if not package.git_repo_url:
+        return None
+
+    temp_dir = None
+    try:
+        temp_dir = tempfile.mkdtemp(prefix=f'fmdc_avail_{package.pk}_')
+        clone_result = subprocess.run(
+            ['git', 'clone', '--branch', package.git_branch or 'master',
+             '--depth', '1', '--no-recurse-submodules',
+             package.git_repo_url, 'source'],
+            cwd=temp_dir,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if clone_result.returncode != 0:
+            logger.warning(
+                f"check_available_version_task: clone failed for "
+                f"{package.package_id}: {clone_result.stderr.strip()}"
+            )
+            return None
+
+        source_dir = os.path.join(temp_dir, 'source')
+
+        # Find manifest file (same search order as the build task)
+        manifest_file = None
+        for name in [
+            f'{package.package_id}.yml', f'{package.package_id}.yaml',
+            f'{package.package_id}.json',
+            'flatpak.yml', 'flatpak.yaml', 'flatpak.json',
+        ]:
+            candidate = os.path.join(source_dir, name)
+            if os.path.exists(candidate):
+                manifest_file = candidate
+                break
+
+        if not manifest_file:
+            logger.warning(
+                f"check_available_version_task: no manifest found for {package.package_id}"
+            )
+            return None
+
+        version = _extract_version_from_manifest(package.package_id, manifest_file)
+        if not version:
+            logger.info(
+                f"check_available_version_task: could not detect version for "
+                f"{package.package_id}"
+            )
+            return None
+
+        package.available_version = version
+        package.available_version_checked_at = timezone.now()
+        package.save(update_fields=['available_version', 'available_version_checked_at'])
+        logger.info(f"Available version for {package.package_id}: {version!r}")
+        return version
+    except Exception as e:
+        logger.exception(
+            f"check_available_version_task: unexpected error for {package.package_id}: {e}"
+        )
+        return None
+    finally:
+        if temp_dir and os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@shared_task
+def check_all_available_versions():
+    """Periodic task: refresh available versions for every git-based package.
+
+    Reads its interval from ``SiteConfig.available_version_check_interval_hours``
+    and also keeps the celery-beat schedule in sync with that value.
+    """
+    from apps.flatpak.models import Package, SiteConfig
+    config = SiteConfig.get_solo()
+    interval_hours = config.available_version_check_interval_hours
+
+    # Sync beat schedule with current config
+    try:
+        import json
+        from django_celery_beat.models import PeriodicTask, IntervalSchedule
+        schedule, _ = IntervalSchedule.objects.get_or_create(
+            every=max(interval_hours, 1),
+            period=IntervalSchedule.HOURS,
+        )
+        PeriodicTask.objects.filter(name='Check all available versions').update(
+            interval=schedule,
+            enabled=interval_hours > 0,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to sync available-version check schedule: {e}")
+
+    if interval_hours == 0:
+        logger.info("Available version check is disabled (interval=0)")
+        return "Available version check disabled"
+
+    packages = Package.objects.filter(
+        git_repo_url__isnull=False
+    ).exclude(git_repo_url='')
+    count = packages.count()
+    for p in packages:
+        check_available_version_task.delay(p.id)
+    logger.info(f"Queued available version check for {count} package(s)")
+    return f"Queued {count} available version check(s)"
 
 
 @shared_task
