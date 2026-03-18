@@ -100,6 +100,7 @@ class SiteConfigForm(forms.ModelForm):
         fields = [
             'failed_builds_to_keep',
             'upstream_version_check_interval_hours',
+            'available_version_check_interval_hours',
             'build_timeout_minutes',
             'stale_build_check_interval_seconds',
             'stale_build_timeout_minutes',
@@ -109,6 +110,9 @@ class SiteConfigForm(forms.ModelForm):
                 attrs={'class': 'form-control', 'min': '0', 'style': 'width: 130px;'}
             ),
             'upstream_version_check_interval_hours': forms.NumberInput(
+                attrs={'class': 'form-control', 'min': '0', 'style': 'width: 130px;'}
+            ),
+            'available_version_check_interval_hours': forms.NumberInput(
                 attrs={'class': 'form-control', 'min': '0', 'style': 'width: 130px;'}
             ),
             'build_timeout_minutes': forms.NumberInput(
@@ -124,6 +128,7 @@ class SiteConfigForm(forms.ModelForm):
         help_texts = {
             'failed_builds_to_keep': 'Maximum number of failed builds to retain per package. Set to 0 to keep all failed builds.',
             'upstream_version_check_interval_hours': 'How often to check for new upstream release tags. Set to 0 to disable automatic checks.',
+            'available_version_check_interval_hours': 'How often to scan git repos for an available version (without building). Set to 0 to disable.',
             'build_timeout_minutes': 'Maximum time (minutes) for a flatpak-builder run. Increase for large packages like GRASS GIS.',
             'stale_build_check_interval_seconds': 'How often to scan for stuck builds. Set to 0 to disable.',
             'stale_build_timeout_minutes': 'Minutes without log activity before an in-progress build is marked as failed.',

@@ -76,6 +76,9 @@ class SiteConfigAdmin(admin.ModelAdmin):
         ('Upstream Version Checks', {
             'fields': ['upstream_version_check_interval_hours'],
         }),
+        ('Available Version Scan', {
+            'fields': ['available_version_check_interval_hours'],
+        }),
         ('Promotions', {
             'fields': ['promotion_retry_interval_minutes', 'promotion_stale_timeout_minutes'],
         }),
