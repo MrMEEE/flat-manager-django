@@ -206,6 +206,7 @@ def ensure_appstream_compose_shims(build=None):
         '    --result-root="${PREFIX}" \\\n'
         '    --data-dir="${PREFIX}/share/app-info/xmls" \\\n'
         '    --icons-dir="${PREFIX}/share/app-info/icons/flatpak" \\\n'
+        '    --no-net \\\n'
         '    ${OTHER_ARGS} \\\n'
         '    "${PREFIX}"\n'
     )
