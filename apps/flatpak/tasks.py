@@ -1035,20 +1035,24 @@ def _extract_version_from_manifest(package_id, manifest_file):
                     )
                 if not is_likely_match:
                     continue
+                # Collect the best version candidate per source type, then pick
+                # by priority: git tag > archive URL > extra-data > file URL.
+                # This prevents tool downloads (e.g. a pnpm file source) from
+                # shadowing the real application archive.
+                candidates = {}
                 for source in module.get('sources', []):
                     if isinstance(source, str):
                         continue
                     source_type = source.get('type', '')
-                    if source_type == 'git':
+                    if source_type == 'git' and 'git' not in candidates:
                         tag = source.get('tag', '')
                         if tag:
-                            version = tag.lstrip('v')
-                            break
-                        branch = source.get('branch', '')
-                        if branch and branch[0].isdigit():
-                            version = branch
-                            break
-                    elif source_type == 'archive':
+                            candidates['git'] = tag.lstrip('v')
+                        else:
+                            branch = source.get('branch', '')
+                            if branch and branch[0].isdigit():
+                                candidates['git'] = branch
+                    elif source_type == 'archive' and 'archive' not in candidates:
                         url = source.get('url', '')
                         for pattern in [
                             r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)',
@@ -1056,35 +1060,34 @@ def _extract_version_from_manifest(package_id, manifest_file):
                         ]:
                             m = re.search(pattern, url)
                             if m:
-                                version = m.group(1)
+                                candidates['archive'] = m.group(1)
                                 break
-                        if version:
-                            break
-                    elif source_type == 'file':
+                    elif source_type == 'extra-data' and 'extra-data' not in candidates:
+                        if source.get('version'):
+                            candidates['extra-data'] = str(source['version'])
+                        else:
+                            url = source.get('url', '')
+                            for pattern in [
+                                r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)',
+                                r'/(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/',
+                            ]:
+                                m = re.search(pattern, url)
+                                if m:
+                                    candidates['extra-data'] = m.group(1)
+                                    break
+                    elif source_type == 'file' and 'file' not in candidates:
                         for _candidate in [source.get('url', ''), source.get('path', '')]:
                             if not _candidate:
                                 continue
                             m = re.search(r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', _candidate)
                             if m:
-                                version = m.group(1)
+                                candidates['file'] = m.group(1)
                                 break
-                        if version:
-                            break
-                    elif source_type == 'extra-data':
-                        if source.get('version'):
-                            version = str(source['version'])
-                            break
-                        url = source.get('url', '')
-                        for pattern in [
-                            r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)',
-                            r'/(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/',
-                        ]:
-                            m = re.search(pattern, url)
-                            if m:
-                                version = m.group(1)
-                                break
-                        if version:
-                            break
+                # Pick highest-priority candidate
+                for ptype in ('git', 'archive', 'extra-data', 'file'):
+                    if ptype in candidates:
+                        version = candidates[ptype]
+                        break
                 if version:
                     break
 
@@ -1228,86 +1231,65 @@ def parse_manifest_dependencies(package, manifest_file, build=None):
                 
                 if is_likely_match:
                     log_build(build, 'info', f"Checking module '{module.get('name')}' for version...")
-                    # Look for version in sources
+                    # Collect best candidate per source type, then pick by
+                    # priority: git tag > archive URL > extra-data > file URL.
+                    # This prevents tool helper files (e.g. pnpm download) from
+                    # shadowing the actual application archive.
                     if 'sources' in module:
+                        candidates = {}
                         for source in module['sources']:
                             if isinstance(source, str):
                                 continue
-                                
                             source_type = source.get('type', '')
-                            
-                            if source_type == 'git':
-                                # Check for tag field
+                            if source_type == 'git' and 'git' not in candidates:
                                 tag = source.get('tag', '')
                                 if tag:
-                                    # Strip 'v' prefix if present
-                                    version = tag.lstrip('v')
-                                    log_build(build, 'info', f"Found version in git tag: {version}")
-                                    break
-                                # Also check branch if it looks like a version
-                                branch = source.get('branch', '')
-                                if branch and branch[0].isdigit():
-                                    version = branch
-                                    log_build(build, 'info', f"Found version in git branch: {version}")
-                                    break
-                            
-                            elif source_type == 'archive':
-                                # Extract version from archive URL or filename
+                                    candidates['git'] = tag.lstrip('v')
+                                    log_build(build, 'info', f"Found version in git tag: {tag}")
+                                else:
+                                    branch = source.get('branch', '')
+                                    if branch and branch[0].isdigit():
+                                        candidates['git'] = branch
+                                        log_build(build, 'info', f"Found version in git branch: {branch}")
+                            elif source_type == 'archive' and 'archive' not in candidates:
                                 url = source.get('url', '')
-                                if url:
-                                    # Try to extract version from URL
-                                    # Patterns: app-1.2.3.tar.gz, app_v1.2.3.zip, app-version-1.2.3.tar.xz
-                                    patterns = [
-                                        r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)',  # Most common: -1.2.3 or -v1.2.3
-                                        r'/(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/',        # Version in path: /1.2.3/
-                                    ]
-                                    for pattern in patterns:
+                                for pattern in [
+                                    r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)',
+                                    r'/(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/',
+                                ]:
+                                    match = re.search(pattern, url)
+                                    if match:
+                                        candidates['archive'] = match.group(1)
+                                        log_build(build, 'info', f"Extracted version from archive URL: {match.group(1)}")
+                                        break
+                            elif source_type == 'extra-data' and 'extra-data' not in candidates:
+                                if source.get('version'):
+                                    candidates['extra-data'] = str(source['version'])
+                                    log_build(build, 'info', f"Found version in extra-data version field: {source['version']}")
+                                else:
+                                    url = source.get('url', '')
+                                    for pattern in [
+                                        r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)',
+                                        r'/(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/',
+                                    ]:
                                         match = re.search(pattern, url)
                                         if match:
-                                            version = match.group(1)
-                                            log_build(build, 'info', f"Extracted version from archive URL: {version}")
+                                            candidates['extra-data'] = match.group(1)
+                                            log_build(build, 'info', f"Extracted version from extra-data URL: {match.group(1)}")
                                             break
-                                if version:
-                                    break
-                            
-                            elif source_type == 'file':
-                                # Check URL first (e.g. JetBrains direct-download tarballs),
-                                # then fall back to local path
+                            elif source_type == 'file' and 'file' not in candidates:
                                 for _candidate in [source.get('url', ''), source.get('path', '')]:
                                     if not _candidate:
                                         continue
-                                    match = re.search(
-                                        r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', _candidate
-                                    )
+                                    match = re.search(r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', _candidate)
                                     if match:
-                                        version = match.group(1)
-                                        log_build(build, 'info',
-                                            f"Extracted version from file source: {version}")
+                                        candidates['file'] = match.group(1)
+                                        log_build(build, 'info', f"Extracted version from file source: {match.group(1)}")
                                         break
-                                if version:
-                                    break
-
-                            elif source_type == 'extra-data':
-                                # Apps like Chrome use extra-data with a download URL.
-                                # Some manifests also carry an explicit 'version' field.
-                                if source.get('version'):
-                                    version = str(source['version'])
-                                    log_build(build, 'info', f"Found version in extra-data version field: {version}")
-                                    break
-                                url = source.get('url', '')
-                                if url:
-                                    patterns = [
-                                        r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)',
-                                        r'/(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/',
-                                    ]
-                                    for pattern in patterns:
-                                        match = re.search(pattern, url)
-                                        if match:
-                                            version = match.group(1)
-                                            log_build(build, 'info', f"Extracted version from extra-data URL: {version}")
-                                            break
-                                if version:
-                                    break
+                        for ptype in ('git', 'archive', 'extra-data', 'file'):
+                            if ptype in candidates:
+                                version = candidates[ptype]
+                                break
                     if version:
                         break
         
@@ -2156,6 +2138,15 @@ def check_upstream_version_task(package_id):
 
     if not version:
         return None
+
+    # Normalise the raw tag the same way parse_manifest_dependencies does:
+    # strip leading word prefixes (e.g. "RELEASE.2.9.0" → "2.9.0")
+    # and convert underscore-separated digits (e.g. "1_4_3" → "1.4.3").
+    import re as _re
+    _m = _re.match(r'^[a-zA-Z][a-zA-Z0-9_.+-]*?(\d)', version)
+    if _m:
+        version = version[version.index(_m.group(1)):]
+    version = _re.sub(r'(\d)_(\d)', r'\1.\2', version)
 
     package.upstream_version = version
     package.upstream_checked_at = timezone.now()
