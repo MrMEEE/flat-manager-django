@@ -1023,17 +1023,27 @@ def _extract_version_from_manifest(package_id, manifest_file):
 
         # 2. Module scan (same logic as parse_manifest_dependencies)
         if not version and 'modules' in manifest:
-            app_name = package_id.split('.')[-1].lower() if package_id else None
+            # Build candidate names from all meaningful package ID segments.
+            # e.g. com.jgraph.drawio.desktop → ['jgraph', 'drawio', 'desktop']
+            # This handles IDs where the last segment is generic ('desktop',
+            # 'app', etc.) and the real app name appears earlier.
+            _skip_parts = {'com', 'org', 'net', 'io', 'de', 'app', 'apps',
+                           'github', 'gitlab', 'codeberg'}
+            _id_parts = package_id.split('.') if package_id else []
+            app_name_candidates = [p.lower() for p in _id_parts
+                                   if p.lower() not in _skip_parts and len(p) > 1]
+            app_name = app_name_candidates[-1] if app_name_candidates else None
             for module in reversed(manifest['modules']):
                 if isinstance(module, str):
                     continue
                 module_name = module.get('name', '').lower()
                 is_likely_match = False
-                if app_name:
-                    is_likely_match = (
-                        app_name in module_name or module_name in app_name
-                        or module_name.replace('-', '') == app_name
-                        or module_name.replace('_', '') == app_name
+                if app_name_candidates:
+                    is_likely_match = any(
+                        cand in module_name or module_name in cand
+                        or module_name.replace('-', '') == cand
+                        or module_name.replace('_', '') == cand
+                        for cand in app_name_candidates
                     )
                 if not is_likely_match:
                     continue
@@ -1212,24 +1222,32 @@ def parse_manifest_dependencies(package, manifest_file, build=None):
         # 2. If not found, look for version in modules (common pattern for main app)
         if not version and 'modules' in manifest:
             import re
-            # Find the module that matches the app name (usually the last module is the main app)
-            app_name = package.package_id.split('.')[-1].lower() if package.package_id else None
-            
+            # Build candidate names from all meaningful package ID segments.
+            # e.g. com.jgraph.drawio.desktop → ['jgraph', 'drawio', 'desktop']
+            _skip_parts = {'com', 'org', 'net', 'io', 'de', 'app', 'apps',
+                           'github', 'gitlab', 'codeberg'}
+            _id_parts = package.package_id.split('.') if package.package_id else []
+            app_name_candidates = [p.lower() for p in _id_parts
+                                   if p.lower() not in _skip_parts and len(p) > 1]
+            app_name = app_name_candidates[-1] if app_name_candidates else None
+
             # Try to find matching modules (check in reverse - last modules are usually the app)
             for module in reversed(manifest['modules']):  # Start from last module
                 # Skip string modules (file references like "shared-modules/libsecret/libsecret.json")
                 if isinstance(module, str):
                     continue
-                    
+
                 module_name = module.get('name', '').lower()
-                
+
                 # Check if this is likely the main app module (flexible matching)
-                # Check if app_name is in module_name OR module_name is in app_name
                 is_likely_match = False
-                if app_name:
-                    is_likely_match = (app_name in module_name or module_name in app_name or 
-                                      module_name.replace('-', '') == app_name or
-                                      module_name.replace('_', '') == app_name)
+                if app_name_candidates:
+                    is_likely_match = any(
+                        cand in module_name or module_name in cand
+                        or module_name.replace('-', '') == cand
+                        or module_name.replace('_', '') == cand
+                        for cand in app_name_candidates
+                    )
                 
                 if is_likely_match:
                     log_build(build, 'info', f"Checking module '{module.get('name')}' for version...")
