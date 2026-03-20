@@ -600,9 +600,14 @@ class PackageCheckAvailableView(LoginRequiredMixin, View):
         package.available_version = version
         package.available_version_checked_at = tz.now()
         package.save(update_fields=['available_version', 'available_version_checked_at'])
+        try:
+            from packaging.version import Version
+            has_update = bool(package.version and version and Version(version) > Version(package.version))
+        except Exception:
+            has_update = bool(package.version and version and version != package.version)
         return JsonResponse({
             'version': version,
-            'has_update': bool(package.version and version and version != package.version),
+            'has_update': has_update,
         })
 
 

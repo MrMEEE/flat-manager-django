@@ -173,7 +173,19 @@ class Package(models.Model):
     
     def __str__(self):
         return f"{self.package_name} ({self.package_id})"
-    
+
+    @property
+    def available_version_is_newer(self):
+        """Return True when available_version is strictly newer than the last built version."""
+        if not self.available_version or not self.version:
+            return False
+        try:
+            from packaging.version import Version
+            return Version(self.available_version) > Version(self.version)
+        except Exception:
+            # Fall back to plain string inequality if either string is not PEP-440
+            return self.available_version != self.version
+
     def clean(self):
         """Validate that repositories with parent repos cannot have packages."""
         from django.core.exceptions import ValidationError

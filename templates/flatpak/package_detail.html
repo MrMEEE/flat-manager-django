@@ -118,7 +118,7 @@
                         <span id="available-version-value">
                             {% if package.available_version %}
                                 {{ package.available_version }}
-                                {% if package.version and package.available_version != package.version %}
+                                {% if package.available_version_is_newer %}
                                 <span class="badge bg-primary ms-1"
                                       title="A newer version is available in the source repository">
                                     <i class="bi bi-arrow-repeat"></i> New version
