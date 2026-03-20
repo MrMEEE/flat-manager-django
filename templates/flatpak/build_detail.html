@@ -149,7 +149,7 @@
                 <h5 class="mb-0"><i class="bi bi-terminal"></i> Build Logs</h5>
             </div>
             <div class="card-body">
-                <div id="build-logs" style="background: #1e1e1e; color: #d4d4d4; padding: 1rem; border-radius: 4px; max-height: 500px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 0.875rem;">
+                <div id="build-logs" style="background: #1e1e1e; color: #d4d4d4; padding: 1rem; border-radius: 4px; max-height: 600px; overflow-y: auto; font-family: 'Courier New', Consolas, monospace; font-size: 0.8125rem; line-height: 1.5;">
                     <div id="logs-placeholder" style="color: #858585;">Loading logs…</div>
                 </div>
             </div>
@@ -425,11 +425,29 @@
                     if (timestamp.includes('T')) {
                         timestamp = new Date(timestamp).toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
                     }
-                    logEntry.innerHTML = `
-                        <span style="color: #858585;">${timestamp}</span>
-                        <span style="color: ${levelColor};">[${log.level.toUpperCase()}]</span>
-                        <span style="color: #d4d4d4;">${log.message}</span>
-                    `;
+
+                    // Build the entry using DOM manipulation rather than innerHTML
+                    // so that log.message is always treated as plain text — never
+                    // as HTML.  This prevents flatpak-builder output that contains
+                    // angle-bracket sequences (e.g.  error: <app-id> not installed)
+                    // from corrupting the rendered log.
+                    logEntry.style.cssText = 'display:flex;gap:0.5em;padding:1px 0;';
+
+                    const tsSpan = document.createElement('span');
+                    tsSpan.style.cssText = 'color:#858585;flex-shrink:0;user-select:none;';
+                    tsSpan.textContent = timestamp;
+
+                    const lvlSpan = document.createElement('span');
+                    lvlSpan.style.cssText = `color:${levelColor};flex-shrink:0;user-select:none;`;
+                    lvlSpan.textContent = `[${log.level.toUpperCase()}]`;
+
+                    const msgSpan = document.createElement('span');
+                    msgSpan.style.cssText = 'color:#d4d4d4;white-space:pre-wrap;word-break:break-all;flex:1;';
+                    msgSpan.textContent = log.message;
+
+                    logEntry.appendChild(tsSpan);
+                    logEntry.appendChild(lvlSpan);
+                    logEntry.appendChild(msgSpan);
                     logsDiv.appendChild(logEntry);
                 }
                 lastLogCount = newLogs.length;

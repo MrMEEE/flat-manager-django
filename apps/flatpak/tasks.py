@@ -901,9 +901,27 @@ def publish_package_task(package_id):
         send_build_status_update(package_id, 'failed', f'Publish failed: {str(e)}')
 
 
+# Pre-compiled regex for ANSI escape sequences (CSI + other ESC sequences)
+_ANSI_ESC_RE = re.compile(r'\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+
+
 def log_build(build, level, message):
     """Helper to create build log entries and broadcast via WebSocket."""
     from apps.flatpak.models import BuildLog
+
+    # --- Sanitise raw terminal output before storing ---
+    # 1. Strip ANSI/VT100 colour-escape sequences (e.g. \033[32m) — they are
+    #    invisible in HTML and appear as garbage characters in the log view.
+    message = _ANSI_ESC_RE.sub('', message)
+    # 2. Handle carriage-return overwrite sequences used by curl/wget progress
+    #    bars: \r moves the cursor to the start of the line in a real terminal,
+    #    overwriting previous text. Simulate that by keeping only the text after
+    #    the last \r so the stored line matches what a terminal would show.
+    if '\r' in message:
+        message = message.split('\r')[-1]
+    message = message.strip()
+    if not message:
+        return
 
     log = BuildLog.objects.create(
         build=build,
