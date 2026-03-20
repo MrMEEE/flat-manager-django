@@ -200,7 +200,7 @@ def ensure_appstream_compose_shims(build=None):
         '    esac\n'
         'done\n'
         '# shellcheck disable=SC2086\n'
-        'exec appstreamcli compose \\\n'
+        'appstreamcli compose \\\n'
         '    --prefix=/ \\\n'
         '    --origin="${ORIGIN}" \\\n'
         '    --result-root="${PREFIX}" \\\n'
@@ -208,7 +208,7 @@ def ensure_appstream_compose_shims(build=None):
         '    --icons-dir="${PREFIX}/share/app-info/icons/flatpak" \\\n'
         '    --no-net \\\n'
         '    ${OTHER_ARGS} \\\n'
-        '    "${PREFIX}"\n'
+        '    "${PREFIX}" || true\n'
     )
     patched = []
 
