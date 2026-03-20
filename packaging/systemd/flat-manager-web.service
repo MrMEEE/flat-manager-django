@@ -1,8 +1,14 @@
 [Unit]
 Description=Flat Manager — Daphne ASGI server
 Documentation=https://github.com/MrMEEE/flat-manager-django
-After=network.target mariadb.service redis.service valkey.service
+After=network.target mariadb.service redis.service valkey.service flat-manager-celery.service
 Wants=mariadb.service
+# Tie this unit to the Celery worker:
+#   BindsTo  — if celery stops or crashes, web stops too
+#   PartOf   — if celery is explicitly restarted, web is restarted too
+#   After    — when restarting, wait for celery to be active first
+BindsTo=flat-manager-celery.service
+PartOf=flat-manager-celery.service
 
 [Service]
 Type=simple
@@ -25,7 +31,7 @@ LogsDirectory=flat-manager
 LogsDirectoryMode=0750
 StateDirectory=flat-manager
 StateDirectoryMode=0750
-Restart=on-failure
+Restart=always
 RestartSec=5
 TimeoutStopSec=30
 
