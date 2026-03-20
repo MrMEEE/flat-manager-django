@@ -112,6 +112,34 @@
                     {% endif %}
                     {% endif %}
 
+                    {% if package.git_repo_url %}
+                    <dt class="col-sm-3">Available Version:</dt>
+                    <dd class="col-sm-9">
+                        <span id="available-version-value">
+                            {% if package.available_version %}
+                                {{ package.available_version }}
+                                {% if package.version and package.available_version != package.version %}
+                                <span class="badge bg-primary ms-1"
+                                      title="A newer version is available in the source repository">
+                                    <i class="bi bi-arrow-repeat"></i> New version
+                                </span>
+                                {% endif %}
+                            {% else %}
+                                <span class="text-muted">Not checked yet</span>
+                            {% endif %}
+                        </span>
+                        {% if package.available_version_checked_at %}
+                        <small class="text-muted ms-2" id="available-checked-at">
+                            checked {{ package.available_version_checked_at|timesince }} ago
+                        </small>
+                        {% endif %}
+                        <button class="btn btn-sm btn-outline-secondary ms-2" id="check-available-btn"
+                                onclick="checkAvailableVersion({{ package.pk }})">
+                            <i class="bi bi-arrow-clockwise"></i> Check now
+                        </button>
+                    </dd>
+                    {% endif %}
+
                     <dt class="col-sm-3">Repository:</dt>
                     <dd class="col-sm-9">
                         <a href="{% url 'flatpak:repo_detail' package.repository.pk %}">
@@ -355,6 +383,38 @@
             if (checkedEl) { checkedEl.textContent = 'checked just now'; }
         } catch (e) {
             showAlert('Upstream check failed', e.toString());
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Check now'; }
+        }
+    };
+
+    // Check available version
+    window.checkAvailableVersion = async function(id) {
+        const btn = document.getElementById('check-available-btn');
+        const valueEl = document.getElementById('available-version-value');
+        const checkedEl = document.getElementById('available-checked-at');
+        if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>'; }
+        try {
+            const resp = await fetch(`/packages/${id}/check-available/`, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': '{{ csrf_token }}', 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+            });
+            const data = await resp.json();
+            if (!resp.ok) {
+                showAlert('Available version check failed', data.error || 'Unknown error');
+                return;
+            }
+            if (valueEl) {
+                let html = data.version || '<span class="text-muted">Not detected</span>';
+                if (data.has_update) {
+                    html += ' <span class="badge bg-primary ms-1" title="A newer version is available in the source repository"><i class="bi bi-arrow-repeat"></i> New version</span>';
+                }
+                valueEl.innerHTML = html;
+            }
+            if (checkedEl) { checkedEl.textContent = 'checked just now'; }
+        } catch (e) {
+            showAlert('Available version check failed', e.toString());
         } finally {
             if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Check now'; }
         }

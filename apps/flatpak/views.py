@@ -551,7 +551,7 @@ class PackageCheckUpstreamView(LoginRequiredMixin, View):
 
     def post(self, request, pk):
         from django.utils import timezone as tz
-        from apps.flatpak.tasks import _fetch_latest_upstream_tag, _run_version_script
+        from apps.flatpak.tasks import _fetch_latest_upstream_tag, _run_version_script, _normalise_version
         package = get_object_or_404(Package, pk=pk)
         if not package.upstream_url and not package.upstream_version_script.strip():
             return JsonResponse({'error': 'No upstream URL or version script configured for this package'}, status=400)
@@ -570,9 +570,36 @@ class PackageCheckUpstreamView(LoginRequiredMixin, View):
         if not version:
             return JsonResponse({'error': error or 'Could not determine upstream version'}, status=502)
 
+        version = _normalise_version(version)
         package.upstream_version = version
         package.upstream_checked_at = tz.now()
         package.save(update_fields=['upstream_version', 'upstream_checked_at'])
+        return JsonResponse({
+            'version': version,
+            'has_update': bool(package.version and version and version != package.version),
+        })
+
+
+class PackageCheckAvailableView(LoginRequiredMixin, View):
+    """AJAX — immediately check the available (git-source) version for a package."""
+
+    def post(self, request, pk):
+        from django.utils import timezone as tz
+        from apps.flatpak.tasks import _fetch_available_version
+        package = get_object_or_404(Package, pk=pk)
+        if not package.git_repo_url:
+            return JsonResponse(
+                {'error': 'No git repository URL configured for this package'},
+                status=400,
+            )
+
+        version, error = _fetch_available_version(package)
+        if not version:
+            return JsonResponse({'error': error or 'Could not determine available version'}, status=502)
+
+        package.available_version = version
+        package.available_version_checked_at = tz.now()
+        package.save(update_fields=['available_version', 'available_version_checked_at'])
         return JsonResponse({
             'version': version,
             'has_update': bool(package.version and version and version != package.version),

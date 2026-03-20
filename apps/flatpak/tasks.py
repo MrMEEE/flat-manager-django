@@ -1975,26 +1975,19 @@ def _run_version_script(script_text, package_id):
         return None, str(e)
 
 
-@shared_task
-def check_available_version_task(package_id):
-    """Detect and store the *available* version for a single git-based package.
+def _fetch_available_version(package):
+    """Clone *package*'s git repository and extract its available version from the manifest.
 
-    The available version is determined by cloning the package's git repository
-    (shallow, no submodules) and reading the version out of its flatpak
-    manifest — the same detection logic used during a full build — without
-    actually building anything.
+    Returns ``(version, error)`` where exactly one of the two is ``None``:
+    * ``(str, None)`` on success — version is **not** persisted here; callers
+      are responsible for saving it.
+    * ``(None, str)`` on failure — error contains a human-readable description.
 
-    The result is written to ``package.available_version`` and
-    ``package.available_version_checked_at``.
+    This is the low-level helper used by both the Celery task and the
+    synchronous AJAX view so they share identical logic.
     """
-    from apps.flatpak.models import Package
-    try:
-        package = Package.objects.get(id=package_id)
-    except Package.DoesNotExist:
-        return None
-
     if not package.git_repo_url:
-        return None
+        return None, 'No git repository URL configured'
 
     temp_dir = None
     try:
@@ -2009,11 +2002,9 @@ def check_available_version_task(package_id):
             timeout=300,
         )
         if clone_result.returncode != 0:
-            logger.warning(
-                f"check_available_version_task: clone failed for "
-                f"{package.package_id}: {clone_result.stderr.strip()}"
-            )
-            return None
+            msg = f'git clone failed: {clone_result.stderr.strip()}'
+            logger.warning(f"_fetch_available_version: {package.package_id}: {msg}")
+            return None, msg
 
         source_dir = os.path.join(temp_dir, 'source')
 
@@ -2030,32 +2021,50 @@ def check_available_version_task(package_id):
                 break
 
         if not manifest_file:
-            logger.warning(
-                f"check_available_version_task: no manifest found for {package.package_id}"
-            )
-            return None
+            msg = 'No manifest file found in repository'
+            logger.warning(f"_fetch_available_version: {package.package_id}: {msg}")
+            return None, msg
 
         version = _extract_version_from_manifest(package.package_id, manifest_file)
         if not version:
-            logger.info(
-                f"check_available_version_task: could not detect version for "
-                f"{package.package_id}"
-            )
-            return None
+            msg = 'Could not detect version from manifest'
+            logger.info(f"_fetch_available_version: {package.package_id}: {msg}")
+            return None, msg
 
-        package.available_version = version
-        package.available_version_checked_at = timezone.now()
-        package.save(update_fields=['available_version', 'available_version_checked_at'])
-        logger.info(f"Available version for {package.package_id}: {version!r}")
-        return version
+        return version, None
     except Exception as e:
-        logger.exception(
-            f"check_available_version_task: unexpected error for {package.package_id}: {e}"
-        )
-        return None
+        logger.exception(f"_fetch_available_version: unexpected error for {package.package_id}: {e}")
+        return None, str(e)
     finally:
         if temp_dir and os.path.exists(temp_dir):
             shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@shared_task
+def check_available_version_task(package_id):
+    """Detect and store the *available* version for a single git-based package.
+
+    Delegates the actual work to :func:`_fetch_available_version` and persists
+    the result.  The result is written to ``package.available_version`` and
+    ``package.available_version_checked_at``.
+    """
+    from apps.flatpak.models import Package
+    try:
+        package = Package.objects.get(id=package_id)
+    except Package.DoesNotExist:
+        return None
+
+    version, error = _fetch_available_version(package)
+    if not version:
+        if error:
+            logger.warning(f"check_available_version_task: {package.package_id}: {error}")
+        return None
+
+    package.available_version = version
+    package.available_version_checked_at = timezone.now()
+    package.save(update_fields=['available_version', 'available_version_checked_at'])
+    logger.info(f"Available version for {package.package_id}: {version!r}")
+    return version
 
 
 @shared_task
@@ -2096,6 +2105,30 @@ def check_all_available_versions():
         check_available_version_task.delay(p.id)
     logger.info(f"Queued available version check for {count} package(s)")
     return f"Queued {count} available version check(s)"
+
+
+def _normalise_version(version):
+    """Normalise a raw upstream tag string into a clean version number.
+
+    * Strips leading non-numeric word prefixes, e.g.:
+        ``RELEASE.2.9.0``  →  ``2.9.0``
+        ``v1.2.3``         →  ``1.2.3``
+    * Converts underscore-separated digit sequences to dot-separated, e.g.:
+        ``1_4_3``  →  ``1.4.3``
+    """
+    import re as _re
+    if not version:
+        return version
+    # Strip prefix: any leading letters/symbols up to (but not including) the
+    # first digit.  Use match span so we don't accidentally skip an earlier
+    # occurrence of the same digit character in the prefix itself.
+    _m = _re.match(r'^[a-zA-Z][a-zA-Z0-9_.+-]*?(\d)', version)
+    if _m:
+        version = version[_m.start(1):]
+    # Replace _ between digits with . (use look-around so all separators in a
+    # sequence like 1_4_3 are replaced in a single pass).
+    version = _re.sub(r'(?<=\d)_(?=\d)', '.', version)
+    return version
 
 
 @shared_task
@@ -2140,14 +2173,7 @@ def check_upstream_version_task(package_id):
     if not version:
         return None
 
-    # Normalise the raw tag the same way parse_manifest_dependencies does:
-    # strip leading word prefixes (e.g. "RELEASE.2.9.0" → "2.9.0")
-    # and convert underscore-separated digits (e.g. "1_4_3" → "1.4.3").
-    import re as _re
-    _m = _re.match(r'^[a-zA-Z][a-zA-Z0-9_.+-]*?(\d)', version)
-    if _m:
-        version = version[version.index(_m.group(1)):]
-    version = _re.sub(r'(\d)_(\d)', r'\1.\2', version)
+    version = _normalise_version(version)
 
     package.upstream_version = version
     package.upstream_checked_at = timezone.now()

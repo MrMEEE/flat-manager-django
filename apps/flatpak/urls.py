@@ -28,6 +28,7 @@ urlpatterns = [
     path('packages/<int:pk>/retry/', views.PackageRetryView.as_view(), name='package_retry'),
     path('packages/<int:pk>/builds/', views.PackageBuildsApiView.as_view(), name='package_builds_api'),
     path('packages/<int:pk>/check-upstream/', views.PackageCheckUpstreamView.as_view(), name='package_check_upstream'),
+    path('packages/<int:pk>/check-available/', views.PackageCheckAvailableView.as_view(), name='package_check_available'),
     path('packages/<int:pk>/status/', views.PackageStatusView.as_view(), name='package_status'),
     path('packages/<int:pk>/commit/', views.PackageCommitView.as_view(), name='package_commit'),
     path('packages/<int:pk>/publish/', views.PackagePublishView.as_view(), name='package_publish'),
