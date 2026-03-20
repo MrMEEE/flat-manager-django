@@ -1939,16 +1939,17 @@ def _fetch_latest_upstream_tag(url):
         # Priority order:
         #   1. stable non-date versions  (e.g. 3.0.23)
         #   2. pre-release non-date      (e.g. 4.0.0-rc1)  — only if no stable non-date
-        #   3. stable date-based         (e.g. 2022-08-12)  — only if no non-date at all
-        #   4. everything else           (last resort)
+        #   3. date-based only           → return '' (not a real release number)
         non_date = [(v, pre, tag) for v, pre, date, tag in candidates if not date]
         if non_date:
             stable = [(v, tag) for v, pre, tag in non_date if not pre]
             pool = stable if stable else [(v, tag) for v, pre, tag in non_date]
         else:
-            # Fall back to date-based tags, still preferring stable ones
-            stable = [(v, tag) for v, pre, date, tag in candidates if not pre]
-            pool = stable if stable else [(v, tag) for v, pre, date, tag in candidates]
+            # All tags are date-based snapshots (e.g. 2022-08-12-01 nightlies).
+            # Returning a date string as an upstream version is misleading —
+            # the caller expects a real release number.  Signal "not found" so
+            # the stored value is not overwritten with noise.
+            return '', None
         best_tag = max(pool, key=lambda x: x[0])[1]
 
         # Strip common non-numeric tag prefixes so the stored value is a bare
@@ -2050,11 +2051,17 @@ def _fetch_available_version(package):
         # used as a cwd — git clone would fail with EACCES.  Restore 0o700
         # explicitly so the umask setting doesn't matter.
         os.chmod(temp_dir, 0o700)
+        # Pre-create the clone target directory with safe permissions.
+        # Without this, git creates the directory itself and the service
+        # UMask (0o111) strips execute bits, making the dir inaccessible
+        # for subsequent git operations (EACCES on .git init).
+        source_dir = os.path.join(temp_dir, 'source')
+        os.makedirs(source_dir, mode=0o700, exist_ok=True)
         clone_result = subprocess.run(
             ['git', 'clone', '--branch', package.git_branch or 'master',
              '--depth', '1', '--no-recurse-submodules',
-             package.git_repo_url, 'source'],
-            cwd=temp_dir,
+             package.git_repo_url, '.'],
+            cwd=source_dir,
             capture_output=True,
             text=True,
             timeout=300,
@@ -2063,8 +2070,6 @@ def _fetch_available_version(package):
             msg = f'git clone failed: {clone_result.stderr.strip()}'
             logger.warning(f"_fetch_available_version: {package.package_id}: {msg}")
             return None, msg
-
-        source_dir = os.path.join(temp_dir, 'source')
 
         # Find manifest file (same search order as the build task)
         manifest_file = None
@@ -2079,7 +2084,13 @@ def _fetch_available_version(package):
                 break
 
         if not manifest_file:
-            msg = 'No manifest file found in repository'
+            # No flatpak manifest in this repo (e.g. git_repo_url points to the
+            # upstream source rather than the flathub manifest repo). Fall back
+            # to git tag detection on the same URL — same logic as upstream_url.
+            version, tag_err = _fetch_latest_upstream_tag(package.git_repo_url)
+            if version:
+                return _normalise_version(version), None
+            msg = f'No manifest file found; git tag fallback also failed: {tag_err}'
             logger.warning(f"_fetch_available_version: {package.package_id}: {msg}")
             return None, msg
 
@@ -2196,6 +2207,13 @@ def _normalise_version(version):
     # Strip any remaining trailing word-only suffix (no digits), e.g. _RELEASE,
     # .RELEASE, _STABLE, .FINAL — these are tag decorations, not version parts.
     version = _re.sub(r'[._][a-zA-Z]+$', '', version)
+    # Strip pre-release suffixes that are directly attached to the last digit
+    # component, e.g. 149.0b10 → 149.0, 3.0a2 → 3.0, 5.0rc1 → 5.0.
+    # These appear when a script or upstream URL returns a beta/RC tag instead
+    # of the latest stable (e.g. Firefox product-details API).
+    version = _re.sub(r'(a|b)\d+$', '', version)
+    version = _re.sub(r'[._-]?(rc|alpha|beta|pre|dev)\d*$', '', version, flags=_re.IGNORECASE)
+    version = version.rstrip('._-')
     return version
 
 
