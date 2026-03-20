@@ -1951,6 +1951,12 @@ def _fetch_latest_upstream_tag(url):
         if non_date:
             stable = [(v, tag) for v, pre, tag in non_date if not pre]
             pool = stable if stable else [(v, tag) for v, pre, tag in non_date]
+            # Prefer versions with 2+ components (e.g. 1.112.0) over bare
+            # single-integer tags (e.g. v14) which are almost always old
+            # artefacts or branch markers, not real release versions.
+            multi = [(v, tag) for v, tag in pool if len(v) >= 2]
+            if multi:
+                pool = multi
         else:
             # All tags are date-based snapshots (e.g. 2022-08-12-01 nightlies).
             # Returning a date string as an upstream version is misleading —
