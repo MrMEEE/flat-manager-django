@@ -2025,6 +2025,12 @@ def _fetch_available_version(package):
     temp_dir = None
     try:
         temp_dir = tempfile.mkdtemp(prefix=f'fmdc_avail_{package.pk}_')
+        # The web service runs with UMask=0111 (so the daphne socket gets mode
+        # 0666).  mkdtemp uses 0o700 but the umask strips the execute bits,
+        # producing 0o600.  A directory without execute permission cannot be
+        # used as a cwd — git clone would fail with EACCES.  Restore 0o700
+        # explicitly so the umask setting doesn't matter.
+        os.chmod(temp_dir, 0o700)
         clone_result = subprocess.run(
             ['git', 'clone', '--branch', package.git_branch or 'master',
              '--depth', '1', '--no-recurse-submodules',
