@@ -2058,26 +2058,24 @@ def _fetch_available_version(package):
     temp_dir = None
     try:
         temp_dir = tempfile.mkdtemp(prefix=f'fmdc_avail_{package.pk}_')
-        # The web service runs with UMask=0111 (so the daphne socket gets mode
-        # 0666).  mkdtemp uses 0o700 but the umask strips the execute bits,
-        # producing 0o600.  A directory without execute permission cannot be
-        # used as a cwd — git clone would fail with EACCES.  Restore 0o700
-        # explicitly so the umask setting doesn't matter.
+        # UMask=0111 in the systemd service strips execute bits from every
+        # mkdir() call in the entire process tree — including all the
+        # subdirectories git creates inside .git/ during clone.  Manually
+        # chmod'ing the entry point is not enough.
+        # Fix: wrap the clone in bash so 'umask 0022' is applied before git
+        # touches the filesystem, restoring normal directory permissions for
+        # the whole subprocess.
         os.chmod(temp_dir, 0o700)
-        # Pre-create the clone target directory with safe permissions.
-        # Without this, git creates the directory itself and the service
-        # UMask (0o111) strips execute bits, making the dir inaccessible
-        # for subsequent git operations (EACCES on .git init).
         source_dir = os.path.join(temp_dir, 'source')
-        os.makedirs(source_dir, mode=0o700, exist_ok=True)
-        # makedirs respects the process umask just like mkdtemp, so we must
-        # chmod explicitly to guarantee the execute bit is present.
-        os.chmod(source_dir, 0o700)
+        branch = package.git_branch or 'master'
+        import shlex
+        git_cmd = (
+            f'umask 0022 && git clone --branch {shlex.quote(branch)}'
+            f' --depth 1 --no-recurse-submodules'
+            f' {shlex.quote(package.git_repo_url)} {shlex.quote(source_dir)}'
+        )
         clone_result = subprocess.run(
-            ['git', 'clone', '--branch', package.git_branch or 'master',
-             '--depth', '1', '--no-recurse-submodules',
-             package.git_repo_url, '.'],
-            cwd=source_dir,
+            ['bash', '-c', git_cmd],
             capture_output=True,
             text=True,
             timeout=300,
