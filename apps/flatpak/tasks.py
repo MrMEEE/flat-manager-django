@@ -1881,14 +1881,21 @@ def _parse_version_from_tag(tag):
     if not nums:
         return None, True, False
     parts = tuple(int(x) for x in nums.group(1).split('.'))
-    # Detect date-version tags: YYYY-MM-DD / YYYY.MM.DD style snapshots/nightlies
-    # (first component is a plausible 4-digit year, second a month, third a day).
-    # These are never real release version numbers and should be deprioritised.
+    # Detect date-version tags — these are never real release version numbers
+    # and should be deprioritised.  Two common forms:
+    #   YYYY-MM-DD / YYYY.MM.DD  → parts (2022, 8, 12, ...)  len>=3
+    #   YYYYMMDD compact          → parts (20241212,)          single 8-digit
     is_date_version = (
-        len(parts) >= 3
-        and 2000 <= parts[0] <= 2100
-        and 1 <= parts[1] <= 12
-        and 1 <= parts[2] <= 31
+        (
+            len(parts) >= 3
+            and 2000 <= parts[0] <= 2100
+            and 1 <= parts[1] <= 12
+            and 1 <= parts[2] <= 31
+        ) or (
+            len(parts) == 1
+            and len(str(parts[0])) == 8
+            and 20000101 <= parts[0] <= 21001231
+        )
     )
     return parts, is_prerelease, is_date_version
 
@@ -2057,6 +2064,9 @@ def _fetch_available_version(package):
         # for subsequent git operations (EACCES on .git init).
         source_dir = os.path.join(temp_dir, 'source')
         os.makedirs(source_dir, mode=0o700, exist_ok=True)
+        # makedirs respects the process umask just like mkdtemp, so we must
+        # chmod explicitly to guarantee the execute bit is present.
+        os.chmod(source_dir, 0o700)
         clone_result = subprocess.run(
             ['git', 'clone', '--branch', package.git_branch or 'master',
              '--depth', '1', '--no-recurse-submodules',
