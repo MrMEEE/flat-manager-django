@@ -1822,18 +1822,23 @@ def send_build_status_update(package_id, status, message='', repository_id=None)
 
 def _parse_version_from_tag(tag):
     """
-    Extract a sortable version tuple and a pre-release flag from a tag name.
+    Extract a sortable version tuple, a pre-release flag, and a date-version
+    flag from a tag name.
 
     Handles common formats:
-      v8.4.2          → (8, 4, 2),  is_prerelease=False
-      8.4.2           → (8, 4, 2),  is_prerelease=False
-      grass_8_4_2     → (8, 4, 2),  is_prerelease=False
-      grass_7_6_1RC1  → (7, 6, 1),  is_prerelease=True
-      release-3.10.1  → (3, 10, 1), is_prerelease=False
-      v2.0.0-beta.1   → (2, 0, 0),  is_prerelease=True
+      v8.4.2           → (8, 4, 2),       is_prerelease=False, is_date=False
+      8.4.2            → (8, 4, 2),       is_prerelease=False, is_date=False
+      grass_8_4_2      → (8, 4, 2),       is_prerelease=False, is_date=False
+      grass_7_6_1RC1   → (7, 6, 1),       is_prerelease=True,  is_date=False
+      release-3.10.1   → (3, 10, 1),      is_prerelease=False, is_date=False
+      v2.0.0-beta.1    → (2, 0, 0),       is_prerelease=True,  is_date=False
+      2022-08-12-01    → (2022, 8, 12, 1), is_prerelease=False, is_date=True
 
-    Returns ``(tuple_of_ints, is_prerelease)`` or ``(None, True)`` if no
-    version numbers could be extracted.
+    Date-version tags (YYYY-MM-DD snapshots/nightlies) are flagged so the
+    caller can deprioritise them in favour of real release version numbers.
+
+    Returns ``(tuple_of_ints, is_prerelease, is_date_version)`` or
+    ``(None, True, False)`` if no version numbers could be extracted.
     """
     import re
     # Normalise separators to dots: underscores → dots
@@ -1846,9 +1851,18 @@ def _parse_version_from_tag(tag):
     # Extract leading numeric components only
     nums = re.match(r'^(\d+(?:\.\d+)*)', normalised)
     if not nums:
-        return None, True
+        return None, True, False
     parts = tuple(int(x) for x in nums.group(1).split('.'))
-    return parts, is_prerelease
+    # Detect date-version tags: YYYY-MM-DD / YYYY.MM.DD style snapshots/nightlies
+    # (first component is a plausible 4-digit year, second a month, third a day).
+    # These are never real release version numbers and should be deprioritised.
+    is_date_version = (
+        len(parts) >= 3
+        and 2000 <= parts[0] <= 2100
+        and 1 <= parts[1] <= 12
+        and 1 <= parts[2] <= 31
+    )
+    return parts, is_prerelease, is_date_version
 
 
 def _fetch_latest_upstream_tag(url):
@@ -1885,18 +1899,28 @@ def _fetch_latest_upstream_tag(url):
         candidates = []
         for line in lines:
             raw_tag = line.split('\t', 1)[-1].replace('refs/tags/', '').strip()
-            version_tuple, is_prerelease = _parse_version_from_tag(raw_tag)
+            version_tuple, is_prerelease, is_date_version = _parse_version_from_tag(raw_tag)
             if version_tuple is not None:
-                candidates.append((version_tuple, is_prerelease, raw_tag))
+                candidates.append((version_tuple, is_prerelease, is_date_version, raw_tag))
 
         if not candidates:
             # Nothing parseable — fall back to the last tag alphabetically
             last = sorted(lines)[-1].split('\t', 1)[-1].replace('refs/tags/', '').strip()
             return last, None
 
-        # Prefer stable releases; fall back to pre-releases if nothing stable exists
-        stable = [(v, tag) for v, pre, tag in candidates if not pre]
-        pool = stable if stable else [(v, tag) for v, pre, tag in candidates]
+        # Priority order:
+        #   1. stable non-date versions  (e.g. 3.0.23)
+        #   2. pre-release non-date      (e.g. 4.0.0-rc1)  — only if no stable non-date
+        #   3. stable date-based         (e.g. 2022-08-12)  — only if no non-date at all
+        #   4. everything else           (last resort)
+        non_date = [(v, pre, tag) for v, pre, date, tag in candidates if not date]
+        if non_date:
+            stable = [(v, tag) for v, pre, tag in non_date if not pre]
+            pool = stable if stable else [(v, tag) for v, pre, tag in non_date]
+        else:
+            # Fall back to date-based tags, still preferring stable ones
+            stable = [(v, tag) for v, pre, date, tag in candidates if not pre]
+            pool = stable if stable else [(v, tag) for v, pre, date, tag in candidates]
         best_tag = max(pool, key=lambda x: x[0])[1]
 
         # Strip common non-numeric tag prefixes so the stored value is a bare
