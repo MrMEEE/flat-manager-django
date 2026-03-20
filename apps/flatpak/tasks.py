@@ -232,8 +232,9 @@ def ensure_appstream_compose_shims(build=None):
                         pass
                     except UnicodeDecodeError:
                         # Existing file is a real binary (SDK ships its own
-                        # appstream-compose) — no shim needed, leave it alone.
-                        needs_write = False
+                        # appstream-compose). Replace it with our shim so that
+                        # appstreamcli compose is called with the correct args.
+                        needs_write = True
                 if needs_write:
                     try:
                         with open(compose_path, 'w') as _f:
