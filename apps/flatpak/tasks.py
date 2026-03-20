@@ -1069,6 +1069,7 @@ def _extract_version_from_manifest(package_id, manifest_file):
                         for pattern in [
                             r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)',
                             r'/(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/',
+                            r'/(\d{4}-\d{2})(?:/|$)',  # YYYY-MM style (e.g. Eclipse)
                         ]:
                             m = re.search(pattern, url)
                             if m:
