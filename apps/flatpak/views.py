@@ -1416,6 +1416,36 @@ class RunCleanupNowView(LoginRequiredMixin, View):
         return JsonResponse({'status': 'ok', 'message': result})
 
 
+class RunAvailableVersionScanView(LoginRequiredMixin, View):
+    """Queue an available-version check for every git-based package immediately."""
+
+    def post(self, request):
+        from apps.flatpak.models import Package
+        from apps.flatpak.tasks import check_available_version_task
+        packages = Package.objects.filter(
+            git_repo_url__isnull=False
+        ).exclude(git_repo_url='')
+        count = packages.count()
+        for p in packages:
+            check_available_version_task.delay(p.id)
+        return JsonResponse({'status': 'ok', 'message': f"Queued {count} available version check(s)"})
+
+
+class RunUpstreamVersionScanView(LoginRequiredMixin, View):
+    """Queue an upstream-version check for every eligible package immediately."""
+
+    def post(self, request):
+        from apps.flatpak.models import Package
+        from apps.flatpak.tasks import check_upstream_version_task
+        packages = Package.objects.filter(upstream_url__isnull=False).exclude(upstream_url='')
+        script_only = Package.objects.filter(upstream_url='').exclude(upstream_version_script='')
+        all_packages = (packages | script_only).distinct()
+        count = all_packages.count()
+        for p in all_packages:
+            check_upstream_version_task.delay(p.id)
+        return JsonResponse({'status': 'ok', 'message': f"Queued {count} upstream version check(s)"})
+
+
 @login_required
 def dependencies_list(request):
     """List all installed Flatpak dependencies (SDKs, runtimes, extensions)."""

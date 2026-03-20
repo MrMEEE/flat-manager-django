@@ -230,7 +230,7 @@
 
 <div class="row">
     <!-- Run Cleanup Now -->
-    <div class="col-lg-6 mb-4">
+    <div class="col-lg-4 mb-4">
         <div class="card">
             <div class="card-header">
                 <h5 class="mb-0"><i class="bi bi-play-circle"></i> Run Cleanup Now</h5>
@@ -240,10 +240,46 @@
                     Trigger the cleanup task immediately without waiting for the next scheduled run.
                     The task will run in the background using the current setting above.
                 </p>
-                <button id="btn-run-cleanup" class="btn btn-warning" onclick="runCleanupNow()">
+                <button id="btn-run-cleanup" class="btn btn-warning" onclick="runTaskNow('run-cleanup', '{% url "flatpak:run_cleanup" %}', 'Run Cleanup Now')">
                     <i class="bi bi-arrow-clockwise"></i> Run Cleanup Now
                 </button>
-                <div id="cleanup-result" class="mt-3" style="display:none;"></div>
+                <div id="run-cleanup-result" class="mt-3" style="display:none;"></div>
+            </div>
+        </div>
+    </div>
+    <!-- Scan Available Versions Now -->
+    <div class="col-lg-4 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-box-seam"></i> Available Version Scan</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-3">
+                    Queue an available-version check for every git-based package immediately,
+                    without waiting for the next scheduled run.
+                </p>
+                <button id="btn-scan-available-versions" class="btn btn-info" onclick="runTaskNow('scan-available-versions', '{% url "flatpak:scan_available_versions" %}', 'Scan Available Versions')">
+                    <i class="bi bi-arrow-clockwise"></i> Scan Available Versions Now
+                </button>
+                <div id="scan-available-versions-result" class="mt-3" style="display:none;"></div>
+            </div>
+        </div>
+    </div>
+    <!-- Scan Upstream Versions Now -->
+    <div class="col-lg-4 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-cloud-download"></i> Upstream Version Scan</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-3">
+                    Queue an upstream-version check for every eligible package immediately,
+                    without waiting for the next scheduled run.
+                </p>
+                <button id="btn-scan-upstream-versions" class="btn btn-info" onclick="runTaskNow('scan-upstream-versions', '{% url "flatpak:scan_upstream_versions" %}', 'Scan Upstream Versions')">
+                    <i class="bi bi-arrow-clockwise"></i> Scan Upstream Versions Now
+                </button>
+                <div id="scan-upstream-versions-result" class="mt-3" style="display:none;"></div>
             </div>
         </div>
     </div>
@@ -281,22 +317,32 @@ function confirmRemoteDelete(btn, remoteName) {
     modal.show();
 }
 
-function runCleanupNow() {
-    const btn = document.getElementById('btn-run-cleanup');
-    const result = document.getElementById('cleanup-result');
+function runTaskNow(key, url, label) {
+    const btn = document.getElementById('btn-' + key);
+    const result = document.getElementById(key + '-result');
+    const originalHtml = btn.innerHTML;
 
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Queuing…';
+    result.style.display = 'none';
 
-        }
+    fetch(url, {
+        method: 'POST',
+        headers: {'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value},
     })
-    .catch(err => {
+    .then(r => r.json())
+    .then(data => {
+        result.style.display = 'block';
+        result.innerHTML = '<div class="alert alert-success mb-0"><i class="bi bi-check-circle"></i> ' +
+            (data.message || 'Done.') + '</div>';
+    })
+    .catch(() => {
         result.style.display = 'block';
         result.innerHTML = '<div class="alert alert-danger mb-0"><i class="bi bi-exclamation-circle"></i> Request failed.</div>';
     })
     .finally(() => {
         btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Run Cleanup Now';
+        btn.innerHTML = originalHtml;
     });
 }
 </script>
