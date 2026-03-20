@@ -138,7 +138,9 @@
                     
                     {% if build.error_message %}
                     <dt class="col-sm-3">Error:</dt>
-                    <dd class="col-sm-9"><code class="text-danger">{{ build.error_message }}</code></dd>
+                    <dd class="col-sm-9">
+                        <code class="text-danger d-block text-truncate" title="{{ build.error_message }}">{{ build.error_message }}</code>
+                    </dd>
                     {% endif %}
                 </dl>
             </div>
