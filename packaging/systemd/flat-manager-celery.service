@@ -1,6 +1,6 @@
 [Unit]
 Description=Flat Manager — Celery worker
-Documentation=https://github.com/YOUR_ORG/flat-manager-django
+Documentation=https://github.com/MrMEEE/flat-manager-django
 After=network.target mariadb.service redis.service valkey.service
 Wants=mariadb.service
 

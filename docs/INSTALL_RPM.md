@@ -69,7 +69,7 @@ mysql_secure_installation
 ## 3. Install the RPM packages
 
 Download both RPMs for your distribution from the
-[GitHub Releases](https://github.com/YOUR_ORG/flat-manager-django/releases)
+[GitHub Releases](https://github.com/MrMEEE/flat-manager-django/releases)
 page, then install them together:
 
 ```bash
@@ -327,11 +327,35 @@ systemctl restart flat-manager-web
 
 ## Upgrading
 
+The easiest way is the built-in update command, which checks GitHub for the
+latest release and upgrades via `dnf` automatically — must be run as root:
+
+```bash
+flat-manager-manage update
+```
+
+This will:
+1. Query the GitHub Releases API for the latest version
+2. Compare it against the currently installed RPM version
+3. Download and install the matching `el9`/`el10` RPM assets with `dnf`
+4. Print a reminder to run `migrate` if the version changed
+
+Then apply any new database migrations and restart:
+
+```bash
+flat-manager-manage migrate
+systemctl restart flat-manager.target
+```
+
+### Manual upgrade
+
+If you prefer to manage the RPMs yourself:
+
 ```bash
 dnf upgrade -y \
     flat-manager-django-<new-version>.rpm \
     flat-manager-django-python-libs-<new-version>.rpm
 
-flat-manager-manage migrate          # apply any new migrations
+flat-manager-manage migrate
 systemctl restart flat-manager.target
 ```

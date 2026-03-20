@@ -1,6 +1,6 @@
 [Unit]
 Description=Flat Manager — Celery beat scheduler
-Documentation=https://github.com/YOUR_ORG/flat-manager-django
+Documentation=https://github.com/MrMEEE/flat-manager-django
 After=network.target mariadb.service redis.service valkey.service flat-manager-celery.service
 Wants=flat-manager-celery.service
 

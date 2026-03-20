@@ -1,6 +1,6 @@
 [Unit]
 Description=Flat Manager — all services
-Documentation=https://github.com/YOUR_ORG/flat-manager-django
+Documentation=https://github.com/MrMEEE/flat-manager-django
 Wants=flat-manager-web.service flat-manager-celery.service flat-manager-celery-beat.service
 After=flat-manager-web.service flat-manager-celery.service flat-manager-celery-beat.service
 

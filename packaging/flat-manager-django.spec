@@ -49,7 +49,7 @@ Version:        %{version_string}
 Release:        1%{?dist}
 Summary:        Flatpak repository manager — Django/Channels web application
 License:        MIT
-URL:            https://github.com/YOUR_ORG/flat-manager-django
+URL:            https://github.com/MrMEEE/flat-manager-django
 Source0:        %{name}-%{version}.tar.gz
 # python-libs subpackage contains compiled C extensions so the whole spec
 # must be built for the target arch.  The main package contents are
@@ -227,6 +227,66 @@ set -a
 [ -f /etc/flat-manager/flat-manager.env ] && . /etc/flat-manager/flat-manager.env
 set +a
 
+# ── Built-in commands (not delegated to manage.py) ───────────────────────────
+case "${1:-}" in
+    update)
+        # Check GitHub for a newer release and upgrade if available.
+        if [ "$(id -u)" -ne 0 ]; then
+            echo "ERROR: 'flat-manager-manage update' must be run as root." >&2
+            exit 1
+        fi
+        REPO="MrMEEE/flat-manager-django"
+        API="https://api.github.com/repos/${REPO}/releases/latest"
+        OS_VER=$(rpm -E '%{?rhel}' 2>/dev/null)
+        if [ -z "${OS_VER}" ]; then
+            echo "ERROR: could not detect RHEL major version." >&2
+            exit 1
+        fi
+        echo "Checking for updates..."
+        RELEASE_JSON=$(curl -sf --max-time 15 "${API}") || {
+            echo "ERROR: failed to contact GitHub API (is curl installed and the host online?)." >&2
+            exit 1
+        }
+        LATEST_TAG=$(printf '%s' "${RELEASE_JSON}" | \
+            python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])" 2>/dev/null)
+        LATEST_VER="${LATEST_TAG#v}"
+        if [ -z "${LATEST_VER}" ]; then
+            echo "ERROR: could not parse release tag from GitHub response." >&2
+            exit 1
+        fi
+        INSTALLED_VER=$(rpm -q flat-manager-django \
+            --queryformat '%{VERSION}' 2>/dev/null)
+        if [ -z "${INSTALLED_VER}" ]; then
+            echo "ERROR: flat-manager-django does not appear to be installed via RPM." >&2
+            exit 1
+        fi
+        if [ "${LATEST_VER}" = "${INSTALLED_VER}" ]; then
+            echo "flat-manager-django is already up to date (${INSTALLED_VER})."
+            exit 0
+        fi
+        echo "  Installed : ${INSTALLED_VER}"
+        echo "  Available : ${LATEST_VER}"
+        echo ""
+        URLS=$(printf '%s' "${RELEASE_JSON}" | \
+            python3 -c "import sys,json; [print(a['browser_download_url']) for a in json.load(sys.stdin)['assets']]" \
+            | grep "\.el${OS_VER}\." | grep '\.rpm$')
+        if [ -z "${URLS}" ]; then
+            echo "ERROR: no el${OS_VER} RPM assets found for release ${LATEST_TAG}." >&2
+            exit 1
+        fi
+        echo "Installing update..."
+        # shellcheck disable=SC2086
+        dnf install -y ${URLS} || {
+            echo "ERROR: dnf install failed." >&2
+            exit 1
+        }
+        echo "Update to ${LATEST_VER} complete."
+        echo "Run 'flat-manager-manage migrate' to apply any new database migrations."
+        exit 0
+        ;;
+esac
+
+# ── Delegate everything else to Django manage.py ─────────────────────────────
 # When invoked as root (e.g. during initial setup: migrate, createsuperuser)
 # drop privileges to the flat-manager service account so that any files created
 # (logs, .pyc caches, etc.) are owned by flat-manager, not root.
