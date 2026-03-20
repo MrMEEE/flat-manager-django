@@ -1826,13 +1826,15 @@ def _parse_version_from_tag(tag):
     flag from a tag name.
 
     Handles common formats:
-      v8.4.2           → (8, 4, 2),       is_prerelease=False, is_date=False
-      8.4.2            → (8, 4, 2),       is_prerelease=False, is_date=False
-      grass_8_4_2      → (8, 4, 2),       is_prerelease=False, is_date=False
-      grass_7_6_1RC1   → (7, 6, 1),       is_prerelease=True,  is_date=False
-      release-3.10.1   → (3, 10, 1),      is_prerelease=False, is_date=False
-      v2.0.0-beta.1    → (2, 0, 0),       is_prerelease=True,  is_date=False
-      2022-08-12-01    → (2022, 8, 12, 1), is_prerelease=False, is_date=True
+      v8.4.2                → (8, 4, 2),        is_prerelease=False, is_date=False
+      8.4.2                 → (8, 4, 2),        is_prerelease=False, is_date=False
+      grass_8_4_2           → (8, 4, 2),        is_prerelease=False, is_date=False
+      grass_7_6_1RC1        → (7, 6, 1),        is_prerelease=True,  is_date=False
+      release-3.10.1        → (3, 10, 1),       is_prerelease=False, is_date=False
+      v2.0.0-beta.1         → (2, 0, 0),        is_prerelease=True,  is_date=False
+      FIREFOX_149_0b10_BUILD1 → (149, 0),       is_prerelease=True,  is_date=False
+      FIREFOX_149_0_BUILD1    → (149, 0),       is_prerelease=False, is_date=False
+      2022-08-12-01         → (2022, 8, 12, 1), is_prerelease=False, is_date=True
 
     Date-version tags (YYYY-MM-DD snapshots/nightlies) are flagged so the
     caller can deprioritise them in favour of real release version numbers.
@@ -1845,9 +1847,16 @@ def _parse_version_from_tag(tag):
     normalised = tag.replace('_', '.')
     # Strip common non-numeric prefixes (v, V, release-, rel-, grass.)
     normalised = re.sub(r'^(?:[vV]|release[-.]|rel[-.]|[a-zA-Z]+[-.])', '', normalised)
-    # Pre-release marker check (case-insensitive) — before we strip letters
-    is_prerelease = bool(re.search(r'[._-]?(alpha|beta|rc|dev|pre|a\d|b\d)[._\-\d]*$',
-                                   normalised, re.IGNORECASE))
+    # Pre-release marker check (case-insensitive).
+    # Strip Mozilla-style build artifact suffixes first (e.g. _BUILD1, .BUILD2)
+    # so that the beta marker in tags like FIREFOX_149_0b10_BUILD1 is visible
+    # at the end of the string where the regex can find it.
+    # b\d+ (not just b\d) covers double-digit betas like b10.
+    normalised_for_pre = re.sub(r'[._]BUILD\d+.*$', '', normalised, flags=re.IGNORECASE)
+    is_prerelease = bool(re.search(
+        r'[._-]?(alpha|beta|rc|dev|pre|a\d+|b\d+)[._\-\d]*$',
+        normalised_for_pre, re.IGNORECASE,
+    ))
     # Extract leading numeric components only
     nums = re.match(r'^(\d+(?:\.\d+)*)', normalised)
     if not nums:
@@ -2139,6 +2148,9 @@ def _normalise_version(version):
         ``v1.2.3``         →  ``1.2.3``
     * Converts underscore-separated digit sequences to dot-separated, e.g.:
         ``1_4_3``  →  ``1.4.3``
+    * Strips trailing build-artifact suffixes, e.g.:
+        ``149_0b10_BUILD1``  →  ``149.0b10``
+        ``149_0_BUILD1``     →  ``149.0``
     """
     import re as _re
     if not version:
@@ -2152,6 +2164,13 @@ def _normalise_version(version):
     # Replace _ between digits with . (use look-around so all separators in a
     # sequence like 1_4_3 are replaced in a single pass).
     version = _re.sub(r'(?<=\d)_(?=\d)', '.', version)
+    # Strip trailing build-artifact suffixes: _BUILD1, .BUILD2, _BUILD1_SOMETHING etc.
+    # These are release-engineering markers (common in Mozilla tags) and are not
+    # part of the human-readable version number.
+    version = _re.sub(r'[._]BUILD\d+.*$', '', version, flags=_re.IGNORECASE)
+    # Strip any remaining trailing word-only suffix (no digits), e.g. _RELEASE,
+    # .RELEASE, _STABLE, .FINAL — these are tag decorations, not version parts.
+    version = _re.sub(r'[._][a-zA-Z]+$', '', version)
     return version
 
 
