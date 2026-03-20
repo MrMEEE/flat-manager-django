@@ -150,29 +150,7 @@
             </div>
             <div class="card-body">
                 <div id="build-logs" style="background: #1e1e1e; color: #d4d4d4; padding: 1rem; border-radius: 4px; max-height: 500px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 0.875rem;">
-                    {% if logs %}
-                        {% for log in logs %}
-                        <div class="log-entry">
-                            <span style="color: #858585;">{{ log.timestamp|date:"H:i:s" }}</span>
-                            {% if log.level == 'error' %}
-                            <span style="color: #f48771;">[{{ log.level|upper }}]</span>
-                            {% elif log.level == 'warning' %}
-                            <span style="color: #dcdcaa;">[{{ log.level|upper }}]</span>
-                            {% elif log.level == 'info' %}
-                            <span style="color: #4ec9b0;">[{{ log.level|upper }}]</span>
-                            {% else %}
-                            <span style="color: #d4d4d4;">[{{ log.level|upper }}]</span>
-                            {% endif %}
-                            <span style="color: #d4d4d4;">{{ log.message }}</span>
-                        </div>
-                        {% endfor %}
-                    {% else %}
-                        {% if build.status in 'building,committing,publishing' %}
-                        <div style="color: #858585;">Waiting for logs...</div>
-                        {% else %}
-                        <div style="color: #858585;">No logs available.</div>
-                        {% endif %}
-                    {% endif %}
+                    <div id="logs-placeholder" style="color: #858585;">Loading logs…</div>
                 </div>
             </div>
         </div>
@@ -231,15 +209,14 @@
     const buildId = {{ build.id }};
     const packageId = {{ build.package.pk }};
     let buildStatus = '{{ build.status }}';
-    let lastLogCount = {{ logs|length|default:0 }};
+    let lastLogCount = 0;
     
     const logsDiv = document.getElementById('build-logs');
-    
+
     // Auto-scroll to bottom
     function scrollLogsToBottom() {
         if (logsDiv) logsDiv.scrollTop = logsDiv.scrollHeight;
     }
-    scrollLogsToBottom();
 
     // --- Confirmation modal ---
     function showConfirm(title, message, okLabel, okClass, callback) {
@@ -412,6 +389,25 @@
             const data = await response.json();
             const newLogs = data.logs || [];
             
+            // Remove the loading placeholder once we have a response
+            const placeholder = document.getElementById('logs-placeholder');
+            if (placeholder) placeholder.remove();
+
+            if (newLogs.length === 0 && lastLogCount === 0) {
+                // No logs at all — show appropriate message
+                if (!document.getElementById('logs-empty')) {
+                    const empty = document.createElement('div');
+                    empty.id = 'logs-empty';
+                    empty.style.color = '#858585';
+                    empty.textContent = activeStatuses.includes(buildStatus) ? 'Waiting for logs…' : 'No logs available.';
+                    logsDiv.appendChild(empty);
+                }
+            } else {
+                // Remove empty message if logs arrived
+                const emptyMsg = document.getElementById('logs-empty');
+                if (emptyMsg) emptyMsg.remove();
+            }
+
             if (newLogs.length > lastLogCount) {
                 for (let i = lastLogCount; i < newLogs.length; i++) {
                     const log = newLogs[i];
@@ -460,7 +456,7 @@
         }
     }
     
-    // Poll for logs if build is active
+    // Poll for logs if build is active; fetch once for completed builds
     const activeStatuses = ['building', 'committing', 'publishing'];
 
     function startPolling() {
@@ -472,6 +468,9 @@
 
     if (activeStatuses.includes(buildStatus)) {
         startPolling();
+    } else {
+        // Completed build — fetch logs once for consistent rendering
+        updateLogs();
     }
 
     // ========== Promotions ==========
