@@ -204,7 +204,9 @@
                     
                     {% if package.error_message %}
                     <dt class="col-sm-3">Error:</dt>
-                    <dd class="col-sm-9"><code class="text-danger">{{ package.error_message }}</code></dd>
+                    <dd class="col-sm-9">
+                        <code class="text-danger d-block text-truncate" title="{{ package.error_message }}">{{ package.error_message }}</code>
+                    </dd>
                     {% endif %}
                 </dl>
             </div>
