@@ -201,10 +201,10 @@ CORS_ALLOWED_ORIGINS = os.environ.get(
 FLATPAK_REPO_PATH = os.environ.get('REPOS_BASE_PATH', str(BASE_DIR / 'repos'))
 FLATPAK_BUILD_PATH = os.environ.get('FLATPAK_BUILD_PATH', str(BASE_DIR / 'builds'))
 
-# BuildStream venv paths — set to the venv root (e.g. /opt/bst2-venv).
-# The bst binary is resolved as <venv>/bin/bst.  Leave empty to use system PATH.
-BST1_VENV_PATH = os.environ.get('BST1_VENV_PATH', '')
-BST2_VENV_PATH = os.environ.get('BST2_VENV_PATH', '')
+# BuildStream 1 venv path (BST 1 and BST 2 have incompatible project.conf formats).
+# Set to the root of a virtualenv that has BuildStream 1 installed.
+# BST 2 is assumed to be available as 'bst' in the primary virtualenv.
+BST1_VENV_PATH = '/opt/flat-manager/bst1-venv'
 
 # Logging Configuration
 _LOG_DIR = os.environ.get('LOG_DIR', str(BASE_DIR / 'logs'))

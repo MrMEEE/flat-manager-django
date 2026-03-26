@@ -18,10 +18,15 @@
 %global pypkg_prefix python3
 %endif
 
+# ── BuildStream 1 always needs Python ≤ 3.11 ─────────────────────────────────
+# BuildStream 1.x uses versioneer which calls configparser.SafeConfigParser,
+# removed in Python 3.12.  Force python3.11 for the BST1 venv on all targets.
+%global bst1pybin    python3.11
+
 # ── Exclude the bundled venv from RPM's shebang-mangling check ────────────────
 # The venv contains upstream pip packages with shebangs we cannot control
 # (e.g. #!/usr/bin/env python in Django's project template).
-%global __brp_mangle_shebangs_exclude_from ^%{install_dir}/venv/
+%global __brp_mangle_shebangs_exclude_from ^%{install_dir}/venv/|^%{install_dir}/bst1-venv/
 
 # ── Suppress debuginfo generation ────────────────────────────────────────────
 # Pre-built pip wheels (Pillow, mysqlclient, hiredis, …) are stripped upstream
@@ -38,8 +43,8 @@
 # not exist in any distro package — causing dnf to refuse installation.
 # Excluding the entire venv from both Requires and Provides scanning is the
 # standard approach for bundled/private dependency trees.
-%global __requires_exclude_from ^%{install_dir}/venv/
-%global __provides_exclude_from ^%{install_dir}/venv/
+%global __requires_exclude_from ^%{install_dir}/venv/|^%{install_dir}/bst1-venv/
+%global __provides_exclude_from ^%{install_dir}/venv/|^%{install_dir}/bst1-venv/
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Main package  (noarch — pure Python + config files)
@@ -110,6 +115,8 @@ BuildRequires:  %{pypkg_prefix}-pip
 BuildRequires:  %{pypkg_prefix}-devel
 BuildRequires:  gcc
 BuildRequires:  mariadb-connector-c-devel
+# BST1 venv requires Python 3.11 (BST1 is incompatible with Python 3.12+)
+BuildRequires:  python3.11
 
 Requires:       %{pypkg_prefix}
 
@@ -157,6 +164,16 @@ Configuration: /etc/flat-manager-django-client/config
 %{_builddir}/fmvenv/bin/pip install --upgrade pip --quiet
 %{_builddir}/fmvenv/bin/pip install -r requirements.txt --quiet
 
+# ── Build separate virtualenv for BuildStream 1 ───────────────────────────────
+# BST 1 and BST 2 use incompatible project.conf formats; each needs its own
+# isolated venv.  BST 1.x requires Python ≤ 3.11 — configparser.SafeConfigParser
+# was removed in 3.12.  Always use python3.11 here regardless of the main pybin.
+# Pin to the 1.6.x stable series; 1.9x.dev builds are actually early BST 2.
+%{bst1pybin} -m venv %{_builddir}/bst1venv
+%{_builddir}/bst1venv/bin/python -m ensurepip --upgrade 2>/dev/null || true
+%{_builddir}/bst1venv/bin/pip install --upgrade pip --quiet
+%{_builddir}/bst1venv/bin/pip install 'BuildStream>=1.0,<1.7' --quiet
+
 # ── Collect static files (needs venv + Django importable) ────────────────────
 mkdir -p %{_builddir}/tmp-static \
          %{_builddir}/tmp-repos \
@@ -203,6 +220,15 @@ find %{buildroot}%{install_dir}/venv \
     -exec grep -IlF '%{_builddir}/fmvenv' {} \; \
   | xargs --no-run-if-empty \
     sed -i "s|%{_builddir}/fmvenv|%{install_dir}/venv|g"
+
+# ── BST 1 virtualenv ──────────────────────────────────────────────────────────
+cp -a %{_builddir}/bst1venv %{buildroot}%{install_dir}/bst1-venv
+
+find %{buildroot}%{install_dir}/bst1-venv \
+    \( -type f -o -type l \) \
+    -exec grep -IlF '%{_builddir}/bst1venv' {} \; \
+  | xargs --no-run-if-empty \
+    sed -i "s|%{_builddir}/bst1venv|%{install_dir}/bst1-venv|g"
 
 # ── Collected static files ────────────────────────────────────────────────────
 install -d -m 0755 %{buildroot}%{data_dir}/staticfiles
@@ -472,6 +498,7 @@ fi
 # /opt/flat-manager is already owned by the main package (which this one
 # requires), so we must NOT declare it again here — that would be "listed twice".
 %{install_dir}/venv/
+%{install_dir}/bst1-venv/
 
 # ─────────────────────────────────────────────────────────────────────────────
 %post           client

@@ -146,13 +146,50 @@
         </div>
     </div>
 
+    <!-- BuildStream 1 -->
+    <div class="col-lg-6 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-layers"></i> BuildStream 1</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-3">
+                    BST 1 and BST 2 use incompatible <code>project.conf</code> formats.
+                    BST 2 is available as <code>bst</code> in the primary virtualenv.
+                    BST 1 requires Python&nbsp;≤&nbsp;3.11 — use the helper script to create its venv:
+                </p>
+                <pre class="bg-light border rounded p-2 small mb-3"># local dev (any path)
+./setup-bst1-venv.sh ./venv-bst1
+
+# system-wide (RPM default)
+sudo ./setup-bst1-venv.sh /opt/flat-manager/bst1-venv</pre>
+                <p class="text-muted small mb-3">
+                    On Ubuntu the script installs <code>python3.11</code> via <code>apt</code> automatically
+                    if needed (available in universe on 22.04 / 24.04 without a PPA).
+                </p>
+                <div class="mb-3">
+                    <label for="{{ form.bst1_venv_path.id_for_label }}" class="form-label fw-semibold">
+                        {{ form.bst1_venv_path.label }}
+                    </label>
+                    {{ form.bst1_venv_path }}
+                    {% if form.bst1_venv_path.help_text %}
+                    <div class="form-text">{{ form.bst1_venv_path.help_text }}</div>
+                    {% endif %}
+                    {% if form.bst1_venv_path.errors %}
+                    <div class="invalid-feedback d-block">
+                        {% for error in form.bst1_venv_path.errors %}{{ error }}{% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Flatpak Remote -->
     <div class="col-lg-6 mb-4">
         <div class="card">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <h5 class="mb-0"><i class="bi bi-box-arrow-in-down"></i> Flatpak Remotes</h5>
-            </div>
-            <div class="card-body p-0">
                 {% if remotes %}
                 <table class="table table-sm table-hover mb-0">
                     <thead class="table-light">

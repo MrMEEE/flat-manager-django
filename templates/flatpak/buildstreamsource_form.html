@@ -97,9 +97,9 @@
                         <div class="text-danger">{{ form.bst_version.errors }}</div>
                         {% endif %}
                         <div class="form-text">
-                            BST 1 and BST 2 use incompatible <code>project.conf</code> formats. Set
-                            <code>BST1_VENV_PATH</code> / <code>BST2_VENV_PATH</code> in the environment
-                            to point each version at its own virtualenv.
+                            BST 1 and BST 2 use incompatible <code>project.conf</code> formats.
+                            BST 2 is the default and runs from the primary virtualenv.
+                            BST 1 uses the path configured in <code>settings.py</code> (<code>BST1_VENV_PATH</code>).
                         </div>
                     </div>
 

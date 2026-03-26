@@ -516,18 +516,61 @@ def package_from_git_task(self, package_id):
         
         send_build_status_update(package_id, 'building', 'Running flatpak-builder')
         
-        # Find manifest file (common names)
+        # Find manifest file — try exact names first, then fall back to scanning
+        # the source directory for any file that looks like a flatpak manifest.
         manifest_file = None
-        for name in [f'{package.package_id}.yml', f'{package.package_id}.yaml', f'{package.package_id}.json', 
-                     'flatpak.yml', 'flatpak.yaml', 'flatpak.json']:
+        for name in [
+            f'{package.package_id}.yml', f'{package.package_id}.yaml', f'{package.package_id}.json',
+            f'{package.package_id}.metainfo.xml',
+            'flatpak.yml', 'flatpak.yaml', 'flatpak.json',
+        ]:
             candidate = os.path.join(source_dir, name)
             if os.path.exists(candidate):
                 manifest_file = candidate
                 break
-        
+
+        # Fallback: scan root (and one level deep) for any .json/.yml/.yaml/.metainfo.xml
+        # that contains a flatpak app-id field, preferring files whose name matches the
+        # package ID prefix (e.g. org.kde.*).
         if not manifest_file:
+            MANIFEST_EXTS = ('.json', '.yml', '.yaml', '.metainfo.xml')
+            candidates = []
+            for entry in os.scandir(source_dir):
+                if entry.is_file() and entry.name.endswith(MANIFEST_EXTS):
+                    candidates.append(entry.path)
+                elif entry.is_dir(follow_symlinks=False):
+                    try:
+                        for sub in os.scandir(entry.path):
+                            if sub.is_file() and sub.name.endswith(MANIFEST_EXTS):
+                                candidates.append(sub.path)
+                    except PermissionError:
+                        pass
+            # Score: higher = better match.  Prefer name containing package_id prefix.
+            app_prefix = package.package_id.split('.')[0] + '.' + package.package_id.split('.')[1]
+            def _score(p):
+                n = os.path.basename(p)
+                if package.package_id in n:
+                    return 3
+                if app_prefix in n:
+                    return 2
+                if n in ('flatpak.json', 'flatpak.yml', 'flatpak.yaml'):
+                    return 1
+                return 0
+            for path in sorted(candidates, key=_score, reverse=True):
+                manifest_file = path
+                log_build(build, 'warning',
+                    f"Manifest not found by expected name — using detected file: {os.path.relpath(path, source_dir)}")
+                break
+
+        if not manifest_file:
+            # Log directory listing to help diagnose future cases
+            try:
+                top_files = [e.name for e in os.scandir(source_dir) if e.is_file()]
+            except Exception:
+                top_files = []
             raise FileNotFoundError(
-                f"No manifest file found. Looking for {package.package_id}.yml, flatpak.yml, etc."
+                f"No manifest file found for {package.package_id}. "
+                f"Files in repo root: {top_files}"
             )
         
         log_build(build, 'info', f"Using manifest: {os.path.basename(manifest_file)}")
@@ -669,18 +712,22 @@ def package_from_git_task(self, package_id):
 def _get_bst_binary(bst_version):
     """Return the path to the bst executable for the given BST major version.
 
-    Resolution order:
-      1. If BST1_VENV_PATH / BST2_VENV_PATH is set in Django settings, use
-         <venv>/bin/bst.
-      2. Otherwise fall back to bare ``bst`` (resolved via PATH).
+    - BST 2: uses bare ``bst`` (the primary virtualenv).
+    - BST 1: reads ``bst1_venv_path`` from SiteConfig (UI-configurable),
+      falling back to ``BST1_VENV_PATH`` in settings.py.
     """
-    from django.conf import settings
     if bst_version == 'bst1':
-        venv = getattr(settings, 'BST1_VENV_PATH', '').strip()
-    else:
-        venv = getattr(settings, 'BST2_VENV_PATH', '').strip()
-    if venv:
-        return os.path.join(venv, 'bin', 'bst')
+        venv = ''
+        try:
+            from apps.flatpak.models import SiteConfig
+            venv = (SiteConfig.get_solo().bst1_venv_path or '').strip()
+        except Exception:
+            pass
+        if not venv:
+            from django.conf import settings
+            venv = getattr(settings, 'BST1_VENV_PATH', '').strip()
+        if venv:
+            return os.path.join(venv, 'bin', 'bst')
     return 'bst'
 
 
@@ -2609,6 +2656,7 @@ def _fetch_available_version(package):
         for name in [
             f'{package.package_id}.yml', f'{package.package_id}.yaml',
             f'{package.package_id}.json',
+            f'{package.package_id}.metainfo.xml',
             'flatpak.yml', 'flatpak.yaml', 'flatpak.json',
         ]:
             candidate = os.path.join(source_dir, name)

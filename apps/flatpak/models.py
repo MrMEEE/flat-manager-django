@@ -436,6 +436,17 @@ class SiteConfig(models.Model):
         default=24,
         help_text="Hours without a client check-in before the client is shown as stale/red."
     )
+    bst1_venv_path = models.CharField(
+        max_length=500,
+        blank=True,
+        default='/opt/flat-manager/bst1-venv',
+        help_text=(
+            "Path to the virtualenv root that has BuildStream 1 installed "
+            "(e.g. /opt/flat-manager/bst1-venv). "
+            "Must be created with Python 3.11 or earlier — BST 1 is incompatible with Python 3.12+. "
+            "Leave empty to fall back to the value in settings.py."
+        ),
+    )
     class Meta:
         verbose_name = 'Site Configuration'
 

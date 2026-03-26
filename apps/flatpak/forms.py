@@ -105,6 +105,7 @@ class SiteConfigForm(forms.ModelForm):
             'stale_build_check_interval_seconds',
             'stale_build_timeout_minutes',
             'client_stale_hours',
+            'bst1_venv_path',
         ]
         widgets = {
             'failed_builds_to_keep': forms.NumberInput(
@@ -127,6 +128,9 @@ class SiteConfigForm(forms.ModelForm):
             ),
             'client_stale_hours': forms.NumberInput(
                 attrs={'class': 'form-control', 'min': '1', 'style': 'width: 130px;'}
+            ),
+            'bst1_venv_path': forms.TextInput(
+                attrs={'class': 'form-control', 'placeholder': '/opt/flat-manager/bst1-venv'}
             ),
         }
         help_texts = {
