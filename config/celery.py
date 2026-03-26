@@ -61,34 +61,49 @@ IN_PROGRESS_STATUSES = ['building', 'committing', 'committed', 'publishing']
 
 
 def _fail_stuck_packages(reason: str) -> None:
-    """Mark packages stuck in an in-progress state as failed.
+    """Mark packages/BST sources stuck in an in-progress state as failed.
     Called on worker startup (handles previous crash) and graceful shutdown.
     """
     try:
         import django
         django.setup()  # no-op if already set up
         from django.utils import timezone
-        from apps.flatpak.models import Package, Build
+        from apps.flatpak.models import Package, Build, BuildStreamSource
 
+        now = timezone.now()
+
+        # --- Flatpak packages ---
         stuck_ids = list(
             Package.objects.filter(status__in=IN_PROGRESS_STATUSES)
             .values_list('pk', flat=True)
         )
-        if not stuck_ids:
-            return
+        if stuck_ids:
+            Build.objects.filter(
+                package_id__in=stuck_ids,
+                status__in=IN_PROGRESS_STATUSES + ['built'],
+            ).update(status='failed', error_message=reason, completed_at=now)
+            Package.objects.filter(pk__in=stuck_ids).update(
+                status='failed',
+                error_message=reason,
+            )
+            print(f'[flat-manager] Marked {len(stuck_ids)} stuck package(s) as failed: {reason}')
 
-        now = timezone.now()
-        # Fail the associated in-progress / built builds first
-        Build.objects.filter(
-            package_id__in=stuck_ids,
-            status__in=IN_PROGRESS_STATUSES + ['built'],
-        ).update(status='failed', error_message=reason, completed_at=now)
-
-        Package.objects.filter(pk__in=stuck_ids).update(
-            status='failed',
-            error_message=reason,
+        # --- BuildStream sources ---
+        stuck_bst_ids = list(
+            BuildStreamSource.objects.filter(status__in=IN_PROGRESS_STATUSES)
+            .values_list('pk', flat=True)
         )
-        print(f'[flat-manager] Marked {len(stuck_ids)} stuck package(s) as failed: {reason}')
+        if stuck_bst_ids:
+            Build.objects.filter(
+                bst_source_id__in=stuck_bst_ids,
+                status__in=IN_PROGRESS_STATUSES + ['built'],
+            ).update(status='failed', error_message=reason, completed_at=now)
+            BuildStreamSource.objects.filter(pk__in=stuck_bst_ids).update(
+                status='failed',
+                error_message=reason,
+            )
+            print(f'[flat-manager] Marked {len(stuck_bst_ids)} stuck BST source(s) as failed: {reason}')
+
     except Exception as exc:  # pragma: no cover
         print(f'[flat-manager] Warning: could not reset stuck packages: {exc}')
 

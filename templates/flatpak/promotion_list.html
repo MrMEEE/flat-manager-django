@@ -227,7 +227,92 @@
     </div>
 </div>
 
+{% if ready_to_promote_bst or bst_promotions %}
+<!-- ═══ Ready to Promote (BuildStream) ══════════════════════════════════════ -->
+{% if ready_to_promote_bst %}
+<div class="card mb-4 border-info">
+    <div class="card-header bg-info bg-opacity-10">
+        <h5 class="mb-0"><i class="bi bi-layers text-info"></i> BST Builds Ready to Promote
+            <span class="badge bg-info ms-2">{{ ready_to_promote_bst|length }}</span>
+        </h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr><th>Source</th><th>Version</th><th>Source Repo</th><th>Build</th><th>Actions</th></tr>
+                </thead>
+                <tbody>
+                    {% for item in ready_to_promote_bst %}
+                    <tr>
+                        <td><a href="{% url 'flatpak:bst_source_detail' item.build.bst_source.pk %}">{{ item.build.bst_source.name }}</a></td>
+                        <td>{{ item.build.version|default:"—" }}</td>
+                        <td>{{ item.build.bst_source.repository.name }}</td>
+                        <td><a href="{% url 'flatpak:build_detail' item.build.pk %}">#{{ item.build.build_number }}</a></td>
+                        <td>
+                            {% for repo in item.targets %}
+                            <button class="btn btn-sm btn-info me-1"
+                                    onclick="bstPromoteFromList({{ item.build.pk }}, {{ repo.pk }}, '{{ repo.name|escapejs }}', '{{ item.build.bst_source.name|escapejs }}')">
+                                <i class="bi bi-arrow-up-right"></i> → {{ repo.name }}
+                            </button>
+                            {% endfor %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- ═══ BST Promotions History ═══════════════════════════════════════════════ -->
+{% if bst_promotions %}
 <div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-layers"></i> BST Promotions</h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr><th>Source</th><th>Build</th><th>Target Repo</th><th>Status</th><th>By</th><th>Completed</th><th>Actions</th></tr>
+                </thead>
+                <tbody>
+                    {% for promo in bst_promotions %}
+                    <tr>
+                        <td><a href="{% url 'flatpak:bst_source_detail' promo.bst_source.pk %}">{{ promo.bst_source.name }}</a></td>
+                        <td><a href="{% url 'flatpak:build_detail' promo.build.pk %}">#{{ promo.build.build_number }}</a></td>
+                        <td>{{ promo.target_repo.name }}</td>
+                        <td>
+                            {% if promo.status == 'promoted' %}<span class="badge bg-success">Promoted</span>
+                            {% elif promo.status == 'promoting' %}<span class="badge bg-primary">Promoting…</span>
+                            {% elif promo.status == 'pending' %}<span class="badge bg-secondary">Pending</span>
+                            {% elif promo.status == 'failed' %}<span class="badge bg-danger" title="{{ promo.error_message }}">Failed</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ promo.promoted_by.username|default:"—" }}</td>
+                        <td>{{ promo.completed_at|date:"M d, H:i"|default:"—" }}</td>
+                        <td class="d-flex gap-1">
+                            {% if promo.status == 'failed' %}
+                            <button class="btn btn-sm btn-outline-warning" onclick="bstPromoRetry({{ promo.pk }})">
+                                <i class="bi bi-arrow-clockwise"></i>
+                            </button>
+                            {% endif %}
+                            <button class="btn btn-sm btn-outline-danger"
+                                    onclick="bstPromoDelete({{ promo.pk }}, '{{ promo.target_repo.name|escapejs }}')">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endif %}
     <div class="card-header">
         <h5 class="mb-0"><i class="bi bi-cloud-upload"></i> Published to Build Repository</h5>
     </div>
@@ -916,6 +1001,54 @@ function confirmDeletePromotion(promotionPk, pkgName, repoName) {
                 const d = await r.json();
                 if (r.ok) { location.reload(); }
                 else { showErrorModal('Delete Failed', d.error || r.statusText); }
+            } catch (e) { showErrorModal('Delete Error', e.message); }
+        }
+    );
+}
+
+async function bstPromoteFromList(buildPk, repoPk, repoName, sourceName) {
+    showDeleteConfirm(
+        'Promote BST Build',
+        `<p>Promote <strong>${sourceName}</strong> to <strong>${repoName}</strong>?</p>`,
+        'Promote',
+        async () => {
+            try {
+                const r = await fetch(`/builds/${buildPk}/bst-promote/`, {
+                    method: 'POST',
+                    headers: { 'X-CSRFToken': _csrf, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ target_repo_id: repoPk }),
+                    credentials: 'same-origin',
+                });
+                const d = await r.json().catch(() => ({}));
+                if (r.ok) { location.reload(); }
+                else { showErrorModal('Promote Failed', d.error || r.statusText); }
+            } catch (e) { showErrorModal('Promote Error', e.message); }
+        }
+    );
+}
+
+async function bstPromoRetry(promoPk) {
+    try {
+        const r = await fetch(`/bst-promotions/${promoPk}/retry/`, {
+            method: 'POST', headers: { 'X-CSRFToken': _csrf }, credentials: 'same-origin',
+        });
+        if (r.ok) { location.reload(); }
+        else { const d = await r.json().catch(() => ({})); showErrorModal('Retry Failed', d.error || r.statusText); }
+    } catch (e) { showErrorModal('Retry Error', e.message); }
+}
+
+async function bstPromoDelete(promoPk, repoName) {
+    showDeleteConfirm(
+        'Delete BST Promotion',
+        `<p>Remove the promotion to <strong>${repoName}</strong>?</p>`,
+        'Delete',
+        async () => {
+            try {
+                const r = await fetch(`/bst-promotions/${promoPk}/delete/`, {
+                    method: 'POST', headers: { 'X-CSRFToken': _csrf }, credentials: 'same-origin',
+                });
+                if (r.ok) { location.reload(); }
+                else { const d = await r.json().catch(() => ({})); showErrorModal('Delete Failed', d.error || r.statusText); }
             } catch (e) { showErrorModal('Delete Error', e.message); }
         }
     );

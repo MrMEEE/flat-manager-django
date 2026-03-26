@@ -169,21 +169,25 @@ function showFlatpakList(hostname, kind, clientPk) {
 
     let headerHTML, rowFn;
     if (kind === 'outdated') {
-        headerHTML = '<th>App ID</th><th>Current version</th><th>New version</th><th>Remote</th>';
+        headerHTML = '<th>App ID</th><th>Name</th><th>Branch</th><th>Current version</th><th>New version</th><th>Remote</th>';
         rowFn = item =>
-            `<tr><td>${esc(item.app_id)}</td><td>${esc(item.current_version||'')}</td>` +
+            `<tr><td>${esc(item.app_id)}</td><td>${esc(item.name||'')}</td>` +
+            `<td><code>${esc(item.branch||'')}</code></td>` +
+            `<td>${esc(item.current_version||'')}</td>` +
             `<td>${esc(item.new_version||'')}</td><td>${esc(item.origin||'')}</td></tr>`;
     } else {
-        headerHTML = '<th>App ID</th><th>Version</th><th>Remote</th>';
+        headerHTML = '<th>App ID</th><th>Name</th><th>Branch</th><th>Version</th><th>Remote</th>';
         rowFn = item =>
-            `<tr><td>${esc(item.app_id)}</td><td>${esc(item.version||'')}</td>` +
+            `<tr><td>${esc(item.app_id)}</td><td>${esc(item.name||'')}</td>` +
+            `<td><code>${esc(item.branch||'')}</code></td>` +
+            `<td>${esc(item.version||'')}</td>` +
             `<td>${esc(item.origin||'')}</td></tr>`;
     }
 
     header.innerHTML = headerHTML;
     body.innerHTML = items.length
         ? items.map(rowFn).join('')
-        : '<tr><td colspan="4" class="text-center text-muted">No entries</td></tr>';
+        : '<tr><td colspan="6" class="text-center text-muted">No entries</td></tr>';
 
     new bootstrap.Modal(document.getElementById('flatpakModal')).show();
 }

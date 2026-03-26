@@ -1,28 +1,19 @@
 #!/usr/bin/env python3
-"""
-flat-manager-checkin
-====================
-Check-in agent for flat-manager-django.
+''':'
+exec python3 "$0" "$@"
+'''
+# flat-manager-checkin — check-in agent for flat-manager-django
+#
+# Collects system-wide and per-user flatpak state and reports it to the
+# flat-manager server so the Clients dashboard can track managed machines.
+#
+# Per-user collection requires root (uses runuser).  If run as a non-root
+# user, only system-wide data is collected and a warning is printed.
+#
+# Config: /etc/flat-manager-django-client/config
+# Usage:  flat-manager-checkin [--server URL] [--hostname NAME]
 
-Collects local flatpak state (system-wide and per-user) and reports it to the
-flat-manager server so the "Clients" dashboard can track which machines are
-consuming the managed repositories and whether any have outdated or foreign
-flatpaks.
-
-Per-user data collection requires the script to run as root (so it can use
-runuser to query each user's flatpak installation).  If run as a non-root user,
-only system-wide data is collected and a warning is printed.
-
-Configuration: /etc/flat-manager-django-client/config  (INI format)
-
-  [server]
-  url = https://flat-manager.example.com
-
-  [client]
-  # Override the reported hostname (default: socket.gethostname())
-  # hostname = my-custom-name
-"""
-
+import argparse
 import configparser
 import json
 import os
@@ -43,14 +34,13 @@ def read_config():
     return cfg
 
 
-def run(cmd, env=None):
+def run(cmd):
     """Run a command, return stdout as a string (stderr suppressed)."""
     result = subprocess.run(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         text=True,
-        env=env,
     )
     return result.stdout.strip()
 
@@ -78,7 +68,7 @@ def get_remotes():
 
 
 def parse_installed(output):
-    """Parse tab-separated flatpak list output into [{app_id, version, origin}]."""
+    """Parse tab-separated flatpak list output into [{app_id, version, origin, name, branch}]."""
     result = []
     for line in output.splitlines():
         parts = line.split('\t')
@@ -87,12 +77,14 @@ def parse_installed(output):
                 'app_id':  parts[0].strip(),
                 'version': parts[1].strip(),
                 'origin':  parts[2].strip(),
+                'name':    parts[3].strip() if len(parts) > 3 else '',
+                'branch':  parts[4].strip() if len(parts) > 4 else '',
             })
     return result
 
 
 def parse_updates(output):
-    """Parse tab-separated flatpak remote-ls --updates output into [{app_id, new_version, origin}]."""
+    """Parse flatpak remote-ls --updates output into [{app_id, new_version, origin, name, branch}]."""
     result = []
     for line in output.splitlines():
         parts = line.split('\t')
@@ -101,18 +93,20 @@ def parse_updates(output):
                 'app_id':      parts[0].strip(),
                 'new_version': parts[1].strip(),
                 'origin':      parts[2].strip(),
+                'name':        parts[3].strip() if len(parts) > 3 else '',
+                'branch':      parts[4].strip() if len(parts) > 4 else '',
             })
     return result
 
 
 def get_system_installed():
-    out = run(['flatpak', 'list', '--system', '--columns=application,version,origin'])
+    out = run(['flatpak', 'list', '--system', '--columns=application,version,origin,name,branch'])
     return parse_installed(out)
 
 
 def get_system_updates():
     out = run(['flatpak', 'remote-ls', '--system', '--updates',
-               '--columns=application,version,origin'])
+               '--columns=application,version,origin,name,branch'])
     return parse_updates(out)
 
 
@@ -127,9 +121,9 @@ def get_local_users():
 
 def collect_user_flatpaks():
     """
-    Collect per-user flatpak data.  Requires root (runuser).
-    Returns list of {username, installed, updates_available}
-    — only for users who have at least one flatpak installed or an update pending.
+    Collect per-user flatpak data (requires root).
+    Returns list of {username, installed, updates_available} for users
+    that have at least one flatpak installed or an update pending.
     """
     if os.geteuid() != 0:
         print('WARNING: not running as root — per-user flatpak data will not be collected.',
@@ -137,19 +131,19 @@ def collect_user_flatpaks():
         return []
 
     result = []
-    for username, home in get_local_users():
+    for username, _ in get_local_users():
         installed = parse_installed(
             run_as_user(username, ['flatpak', 'list', '--user',
-                                   '--columns=application,version,origin'])
+                                   '--columns=application,version,origin,name,branch'])
         )
         updates = parse_updates(
             run_as_user(username, ['flatpak', 'remote-ls', '--user', '--updates',
-                                   '--columns=application,version,origin'])
+                                   '--columns=application,version,origin,name,branch'])
         )
         if installed or updates:
             result.append({
-                'username':         username,
-                'installed':        installed,
+                'username':          username,
+                'installed':         installed,
                 'updates_available': updates,
             })
     return result
@@ -165,13 +159,13 @@ def checkin(server_url, hostname, remotes, managed_remotes, installed, updates,
             user_flatpaks):
     """POST the check-in payload to the server."""
     payload = {
-        'hostname':         hostname,
-        'server_url':       server_url,
-        'remotes':          remotes,
-        'managed_remotes':  managed_remotes,
-        'installed':        installed,
+        'hostname':          hostname,
+        'server_url':        server_url,
+        'remotes':           remotes,
+        'managed_remotes':   managed_remotes,
+        'installed':         installed,
         'updates_available': updates,
-        'user_flatpaks':    user_flatpaks,
+        'user_flatpaks':     user_flatpaks,
     }
     data = json.dumps(payload).encode('utf-8')
     url = server_url.rstrip('/') + '/api/client-checkin/'
@@ -193,150 +187,50 @@ def checkin(server_url, hostname, remotes, managed_remotes, installed, updates,
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        prog='flat-manager-checkin',
+        description='Check-in agent for flat-manager-django.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            'Config file: /etc/flat-manager-django-client/config\n\n'
+            '  [server]\n'
+            '  url = https://flat-manager.example.com\n\n'
+            '  [client]\n'
+            '  # hostname = my-custom-name\n'
+        ),
+    )
+    parser.add_argument(
+        '--server', '-s', metavar='URL',
+        help='flat-manager server URL (overrides config file)',
+    )
+    parser.add_argument(
+        '--hostname', metavar='NAME',
+        help='hostname to report (overrides config file and system hostname)',
+    )
+    args = parser.parse_args()
+
     cfg = read_config()
 
-    server_url = cfg.get('server', 'url', fallback='').strip()
+    server_url = (args.server or cfg.get('server', 'url', fallback='')).strip()
     if not server_url:
-        print(f'ERROR: No [server] url configured in {CONFIG_PATH}', file=sys.stderr)
-        sys.exit(1)
+        parser.error(
+            f'No server URL specified. Use --server URL or set [server] url in {CONFIG_PATH}'
+        )
 
-    hostname = cfg.get('client', 'hostname', fallback='').strip() or socket.gethostname()
+    hostname = (
+        args.hostname
+        or cfg.get('client', 'hostname', fallback='').strip()
+        or socket.gethostname()
+    )
 
-    remotes          = get_remotes()
-    managed_remotes  = identify_managed_remotes(remotes, server_url)
-    installed        = get_system_installed()
-    updates          = get_system_updates()
-    user_flatpaks    = collect_user_flatpaks()
+    remotes         = get_remotes()
+    managed_remotes = identify_managed_remotes(remotes, server_url)
+    installed       = get_system_installed()
+    updates         = get_system_updates()
+    user_flatpaks   = collect_user_flatpaks()
 
     status, body = checkin(server_url, hostname, remotes, managed_remotes,
                            installed, updates, user_flatpaks)
-
-    if status == 200:
-        print(f'Check-in successful: {hostname} → {server_url}')
-    else:
-        print(f'Check-in failed (HTTP {status}): {body}', file=sys.stderr)
-        sys.exit(1)
-
-
-if __name__ == '__main__':
-    main()
-
-
-
-def read_config():
-    cfg = configparser.ConfigParser()
-    cfg.read(CONFIG_PATH)
-    return cfg
-
-
-def run(cmd):
-    """Run a command, return stdout as a string (stderr suppressed)."""
-    result = subprocess.run(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-    )
-    return result.stdout.strip()
-
-
-def get_remotes():
-    """Return list of {name, url} dicts for all configured flatpak remotes."""
-    out = run(['flatpak', 'remotes', '--columns=name,url'])
-    remotes = []
-    for line in out.splitlines():
-        parts = line.split('\t', 1)
-        if len(parts) == 2:
-            remotes.append({'name': parts[0].strip(), 'url': parts[1].strip()})
-    return remotes
-
-
-def get_installed():
-    """Return list of {app_id, version, origin} dicts for all installed flatpaks."""
-    out = run(['flatpak', 'list', '--columns=application,version,origin'])
-    installed = []
-    for line in out.splitlines():
-        parts = line.split('\t')
-        if len(parts) >= 3:
-            installed.append({
-                'app_id': parts[0].strip(),
-                'version': parts[1].strip(),
-                'origin': parts[2].strip(),
-            })
-    return installed
-
-
-def get_updates_available():
-    """Return list of {app_id, new_version, origin} dicts for available updates."""
-    out = run(['flatpak', 'remote-ls', '--updates', '--columns=application,version,origin'])
-    updates = []
-    for line in out.splitlines():
-        parts = line.split('\t')
-        if len(parts) >= 3:
-            updates.append({
-                'app_id': parts[0].strip(),
-                'new_version': parts[1].strip(),
-                'origin': parts[2].strip(),
-            })
-    return updates
-
-
-def identify_managed_remotes(remotes, server_url):
-    """Return names of remotes whose URL starts with the server URL."""
-    server_url = server_url.rstrip('/')
-    managed = []
-    for r in remotes:
-        remote_url = r['url'].rstrip('/')
-        if remote_url.startswith(server_url):
-            managed.append(r['name'])
-    return managed
-
-
-def checkin(server_url, hostname, remotes, managed_remotes, installed, updates):
-    """POST the check-in payload to the server."""
-    payload = {
-        'hostname': hostname,
-        'server_url': server_url,
-        'remotes': remotes,
-        'managed_remotes': managed_remotes,
-        'installed': installed,
-        'updates_available': updates,
-    }
-    data = json.dumps(payload).encode('utf-8')
-    url = server_url.rstrip('/') + '/api/client-checkin/'
-    req = urllib.request.Request(
-        url,
-        data=data,
-        headers={'Content-Type': 'application/json'},
-        method='POST',
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            body = resp.read().decode('utf-8', errors='replace')
-            return resp.status, body
-    except urllib.error.HTTPError as e:
-        body = e.read().decode('utf-8', errors='replace')
-        return e.code, body
-    except urllib.error.URLError as e:
-        return None, str(e.reason)
-
-
-def main():
-    cfg = read_config()
-
-    server_url = cfg.get('server', 'url', fallback='').strip()
-    if not server_url:
-        print(f'ERROR: No [server] url configured in {CONFIG_PATH}', file=sys.stderr)
-        sys.exit(1)
-
-    hostname = cfg.get('client', 'hostname', fallback='').strip() or socket.gethostname()
-
-    remotes = get_remotes()
-    managed_remotes = identify_managed_remotes(remotes, server_url)
-    installed = get_installed()
-    updates = get_updates_available()
-
-    status, body = checkin(server_url, hostname, remotes, managed_remotes, installed, updates)
 
     if status == 200:
         print(f'Check-in successful: {hostname} → {server_url}')

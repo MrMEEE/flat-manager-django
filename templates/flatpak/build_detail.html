@@ -1,12 +1,17 @@
 {% extends 'base.html' %}
 
-{% block title %}Build #{{ build.build_number }} - {{ build.package.package_name }} - Flat Manager{% endblock %}
+{% block title %}Build #{{ build.build_number }} - {% if build.package %}{{ build.package.package_name }}{% else %}{{ build.bst_source.name }}{% endif %} - Flat Manager{% endblock %}
 
 {% block content %}
 <nav aria-label="breadcrumb">
     <ol class="breadcrumb">
+        {% if build.package %}
         <li class="breadcrumb-item"><a href="{% url 'flatpak:package_list' %}">Packages</a></li>
         <li class="breadcrumb-item"><a href="{% url 'flatpak:package_detail' build.package.pk %}">{{ build.package.package_name }}</a></li>
+        {% else %}
+        <li class="breadcrumb-item"><a href="{% url 'flatpak:bst_source_list' %}">BuildStream</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'flatpak:bst_source_detail' build.bst_source.pk %}">{{ build.bst_source.name }}</a></li>
+        {% endif %}
         <li class="breadcrumb-item active">Build #{{ build.build_number }}</li>
     </ol>
 </nav>
@@ -52,9 +57,15 @@
             <i class="bi bi-x-circle"></i> Cancel Build
         </button>
         {% endif %}
+        {% if build.package %}
         <a href="{% url 'flatpak:package_detail' build.package.pk %}" class="btn btn-outline-secondary">
             <i class="bi bi-arrow-left"></i> Back to Package
         </a>
+        {% else %}
+        <a href="{% url 'flatpak:bst_source_detail' build.bst_source.pk %}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to BST Source
+        </a>
+        {% endif %}
     </div>
 </div>
 
@@ -66,12 +77,20 @@
             </div>
             <div class="card-body">
                 <dl class="row">
+                    {% if build.package %}
                     <dt class="col-sm-3">Package:</dt>
                     <dd class="col-sm-9">
                         <a href="{% url 'flatpak:package_detail' build.package.pk %}">{{ build.package.package_name }}</a>
                         <br><small class="text-muted"><code>{{ build.package.package_id }}</code></small>
                     </dd>
-                    
+                    {% else %}
+                    <dt class="col-sm-3">BST Source:</dt>
+                    <dd class="col-sm-9">
+                        <a href="{% url 'flatpak:bst_source_detail' build.bst_source.pk %}">{{ build.bst_source.name }}</a>
+                        <br><small class="text-muted"><code>{{ build.bst_source.bst_element }}</code></small>
+                    </dd>
+                    {% endif %}
+
                     <dt class="col-sm-3">Build Number:</dt>
                     <dd class="col-sm-9"><strong>#{{ build.build_number }}</strong></dd>
                     
@@ -105,9 +124,11 @@
                     
                     <dt class="col-sm-3">Repository:</dt>
                     <dd class="col-sm-9">
-                        <a href="{% url 'flatpak:repo_detail' build.package.repository.pk %}">
-                            {{ build.package.repository.name }}
-                        </a>
+                        {% if build.package %}
+                        <a href="{% url 'flatpak:repo_detail' build.package.repository.pk %}">{{ build.package.repository.name }}</a>
+                        {% else %}
+                        <a href="{% url 'flatpak:repo_detail' build.bst_source.repository.pk %}">{{ build.bst_source.repository.name }}</a>
+                        {% endif %}
                     </dd>
                     
                     {% if build.source_commit %}
@@ -209,7 +230,8 @@
 {% block extra_js %}
 <script>
     const buildId = {{ build.id }};
-    const packageId = {{ build.package.pk }};
+    const packageId = {% if build.package %}{{ build.package.pk }}{% else %}null{% endif %};
+    const bstSourceId = {% if build.bst_source %}{{ build.bst_source.pk }}{% else %}null{% endif %};
     let buildStatus = '{{ build.status }}';
     let lastLogCount = 0;
     
@@ -610,19 +632,21 @@
     }
 
     // ========== WebSocket for real-time push updates ==========
-    // The channel group is keyed on the Package PK, so use packageId here.
+    // The channel group is keyed on the Package PK (or BST source PK for BST builds).
+    const wsEntityId = packageId !== null ? packageId : bstSourceId;
     (function () {
+        if (!wsEntityId) return;  // no entity to watch
         const wsScheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        const ws = new WebSocket(`${wsScheme}://${window.location.host}/ws/builds/${packageId}/`);
+        const ws = new WebSocket(`${wsScheme}://${window.location.host}/ws/builds/${wsEntityId}/`);
 
-        ws.onopen = () => console.log('Build detail WS connected, package', packageId);
+        ws.onopen = () => console.log('Build detail WS connected, entity', wsEntityId);
 
         ws.onmessage = (e) => {
             try {
                 const data = JSON.parse(e.data);
                 if (data.type !== 'build_status_update') return;
-                // The server sends the Package PK as build_id
-                if (String(data.build_id) !== String(packageId)) return;
+                // The server sends the entity PK as build_id
+                if (String(data.build_id) !== String(wsEntityId)) return;
 
                 const newStatus = data.status;
                 if (!newStatus || newStatus === buildStatus) return;

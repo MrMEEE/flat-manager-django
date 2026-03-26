@@ -275,8 +275,8 @@ class PackageViewSet(viewsets.ModelViewSet):
         } for log in logs]
         
         return Response({
-            'build_id': package.package_id,
-            'status': package.status,
+            'build_id': build.id,
+            'status': build.status,
             'logs': log_data,
             'total_logs': len(log_data)
         })
@@ -406,7 +406,8 @@ class BuildViewSet(viewsets.ReadOnlyModelViewSet):
         
         return Response({
             'build_number': build.build_number,
-            'package_id': build.package.package_id,
+            'package_id': build.package.package_id if build.package_id else None,
+            'bst_source_id': build.bst_source_id,
             'status': build.status,
             'logs': log_data,
             'total_logs': len(log_data)

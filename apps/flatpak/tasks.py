@@ -666,6 +666,197 @@ def package_from_git_task(self, package_id):
                 logger.warning(f"Failed to cleanup temp directory {temp_dir}: {e}")
 
 
+@shared_task(bind=True)
+def buildstream_build_task(self, bst_source_id):
+    """
+    Build a BuildStream project from a git repository.
+
+    Pipeline:
+      1. Clone the git repository at the requested branch.
+      2. Run ``bst build <bst_element>`` inside the cloned project directory.
+      3. Run ``bst artifact checkout <bst_element> --directory <checkout_dir>``
+         to extract the artifact.  The checkout directory is an OSTree flatpak
+         repo that is imported via ``flatpak build-commit-from``.
+      4. Status goes to "built" (the normal publish pipeline takes it from there).
+    """
+    from apps.flatpak.models import BuildStreamSource, Build, BuildLog, SiteConfig
+
+    source = None
+    build = None
+    temp_dir = None
+
+    try:
+        source = BuildStreamSource.objects.get(id=bst_source_id)
+
+        # Create Build history record
+        build = Build.objects.create(
+            bst_source=source,
+            build_number=source.build_number,
+            status='building',
+            started_at=timezone.now(),
+            celery_task_id=self.request.id or '',
+        )
+        source.status = 'building'
+        source.save()
+
+        log_build(build, 'info', f"Starting BuildStream build for {source.name}")
+        log_build(build, 'info', f"Element: {source.bst_element}")
+        send_build_status_update(bst_source_id, 'building', 'Cloning git repository')
+
+        temp_dir = tempfile.mkdtemp(prefix=f'fmdc_bst_{source.build_number}_')
+        log_build(build, 'info', f"Created build directory: {temp_dir}")
+
+        # ── 1. Clone ────────────────────────────────────────────────────────
+        log_build(build, 'info', f"Cloning {source.git_repo_url} (branch: {source.git_branch})")
+        clone_result = subprocess.run(
+            ['git', 'clone', '--branch', source.git_branch, '--depth', '1',
+             '--recurse-submodules', source.git_repo_url, 'source'],
+            cwd=temp_dir,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        if clone_result.returncode != 0:
+            raise RuntimeError(f"Git clone failed: {clone_result.stderr}")
+
+        source_dir = os.path.join(temp_dir, 'source')
+
+        # Record the source commit
+        commit_result = subprocess.run(
+            ['git', 'rev-parse', 'HEAD'],
+            cwd=source_dir, capture_output=True, text=True,
+        )
+        if commit_result.returncode == 0:
+            source.source_commit = commit_result.stdout.strip()
+            source.save()
+            log_build(build, 'info', f"Source commit: {source.source_commit}")
+
+        # bst build
+        send_build_status_update(bst_source_id, 'building', f'Running bst build {source.bst_element}')
+        log_build(build, 'info', f"Running: bst build {source.bst_element}")
+
+        try:
+            config = SiteConfig.get_solo()
+            build_timeout = max(getattr(config, 'build_timeout', 3600), 3600)
+        except Exception:
+            build_timeout = 7200
+
+        bst_cmd = ['bst', 'build', source.bst_element]
+        bst_build_result = run_cancellable(bst_cmd, cwd=source_dir, build=build, timeout_seconds=build_timeout)
+
+        if bst_build_result.returncode != 0:
+            raise RuntimeError(
+                f"bst build failed (exit {bst_build_result.returncode}):\n"
+                f"{bst_build_result.stderr}"
+            )
+
+        log_build(build, 'info', "bst build completed successfully")
+
+        # bst artifact checkout
+        checkout_dir = os.path.join(temp_dir, 'bst-checkout')
+        os.makedirs(checkout_dir, exist_ok=True)
+
+        send_build_status_update(bst_source_id, 'building', 'Checking out BuildStream artifact')
+        log_build(build, 'info', f"Checking out artifact to {checkout_dir}")
+
+        checkout_cmd = ['bst', 'artifact', 'checkout', source.bst_element, '--directory', checkout_dir]
+        checkout_result = subprocess.run(
+            checkout_cmd, cwd=source_dir,
+            capture_output=True, text=True, timeout=600,
+        )
+        if checkout_result.returncode != 0:
+            raise RuntimeError(
+                f"bst artifact checkout failed (exit {checkout_result.returncode}):\n"
+                f"{checkout_result.stderr}"
+            )
+
+        log_build(build, 'info', "Artifact checked out")
+
+        # flatpak build-commit-from -> build-repo
+        # The checked-out artifact is a flatpak OSTree repo.
+        build_repo_path = os.path.join(settings.REPOS_BASE_PATH, 'build-repo')
+        os.makedirs(build_repo_path, exist_ok=True)
+
+        # Initialise build-repo if it doesn't exist yet
+        if not os.path.exists(os.path.join(build_repo_path, 'config')):
+            subprocess.run(
+                ['ostree', 'init', '--repo', build_repo_path, '--mode=archive'],
+                check=True, capture_output=True, text=True,
+            )
+
+        send_build_status_update(bst_source_id, 'building', 'Importing artifact into build-repo')
+        log_build(build, 'info', "Importing artifact into build-repo via flatpak build-commit-from")
+
+        import_cmd = [
+            'flatpak', 'build-commit-from',
+            f'--src-repo={checkout_dir}',
+            f'--subject=BuildStream build {source.build_number} of {source.bst_element}',
+            '--disable-fsync',
+            build_repo_path,
+        ]
+        import_result = run_cancellable(import_cmd, cwd=temp_dir, build=build, timeout_seconds=600)
+
+        if import_result.returncode != 0:
+            raise RuntimeError(
+                f"flatpak build-commit-from failed (exit {import_result.returncode}):\n"
+                f"{import_result.stderr}"
+            )
+
+        log_build(build, 'info', "Artifact imported into build-repo successfully")
+
+        # Version detection: query BST variables for the top-level element only
+        # and extract the 'version' key from the YAML vars block.
+        version_result = subprocess.run(
+            ['bst', 'show', '--deps', 'none', '--format', '%{vars}', source.bst_element],
+            cwd=source_dir, capture_output=True, text=True, timeout=60,
+        )
+        if version_result.returncode == 0:
+            import re as _re
+            # vars output is YAML-ish; parse 'version: X.Y.Z' from it
+            m = _re.search(r'^version:\s*(\S+)', version_result.stdout, _re.MULTILINE)
+            detected_version = m.group(1).strip('"\'') if m else ''
+            # Sanity-check: reject BST format strings that weren't expanded
+            if detected_version and '%{' not in detected_version:
+                source.version = detected_version
+                log_build(build, 'info', f"Detected version: {detected_version}")
+
+        source.status = 'published'
+        source.save()
+
+        build.status = 'published'
+        build.completed_at = timezone.now()
+        build.save()
+
+        log_build(build, 'info', "BuildStream build completed and published to build-repo")
+        send_build_status_update(bst_source_id, 'published', 'Build completed and ready to promote')
+
+    except BuildStreamSource.DoesNotExist:
+        logger.error(f"BuildStreamSource {bst_source_id} not found")
+    except Exception as e:
+        logger.error(f"BuildStream build failed for source {bst_source_id}: {e}")
+
+        if source:
+            source.status = 'failed'
+            source.error_message = str(e)[:2000]
+            source.save()
+
+        if build:
+            build.status = 'failed'
+            build.error_message = str(e)[:2000]
+            build.completed_at = timezone.now()
+            build.save()
+            log_build(build, 'error', f"BuildStream build failed: {str(e)}")
+
+        send_build_status_update(bst_source_id, 'failed', f'Build failed: {str(e)}')
+    finally:
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir)
+                logger.info(f"Cleaned up temp directory: {temp_dir}")
+            except Exception as e:
+                logger.warning(f"Failed to cleanup temp directory {temp_dir}: {e}")
+
+
 @shared_task
 def commit_package_task(package_id):
     """
@@ -1585,23 +1776,32 @@ def check_pending_builds():
     Periodic task that checks for pending builds and triggers them.
     This runs every minute via Celery Beat.
     """
-    from apps.flatpak.models import Package
-    
-    # Find all pending builds with git URLs that haven't been triggered
+    from apps.flatpak.models import Package, BuildStreamSource
+
+    # Flatpak git-based builds
     pending_packages = Package.objects.filter(
         status='pending',
         git_repo_url__isnull=False
     ).exclude(git_repo_url='')
-    
+
     count = pending_packages.count()
     if count > 0:
-        logger.info(f"Found {count} pending git-based build(s), triggering...")
-        
+        logger.info(f"Found {count} pending flatpak git build(s), triggering...")
         for package in pending_packages:
             logger.info(f"Triggering build {package.build_number} - {package.package_id}")
             package_from_git_task.delay(package.id)
-    
-    return f"Checked pending builds: {count} triggered"
+
+    # BuildStream builds
+    pending_bst = BuildStreamSource.objects.filter(status='pending')
+    bst_count = pending_bst.count()
+    if bst_count > 0:
+        logger.info(f"Found {bst_count} pending BuildStream build(s), triggering...")
+        for source in pending_bst:
+            logger.info(f"Triggering BST build {source.build_number} - {source.name}")
+            buildstream_build_task.delay(source.id)
+
+    total = count + bst_count
+    return f"Checked pending builds: {total} triggered"
 
 
 @shared_task
@@ -1683,6 +1883,43 @@ def cleanup_stale_builds():
                 log_build(build, 'error', f'Build marked as failed: stuck in \'{stuck_status}\' state with no activity')
 
             send_build_status_update(package.id, 'failed', 'Build was interrupted and marked as failed')
+            count += 1
+
+    # --- BuildStream sources ---
+    from apps.flatpak.models import BuildStreamSource
+    stale_bst = BuildStreamSource.objects.filter(status__in=active_states)
+    for source in stale_bst:
+        build = Build.objects.filter(
+            bst_source=source,
+            build_number=source.build_number,
+        ).first()
+        if not build or build.started_at > stale_threshold:
+            continue
+        has_recent_logs = build.logs.filter(
+            timestamp__gte=recent_activity_threshold
+        ).exists()
+        if not has_recent_logs:
+            stuck_status = source.status
+            logger.warning(
+                f'Stale BST build detected: {source.name} (build #{source.build_number}) '
+                f'stuck in \'{stuck_status}\' for >{timeout_minutes} min with no log activity'
+            )
+            error_msg = (
+                f"Build was interrupted (stuck in '{stuck_status}' state with no log "
+                f"activity for >{timeout_minutes} minutes). "
+                f"Possibly caused by a service restart or crash."
+            )
+            source.status = 'failed'
+            source.error_message = error_msg
+            source.save(update_fields=['status', 'error_message'])
+
+            build.status = 'failed'
+            build.error_message = error_msg
+            build.completed_at = timezone.now()
+            build.save(update_fields=['status', 'error_message', 'completed_at'])
+            log_build(build, 'error', f'Build marked as failed: stuck in \'{stuck_status}\' state with no activity')
+
+            send_build_status_update(source.id, 'failed', 'Build was interrupted and marked as failed')
             count += 1
 
     if count > 0:
@@ -1817,6 +2054,132 @@ def send_promotion_status_update(promotion):
             'error_message': promotion.error_message,
             'promoted_by': promotion.promoted_by.username if promotion.promoted_by else None,
             'completed_at': promotion.completed_at.strftime('%b %d, %H:%M') if promotion.completed_at else None,
+        }
+    )
+
+
+@shared_task
+def promote_bst_task(bst_promotion_id):
+    """
+    Copy all refs from build-repo to a child repository for a BST build.
+    Uses flatpak build-commit-from so metadata is correctly rewritten.
+    """
+    from apps.flatpak.models import BstPromotion
+    from apps.flatpak.utils.ostree import update_repo_metadata
+
+    try:
+        promo = BstPromotion.objects.select_related(
+            'build', 'bst_source', 'target_repo', 'target_repo__gpg_key'
+        ).get(id=bst_promotion_id)
+
+        promo.status = 'promoting'
+        promo.save()
+        send_bst_promotion_status_update(promo)
+
+        build_repo_path = os.path.join(settings.REPOS_BASE_PATH, 'build-repo')
+        target_repo_path = promo.target_repo.repo_path
+
+        if not os.path.exists(os.path.join(target_repo_path, 'config')):
+            raise FileNotFoundError(
+                f"Target repository '{promo.target_repo.name}' not found on disk"
+            )
+
+        logger.info(
+            f"BST promote: build-repo → {promo.target_repo.name} "
+            f"for {promo.bst_source.name} build #{promo.build.build_number}"
+        )
+
+        # Enumerate only the BST-produced refs from build-repo so we never
+        # accidentally overwrite Platform/SDK runtimes that were originally
+        # promoted from a different source (e.g. via the regular flatpak pipeline).
+        # We keep: app/<bst_name>/*, runtime/<bst_name>.Locale/*, runtime/<bst_name>.Debug/*
+        # We exclude: appstream, appstream2, ostree-metadata, freedesktop.*, flathub.*
+        refs_result = subprocess.run(
+            ['ostree', 'refs', '--list', f'--repo={build_repo_path}'],
+            capture_output=True, text=True, timeout=30,
+        )
+        if refs_result.returncode != 0:
+            raise RuntimeError(f"ostree refs failed: {refs_result.stderr.strip()}")
+
+        # Build a safe allowlist: only refs whose name starts with the BST source
+        # app-ID component.  BST produces refs like:
+        #   app/<AppId>/arch/branch
+        #   runtime/<AppId>.Locale/arch/branch
+        #   runtime/<AppId>.Debug/arch/branch
+        bst_name = promo.bst_source.name  # e.g. "nl.hjdskes.gcolor3"
+        bst_refs = [
+            r.strip() for r in refs_result.stdout.splitlines()
+            if r.strip() and (
+                r.strip().startswith(f"app/{bst_name}/")
+                or r.strip().startswith(f"runtime/{bst_name}.")
+            )
+        ]
+        if not bst_refs:
+            raise RuntimeError(
+                f"No refs found in build-repo for BST source '{bst_name}'. "
+                f"Build-repo refs: {refs_result.stdout.strip()[:500]}"
+            )
+        logger.info(f"BST refs to promote: {bst_refs}")
+
+        result = subprocess.run(
+            [
+                'flatpak', 'build-commit-from', '--disable-fsync',
+                f'--src-repo={build_repo_path}',
+                target_repo_path,
+            ] + bst_refs,
+            capture_output=True, text=True, timeout=600,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"flatpak build-commit-from failed (exit {result.returncode}):\n"
+                f"{result.stderr.strip()}"
+            )
+
+        # Use generate_deltas=False: existing deltas (from prior promotions) are
+        # still valid for the packages already in the repo.  We only need to
+        # re-sign the summary after build-commit-from added the new BST commits.
+        # Regenerating all deltas from scratch would exceed the subprocess timeout.
+        meta_result = update_repo_metadata(target_repo_path, promo.target_repo.gpg_key,
+                                           generate_deltas=False)
+        if not meta_result['success']:
+            logger.warning("BST promotion metadata update issue for %s: %s",
+                           promo.target_repo.name, meta_result)
+
+        promo.status = 'promoted'
+        promo.completed_at = timezone.now()
+        promo.save()
+        send_bst_promotion_status_update(promo)
+        logger.info(f"BST promotion {bst_promotion_id} complete → {promo.target_repo.name}")
+        sync_repo_state.delay()
+
+    except BstPromotion.DoesNotExist:
+        logger.error(f"BstPromotion {bst_promotion_id} not found")
+    except Exception as e:
+        logger.error(f"BstPromotion {bst_promotion_id} failed: {e}")
+        try:
+            p = BstPromotion.objects.get(id=bst_promotion_id)
+            p.status = 'failed'
+            p.error_message = str(e)
+            p.completed_at = timezone.now()
+            p.save()
+            send_bst_promotion_status_update(p)
+        except Exception:
+            pass
+
+
+def send_bst_promotion_status_update(promo):
+    """Send BST promotion status via WebSocket to the notifications group."""
+    channel_layer = get_channel_layer()
+    if channel_layer is None:
+        return
+    async_to_sync(channel_layer.group_send)(
+        'notifications',
+        {
+            'type': 'bst_promotion_status_update',
+            'promotion_id': promo.id,
+            'status': promo.status,
+            'error_message': promo.error_message,
+            'completed_at': promo.completed_at.strftime('%b %d, %H:%M') if promo.completed_at else None,
         }
     )
 

@@ -60,7 +60,7 @@
                     <dd class="col-sm-9">
                         <code>{{ repository.repo_path }}</code>
                         {% if repository.gpg_key %}
-                        <br><small class="text-muted">Public key: <code>{{ repository.get_public_key_path }}</code></small>
+                        <br><small class="text-muted">Public key: <a href="{{ request.scheme }}://{{ request.get_host }}/repositories/{{ repository.folder_name }}.gpg" target="_blank">{{ request.scheme }}://{{ request.get_host }}/repositories/{{ repository.folder_name }}.gpg</a></small>
                         {% endif %}
                     </dd>
                     
@@ -70,7 +70,13 @@
                         <button class="btn btn-sm btn-outline-secondary ms-2" onclick="copyToClipboard('{{ request.scheme }}://{{ request.get_host }}/repositories/{{ repository.folder_name }}')">
                             <i class="bi bi-clipboard"></i> Copy
                         </button>
-                        <br><small class="text-muted">Add this repository with: <code>flatpak remote-add {{ repository.name }} {{ request.scheme }}://{{ request.get_host }}/repositories/{{ repository.folder_name }}</code></small>
+                        <br><small class="text-muted">Add this repository with:
+                        {% if repository.gpg_key %}
+                        <code>curl -sSL {{ request.scheme }}://{{ request.get_host }}/repositories/{{ repository.folder_name }}.gpg -o /tmp/{{ repository.folder_name }}.gpg &amp;&amp; flatpak remote-add --gpg-import=/tmp/{{ repository.folder_name }}.gpg {{ repository.name }} {{ request.scheme }}://{{ request.get_host }}/repositories/{{ repository.folder_name }}</code>
+                        {% else %}
+                        <code>flatpak remote-add {{ repository.name }} {{ request.scheme }}://{{ request.get_host }}/repositories/{{ repository.folder_name }}</code>
+                        {% endif %}
+                        </small>
                     </dd>
                     
                     <dt class="col-sm-3">GPG Key:</dt>

@@ -10,7 +10,7 @@ from django.urls import reverse_lazy, reverse
 from django.contrib import messages
 from django.shortcuts import render, redirect, get_object_or_404
 from django.conf import settings
-from .models import GPGKey, Repository, RepositorySubset, Package, Build, Promotion
+from .models import GPGKey, Repository, RepositorySubset, Package, Build, Promotion, BuildStreamSource, Client
 from .forms import GPGKeyGenerateForm, GPGKeyImportForm
 from .utils.gpg import generate_gpg_key, import_gpg_key
 from .utils.ostree import init_ostree_repo, sign_repo_summary, delete_ostree_repo, temp_gpg_homedir, update_repo_metadata
@@ -641,6 +641,32 @@ def get_available_promotion_targets(build):
     return available
 
 
+def get_available_bst_promotion_targets(build):
+    """
+    Returns list of Repository objects that this BST build can currently be promoted to.
+    Same chain logic as get_available_promotion_targets but for BST builds.
+    """
+    source_repo = build.bst_source.repository
+    completed_ids = set(
+        build.bst_promotions.filter(status='promoted').values_list('target_repo_id', flat=True)
+    )
+    taken_ids = set(
+        build.bst_promotions.exclude(status='failed').values_list('target_repo_id', flat=True)
+    )
+    available = []
+    visited = {source_repo.id}
+    to_explore = [source_repo] + list(Repository.objects.filter(id__in=completed_ids))
+    for from_repo in to_explore:
+        for child in from_repo.child_repos.filter(is_active=True):
+            if child.id in visited:
+                continue
+            visited.add(child.id)
+            parent_ids = set(child.parent_repos.values_list('id', flat=True)) - {source_repo.id}
+            if parent_ids.issubset(completed_ids) and child.id not in taken_ids:
+                available.append(child)
+    return available
+
+
 class BuildListView(LoginRequiredMixin, ListView):
     """List all builds across all packages with optional filtering."""
     model = Build
@@ -650,18 +676,25 @@ class BuildListView(LoginRequiredMixin, ListView):
 
     def get_queryset(self):
         from django.db.models import Q
-        qs = Build.objects.select_related('package', 'package__repository').order_by('-started_at')
+        qs = Build.objects.select_related(
+            'package', 'package__repository',
+            'bst_source', 'bst_source__repository',
+        ).order_by('-started_at')
         q = self.request.GET.get('q', '').strip()
         status = self.request.GET.get('status', '').strip()
         repo = self.request.GET.get('repo', '').strip()
         if q:
             qs = qs.filter(
-                Q(package__package_name__icontains=q) | Q(package__package_id__icontains=q)
+                Q(package__package_name__icontains=q)
+                | Q(package__package_id__icontains=q)
+                | Q(bst_source__name__icontains=q)
             )
         if status:
             qs = qs.filter(status=status)
         if repo:
-            qs = qs.filter(package__repository_id=repo)
+            qs = qs.filter(
+                Q(package__repository_id=repo) | Q(bst_source__repository_id=repo)
+            )
         return qs
 
     def get_context_data(self, **kwargs):
@@ -692,7 +725,16 @@ class BuildDetailView(LoginRequiredMixin, DetailView):
         ).all()
         context['available_promotion_targets'] = (
             get_available_promotion_targets(self.object)
-            if self.object.status == 'published' else []
+            if self.object.status == 'published' and self.object.package_id else []
+        )
+        context['available_bst_promotion_targets'] = (
+            get_available_bst_promotion_targets(self.object)
+            if self.object.status == 'published' and self.object.bst_source_id else []
+        )
+        from apps.flatpak.models import BstPromotion
+        context['bst_promotions'] = (
+            self.object.bst_promotions.select_related('target_repo', 'promoted_by').all()
+            if self.object.bst_source_id else []
         )
         return context
 
@@ -776,6 +818,76 @@ class PromotionRetryView(LoginRequiredMixin, View):
         promotion.save(update_fields=['status', 'error_message'])
         promote_build_task.delay(promotion.id)
         return JsonResponse({'status': 'ok'})
+
+
+class BstPromoteView(LoginRequiredMixin, View):
+    """Create and queue a BST promotion for a published BST build."""
+
+    def post(self, request, build_pk):
+        import json as _json
+        from apps.flatpak.models import BstPromotion
+        build = get_object_or_404(Build, pk=build_pk)
+        if not build.bst_source_id:
+            return JsonResponse({'error': 'Not a BST build'}, status=400)
+        if build.status != 'published':
+            return JsonResponse({'error': 'Build must be published before promoting'}, status=400)
+        try:
+            data = _json.loads(request.body)
+            target_repo_id = int(data.get('target_repo_id', 0))
+        except Exception:
+            return JsonResponse({'error': 'Invalid request body'}, status=400)
+        target_repo = get_object_or_404(Repository, pk=target_repo_id)
+        available_ids = [r.id for r in get_available_bst_promotion_targets(build)]
+        if target_repo_id not in available_ids:
+            return JsonResponse(
+                {'error': f'Cannot promote to {target_repo.name}: prerequisites not met or already promoted'},
+                status=400,
+            )
+        try:
+            promo = BstPromotion.objects.create(
+                build=build,
+                bst_source=build.bst_source,
+                target_repo=target_repo,
+                status='pending',
+                promoted_by=request.user,
+            )
+        except Exception as e:
+            return JsonResponse({'error': str(e)}, status=400)
+        from apps.flatpak.tasks import promote_bst_task
+        promote_bst_task.delay(promo.id)
+        return JsonResponse({'status': 'ok', 'promotion_id': promo.id})
+
+
+class BstPromotionRetryView(LoginRequiredMixin, View):
+    """Re-queue a pending or failed BST promotion."""
+
+    def post(self, request, pk):
+        from apps.flatpak.models import BstPromotion
+        from apps.flatpak.tasks import promote_bst_task
+        promo = get_object_or_404(BstPromotion, pk=pk)
+        if promo.status not in ('pending', 'failed'):
+            return JsonResponse(
+                {'error': f'Promotion is {promo.status}, only pending/failed can be retried'},
+                status=400,
+            )
+        promo.status = 'pending'
+        promo.error_message = ''
+        promo.save(update_fields=['status', 'error_message'])
+        promote_bst_task.delay(promo.id)
+        return JsonResponse({'status': 'ok'})
+
+
+class BstPromotionDeleteView(LoginRequiredMixin, View):
+    """Delete a BST promotion record."""
+
+    def post(self, request, pk):
+        from apps.flatpak.models import BstPromotion
+        promo = get_object_or_404(BstPromotion, pk=pk)
+        promo.delete()
+        from apps.flatpak.tasks import sync_repo_state
+        sync_repo_state.delay()
+        return JsonResponse({'status': 'ok'})
+
 
 
 def _delete_promotion_from_repo(promotion):
@@ -944,12 +1056,27 @@ class BuildCancelView(LoginRequiredMixin, View):
                     f"Could not revoke Celery task {build.celery_task_id}: {exc}"
                 )
 
-        # Update package status if this is the current build
-        package = build.package
-        latest = package.builds.order_by('-build_number').first()
-        if latest and latest.pk == build.pk:
-            package.status = 'cancelled'
-            package.save(update_fields=['status'])
+        # Update the parent entity (Package or BuildStreamSource) status
+        entity_id = None
+        if build.package_id:
+            package = build.package
+            latest = package.builds.order_by('-build_number').first()
+            if latest and latest.pk == build.pk:
+                package.status = 'cancelled'
+                package.save(update_fields=['status'])
+            entity_id = build.package_id
+        elif build.bst_source_id:
+            bst_source = build.bst_source
+            latest = bst_source.builds.order_by('-build_number').first()
+            if latest and latest.pk == build.pk:
+                bst_source.status = 'cancelled'
+                bst_source.save(update_fields=['status'])
+            entity_id = build.bst_source_id
+
+        # Notify WebSocket clients so the UI updates immediately
+        if entity_id is not None:
+            from apps.flatpak.tasks import send_build_status_update
+            send_build_status_update(entity_id, 'cancelled', f'Build #{build.build_number} was cancelled.')
 
         return JsonResponse({
             'status': 'cancelled',
@@ -1000,7 +1127,7 @@ class PromotionListView(LoginRequiredMixin, ListView):
         from django.db.models import Q
         context = super().get_context_data(**kwargs)
         pub_qs = (
-            Build.objects.filter(status='published')
+            Build.objects.filter(status='published', package__isnull=False)
             .select_related('package', 'package__repository', 'package__created_by')
             .order_by('-completed_at')
         )
@@ -1035,7 +1162,7 @@ class PromotionListView(LoginRequiredMixin, ListView):
         ready_to_promote = []
         promote_builds = (
             Build.objects
-            .filter(status='published')
+            .filter(status='published', package__isnull=False)
             .select_related('package', 'package__repository')
             .prefetch_related('promotions', 'promotions__target_repo')
             .order_by('package__package_name', '-build_number')
@@ -1085,6 +1212,33 @@ class PromotionListView(LoginRequiredMixin, ListView):
             context['promotion_child_repos_json'] = _json.dumps(child_repos_map)
         else:
             context['promotion_child_repos_json'] = '{}'
+
+        # BST promotions for the promotions page
+        from apps.flatpak.models import BstPromotion
+        context['bst_promotions'] = (
+            BstPromotion.objects
+            .select_related('build', 'bst_source', 'target_repo', 'promoted_by')
+            .order_by('-created_at')[:50]
+        )
+        # BST builds ready to promote
+        ready_to_promote_bst = []
+        bst_published = (
+            Build.objects
+            .filter(status='published', bst_source__isnull=False)
+            .select_related('bst_source', 'bst_source__repository')
+            .prefetch_related('bst_promotions', 'bst_promotions__target_repo')
+            .order_by('bst_source__name', '-build_number')
+        )
+        seen_bst = set()
+        for build in bst_published:
+            if build.bst_source_id in seen_bst:
+                continue
+            targets = get_available_bst_promotion_targets(build)
+            if targets:
+                ready_to_promote_bst.append({'build': build, 'targets': targets})
+                seen_bst.add(build.bst_source_id)
+        context['ready_to_promote_bst'] = ready_to_promote_bst
+
         return context
 
 
@@ -1111,8 +1265,7 @@ class PackageCreateView(LoginRequiredMixin, CreateView):
     def form_valid(self, form):
         form.instance.created_by = self.request.user
         response = super().form_valid(form)
-        
-        # Package will be automatically picked up by the periodic check_pending_builds task
+
         if form.instance.git_repo_url:
             messages.success(
                 self.request,
@@ -1123,7 +1276,7 @@ class PackageCreateView(LoginRequiredMixin, CreateView):
                 self.request,
                 f'Package {form.instance.package_id} created. Ready for package upload.'
             )
-        
+
         return response
     
     def form_invalid(self, form):
@@ -1705,3 +1858,103 @@ class ClientCheckinView(View):
         client.save()
 
         return JsonResponse({'status': 'ok', 'hostname': hostname})
+
+
+# ─── BuildStream Source views ─────────────────────────────────────────────────
+
+class BuildStreamSourceListView(LoginRequiredMixin, ListView):
+    model = BuildStreamSource
+    template_name = 'flatpak/buildstreamsource_list.html'
+    context_object_name = 'sources'
+    ordering = ['-created_at']
+
+
+class BuildStreamSourceCreateView(LoginRequiredMixin, CreateView):
+    model = BuildStreamSource
+    template_name = 'flatpak/buildstreamsource_form.html'
+    fields = ['repository', 'name', 'git_repo_url', 'git_branch', 'bst_element']
+
+    def get_form(self, form_class=None):
+        form = super().get_form(form_class)
+        form.fields['repository'].queryset = Repository.objects.filter(parent_repos__isnull=True)
+        form.fields['repository'].help_text = "Only repositories without parent repos can have builds"
+        return form
+
+    def form_valid(self, form):
+        form.instance.created_by = self.request.user
+        response = super().form_valid(form)
+        messages.success(
+            self.request,
+            f'BuildStream source \u201c{form.instance.name}\u201d created. '
+            'The build will start automatically.'
+        )
+        return response
+
+    def get_success_url(self):
+        return reverse('flatpak:bst_source_detail', kwargs={'pk': self.object.pk})
+
+
+class BuildStreamSourceDetailView(LoginRequiredMixin, DetailView):
+    model = BuildStreamSource
+    template_name = 'flatpak/buildstreamsource_detail.html'
+    context_object_name = 'source'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['builds'] = self.object.builds.order_by('-build_number')[:20]
+        # Latest published build for promote UI
+        latest_published = self.object.builds.filter(status='published').order_by('-build_number').first()
+        context['latest_published_build'] = latest_published
+        context['available_bst_targets'] = (
+            get_available_bst_promotion_targets(latest_published)
+            if latest_published else []
+        )
+        from apps.flatpak.models import BstPromotion
+        context['bst_promotions'] = (
+            BstPromotion.objects
+            .filter(bst_source=self.object)
+            .select_related('build', 'target_repo', 'promoted_by')
+            .order_by('-created_at')[:20]
+        )
+        return context
+
+
+class BuildStreamSourceUpdateView(LoginRequiredMixin, UpdateView):
+    model = BuildStreamSource
+    template_name = 'flatpak/buildstreamsource_form.html'
+    fields = ['repository', 'name', 'git_repo_url', 'git_branch', 'bst_element']
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['edit_mode'] = True
+        return context
+
+    def form_valid(self, form):
+        messages.success(self.request, f'BuildStream source \u201c{self.object.name}\u201d updated.')
+        return super().form_valid(form)
+
+    def get_success_url(self):
+        return reverse('flatpak:bst_source_detail', kwargs={'pk': self.object.pk})
+
+
+class BuildStreamSourceDeleteView(LoginRequiredMixin, DeleteView):
+    model = BuildStreamSource
+    template_name = 'flatpak/buildstreamsource_confirm_delete.html'
+    context_object_name = 'source'
+    success_url = reverse_lazy('flatpak:bst_source_list')
+
+
+class BuildStreamSourceRetryView(LoginRequiredMixin, View):
+    """Reset a failed/built BST source to pending so it is picked up again."""
+
+    def post(self, request, pk):
+        source = get_object_or_404(BuildStreamSource, pk=pk)
+        if source.status in ('failed', 'built', 'published', 'cancelled'):
+            source.status = 'pending'
+            source.build_number += 1
+            source.error_message = ''
+            source.save()
+            messages.success(request, f'Build queued for \u201c{source.name}\u201d.')
+        else:
+            messages.warning(request, f'Cannot retry: current status is {source.status}.')
+        return redirect('flatpak:bst_source_detail', pk=pk)

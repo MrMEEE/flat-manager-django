@@ -66,15 +66,30 @@
                     <tr>
                         <td><strong>#{{ build.build_number }}</strong></td>
                         <td>
+                            {% if build.package %}
                             <a href="{% url 'flatpak:package_detail' build.package.pk %}">
                                 {{ build.package.package_name }}
                             </a>
                             <br><small class="text-muted"><code>{{ build.package.package_id }}</code></small>
+                            {% elif build.bst_source %}
+                            <a href="{% url 'flatpak:bst_source_detail' build.bst_source.pk %}">
+                                {{ build.bst_source.name }}
+                            </a>
+                            <br><small class="text-muted"><code>{{ build.bst_source.bst_element }}</code></small>
+                            {% else %}
+                            <span class="text-muted">—</span>
+                            {% endif %}
                         </td>
                         <td>
+                            {% if build.package %}
                             <a href="{% url 'flatpak:repo_detail' build.package.repository.pk %}">
                                 {{ build.package.repository.name }}
                             </a>
+                            {% elif build.bst_source %}
+                            <a href="{% url 'flatpak:repo_detail' build.bst_source.repository.pk %}">
+                                {{ build.bst_source.repository.name }}
+                            </a>
+                            {% endif %}
                         </td>
                         <td>
                             {% if build.status == 'published' %}

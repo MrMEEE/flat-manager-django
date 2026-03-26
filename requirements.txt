@@ -35,6 +35,13 @@ pytz>=2023.3
 Pillow>=10.0.0  # For ImageField support
 python-gnupg>=0.5.0  # For GPG key generation
 
+# BuildStream for SDK/runtime builds
+BuildStream>=2.0
+bst-plugins-experimental>=1.100.1  # provides git_repo and other BST source plugins
+dulwich>=1.1.0  # 1.x has dulwich.worktree; ANNOTATED_TAG_SUFFIX shim applied to bst-plugins-experimental
+requests>=2.28  # required by bst-plugins-experimental's _utils
+tomlkit>=0.12   # required by the cargo2 BST source plugin
+
 # Development dependencies
 python-dotenv>=1.0.0
 

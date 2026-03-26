@@ -90,11 +90,13 @@
     </div>
     <div class="card-body p-0">
         <table class="table table-sm mb-0">
-            <thead class="table-light"><tr><th>App ID</th><th>Current</th><th>Available</th><th>Remote</th></tr></thead>
+            <thead class="table-light"><tr><th>App ID</th><th>Name</th><th>Branch</th><th>Current</th><th>Available</th><th>Remote</th></tr></thead>
             <tbody>
                 {% for pkg in client.outdated_flatpaks %}
                 <tr>
                     <td>{{ pkg.app_id }}</td>
+                    <td>{{ pkg.name }}</td>
+                    <td><code>{{ pkg.branch }}</code></td>
                     <td class="text-muted">{{ pkg.current_version }}</td>
                     <td class="text-danger fw-semibold">{{ pkg.new_version }}</td>
                     <td>{{ pkg.origin }}</td>
@@ -113,10 +115,10 @@
     </div>
     <div class="card-body p-0">
         <table class="table table-sm mb-0">
-            <thead class="table-light"><tr><th>App ID</th><th>Version</th><th>Remote</th></tr></thead>
+            <thead class="table-light"><tr><th>App ID</th><th>Name</th><th>Branch</th><th>Version</th><th>Remote</th></tr></thead>
             <tbody>
                 {% for pkg in client.foreign_flatpaks %}
-                <tr><td>{{ pkg.app_id }}</td><td>{{ pkg.version }}</td><td>{{ pkg.origin }}</td></tr>
+                <tr><td>{{ pkg.app_id }}</td><td>{{ pkg.name }}</td><td><code>{{ pkg.branch }}</code></td><td>{{ pkg.version }}</td><td>{{ pkg.origin }}</td></tr>
                 {% endfor %}
             </tbody>
         </table>
@@ -131,10 +133,10 @@
     </div>
     <div class="card-body p-0">
         <table class="table table-sm mb-0">
-            <thead class="table-light"><tr><th>App ID</th><th>Version</th><th>Remote</th></tr></thead>
+            <thead class="table-light"><tr><th>App ID</th><th>Name</th><th>Branch</th><th>Version</th><th>Remote</th></tr></thead>
             <tbody>
                 {% for pkg in client.installed_flatpaks %}
-                <tr><td>{{ pkg.app_id }}</td><td>{{ pkg.version }}</td><td>{{ pkg.origin }}</td></tr>
+                <tr><td>{{ pkg.app_id }}</td><td>{{ pkg.name }}</td><td><code>{{ pkg.branch }}</code></td><td>{{ pkg.version }}</td><td>{{ pkg.origin }}</td></tr>
                 {% endfor %}
             </tbody>
         </table>
@@ -161,11 +163,13 @@
         <div class="card-body p-0 border-bottom">
             <div class="px-3 pt-2 pb-1 small text-danger fw-semibold">Updates available</div>
             <table class="table table-sm mb-0">
-                <thead class="table-light"><tr><th>App ID</th><th>Current</th><th>Available</th><th>Remote</th></tr></thead>
+                <thead class="table-light"><tr><th>App ID</th><th>Name</th><th>Branch</th><th>Current</th><th>Available</th><th>Remote</th></tr></thead>
                 <tbody>
                     {% for upd in uf.updates_available %}
                     <tr>
                         <td>{{ upd.app_id }}</td>
+                        <td>{{ upd.name }}</td>
+                        <td><code>{{ upd.branch }}</code></td>
                         <td class="text-muted">{{ upd.current_version|default:"—" }}</td>
                         <td class="text-danger fw-semibold">{{ upd.new_version }}</td>
                         <td>{{ upd.origin }}</td>
@@ -178,10 +182,10 @@
         {% if uf.installed %}
         <div class="card-body p-0">
             <table class="table table-sm mb-0">
-                <thead class="table-light"><tr><th>App ID</th><th>Version</th><th>Remote</th></tr></thead>
+                <thead class="table-light"><tr><th>App ID</th><th>Name</th><th>Branch</th><th>Version</th><th>Remote</th></tr></thead>
                 <tbody>
                     {% for pkg in uf.installed %}
-                    <tr><td>{{ pkg.app_id }}</td><td>{{ pkg.version }}</td><td>{{ pkg.origin }}</td></tr>
+                    <tr><td>{{ pkg.app_id }}</td><td>{{ pkg.name }}</td><td><code>{{ pkg.branch }}</code></td><td>{{ pkg.version }}</td><td>{{ pkg.origin }}</td></tr>
                     {% endfor %}
                 </tbody>
             </table>

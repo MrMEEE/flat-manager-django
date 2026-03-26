@@ -254,6 +254,15 @@ run_setup() {
     echo -e "${BLUE}📦 Installing Python dependencies...${NC}"
     pip install --upgrade pip
     pip install -r requirements.txt
+    # Patch bst-plugins-experimental for dulwich 1.x compatibility
+    # dulwich 1.x removed ANNOTATED_TAG_SUFFIX from dulwich.refs; shim it in
+    GIT_UTILS=$(venv/bin/python -c "import bst_plugins_experimental.sources._git_utils as m; import inspect; print(inspect.getfile(m))" 2>/dev/null || true)
+    if [ -n "$GIT_UTILS" ] && grep -q "^from dulwich.refs import ANNOTATED_TAG_SUFFIX" "$GIT_UTILS" 2>/dev/null; then
+        sed -i 's/^from dulwich\.refs import ANNOTATED_TAG_SUFFIX/try:\n    from dulwich.refs import ANNOTATED_TAG_SUFFIX\nexcept ImportError:\n    # dulwich 1.x removed this constant; value is the git peeled-ref suffix\n    ANNOTATED_TAG_SUFFIX = b"^{}"/' "$GIT_UTILS"
+        echo -e "${GREEN}✅ Applied dulwich 1.x compatibility patch to bst-plugins-experimental${NC}"
+    else
+        echo -e "${GREEN}✅ dulwich compatibility patch already applied or not needed${NC}"
+    fi
     echo ""
     
     # Copy .env file if it doesn't exist

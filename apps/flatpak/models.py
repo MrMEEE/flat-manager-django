@@ -99,11 +99,11 @@ class Package(models.Model):
         ('failed', 'Failed'),
         ('cancelled', 'Cancelled'),
     ]
-    
+
     repository = models.ForeignKey(Repository, on_delete=models.CASCADE, related_name='packages')
     package_id = models.CharField(max_length=255, help_text="Flatpak application ID (e.g., org.example.MyApp)")
     package_name = models.CharField(max_length=255, help_text="Human-readable package name (e.g., My Application)")
-    
+
     # Build source - either git repo OR upload pre-built packages
     git_repo_url = models.URLField(blank=True, help_text="Git repository URL to build from")
     git_branch = models.CharField(max_length=100, blank=True, default='master', help_text="Git branch to build")
@@ -196,6 +196,68 @@ class Package(models.Model):
             )
 
 
+class BuildStreamSource(models.Model):
+    """
+    A BuildStream project that produces one or more Flatpak refs (runtimes, SDKs, …).
+    Unlike Package, there is no single application ID — the BST element can export
+    many refs at once (e.g. freedesktop-sdk's flatpak-release-repo.bst).
+    """
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('building', 'Building'),
+        ('built', 'Built'),
+        ('committing', 'Committing'),
+        ('committed', 'Committed'),
+        ('publishing', 'Publishing'),
+        ('published', 'Published'),
+        ('failed', 'Failed'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    repository = models.ForeignKey(
+        Repository, on_delete=models.CASCADE, related_name='bst_sources',
+    )
+    name = models.CharField(
+        max_length=255,
+        help_text="Display name for this BuildStream source (e.g. freedesktop-sdk)",
+    )
+    git_repo_url = models.URLField(
+        help_text="Git repository containing the BuildStream project (must have a project.conf)",
+    )
+    git_branch = models.CharField(
+        max_length=100, default='master',
+        help_text="Git branch or tag to build from",
+    )
+    bst_element = models.CharField(
+        max_length=255,
+        help_text="BuildStream element to build (e.g. flatpak-release-repo.bst). "
+                  "The element must produce an OSTree flatpak repo in its artifact.",
+    )
+
+    # Build state
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    build_number = models.IntegerField(default=1)
+    version = models.CharField(max_length=255, blank=True)
+    source_commit = models.CharField(max_length=255, blank=True)
+    error_message = models.TextField(blank=True)
+
+    # Metadata
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+        related_name='bst_sources',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'BuildStream Source'
+        verbose_name_plural = 'BuildStream Sources'
+
+    def __str__(self):
+        return f"{self.name} ({self.bst_element})"
+
+
 class Build(models.Model):
     """
     Build history record - stores each build attempt.
@@ -211,7 +273,14 @@ class Build(models.Model):
         ('cancelled', 'Cancelled'),
     ]
     
-    package = models.ForeignKey(Package, on_delete=models.CASCADE, related_name='builds')
+    package = models.ForeignKey(
+        Package, on_delete=models.CASCADE, related_name='builds',
+        null=True, blank=True,
+    )
+    bst_source = models.ForeignKey(
+        'BuildStreamSource', on_delete=models.CASCADE, related_name='builds',
+        null=True, blank=True,
+    )
     build_number = models.IntegerField(help_text="Build attempt number (1, 2, 3...)")
     
     # Build results
@@ -240,7 +309,11 @@ class Build(models.Model):
         ]
     
     def __str__(self):
-        return f"{self.package.package_name} - Build #{self.build_number}"
+        if self.package_id:
+            return f"{self.package.package_name} - Build #{self.build_number}"
+        if self.bst_source_id:
+            return f"{self.bst_source.name} (BST) - Build #{self.build_number}"
+        return f"Build #{self.build_number}"
 
 
 class BuildArtifact(models.Model):
@@ -394,6 +467,49 @@ class Promotion(models.Model):
 
     def __str__(self):
         return f"{self.package.package_name} → {self.target_repo.name} (Build #{self.build.build_number})"
+
+
+class BstPromotion(models.Model):
+    """
+    Tracks promotion of a published BST build to a child repository.
+    Mirrors Promotion but for BuildStreamSource instead of Package.
+    """
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('promoting', 'Promoting'),
+        ('promoted', 'Promoted'),
+        ('failed', 'Failed'),
+    ]
+
+    build = models.ForeignKey(Build, on_delete=models.CASCADE, related_name='bst_promotions')
+    bst_source = models.ForeignKey(
+        BuildStreamSource, on_delete=models.CASCADE, related_name='promotions'
+    )
+    target_repo = models.ForeignKey(
+        Repository, on_delete=models.CASCADE, related_name='bst_promotions'
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    error_message = models.TextField(blank=True)
+    promoted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='bst_promotions',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'BST Promotion'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['build', 'target_repo'], name='unique_bst_build_target_repo'
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.bst_source.name} → {self.target_repo.name} (Build #{self.build.build_number})"
 
 
 class FlatpakRemote(models.Model):

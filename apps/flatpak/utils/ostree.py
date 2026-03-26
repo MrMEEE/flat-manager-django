@@ -130,12 +130,18 @@ def init_ostree_repo(repo_path, collection_id=None, gpg_key=None):
         }
 
 
-def update_repo_metadata(repo_path, gpg_key=None):
+def update_repo_metadata(repo_path, gpg_key=None, generate_deltas=True):
     """
     Regenerate OSTree repository metadata (appstream, summary, static deltas)
     and GPG-sign everything in the correct order.
 
-    The order matters:
+    When *generate_deltas* is True (default) the function also purges any
+    unsigned existing deltas and regenerates them with GPG-signed superblocks.
+    Set *generate_deltas=False* for fast promotion paths where existing deltas
+    are still valid and only the summary needs re-signing — this avoids the
+    multi-minute ``--generate-static-deltas`` timeout.
+
+    The order matters (when generate_deltas=True):
     1. Remove stale unsigned static deltas so flatpak build-update-repo
        is forced to regenerate them WITH embedded GPG signatures.
     2. Run ``flatpak build-update-repo --generate-static-deltas --gpg-sign``
@@ -144,9 +150,12 @@ def update_repo_metadata(repo_path, gpg_key=None):
        non-delta pulls (e.g. first-install fallback) can also verify.
 
     Args:
-        repo_path: Path to the OSTree repository
-        gpg_key:   Optional GPGKey model instance. When None the repo is
-                   updated without signing.
+        repo_path:       Path to the OSTree repository
+        gpg_key:         Optional GPGKey model instance. When None the repo is
+                         updated without signing.
+        generate_deltas: When True, purge and regenerate static deltas.
+                         When False, only update appstream + sign summary
+                         (fast path, leaves existing deltas unchanged).
 
     Returns:
         dict with 'success' (bool), 'message' (str), and optional 'detail'
@@ -155,44 +164,47 @@ def update_repo_metadata(repo_path, gpg_key=None):
     import logging
     logger = logging.getLogger(__name__)
 
-    try:
-        # Step 1: Purge stale static deltas.  build-update-repo skips existing
-        # delta superblocks, so any unsigned ones would survive and break GPG
-        # verification for static-delta pulls.
-        for subdir in ('deltas', 'delta-indexes'):
-            stale = os.path.join(repo_path, subdir)
-            if os.path.isdir(stale):
-                shutil.rmtree(stale)
-                logger.debug("Removed stale delta dir: %s", stale)
-
-        # Step 2: Regenerate appstream metadata, deltas, and summary.
+    def _sign_summary():
+        """Sign (or refresh) the summary using the fallback fast path."""
         if gpg_key:
             with temp_gpg_homedir(gpg_key) as homedir:
-                cmd = [
-                    'flatpak', 'build-update-repo',
-                    '--generate-static-deltas',
-                    f'--gpg-sign={gpg_key.key_id}',
-                    f'--gpg-homedir={homedir}',
-                    repo_path,
-                ]
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                sign_repo_summary(repo_path, gpg_key.key_id, gpg_homedir=homedir)
         else:
-            result = subprocess.run(
-                ['flatpak', 'build-update-repo', '--generate-static-deltas', repo_path],
-                capture_output=True, text=True, timeout=300
+            subprocess.run(
+                ['ostree', 'summary', '-u', f'--repo={repo_path}'],
+                capture_output=True, text=True
             )
+
+    try:
+        if generate_deltas:
+            # Step 1: Purge stale static deltas.  build-update-repo skips existing
+            # delta superblocks, so any unsigned ones would survive and break GPG
+            # verification for static-delta pulls.
+            for subdir in ('deltas', 'delta-indexes'):
+                stale = os.path.join(repo_path, subdir)
+                if os.path.isdir(stale):
+                    shutil.rmtree(stale)
+                    logger.debug("Removed stale delta dir: %s", stale)
+
+        # Step 2: Regenerate appstream metadata, deltas (if requested), and summary.
+        if gpg_key:
+            with temp_gpg_homedir(gpg_key) as homedir:
+                cmd = ['flatpak', 'build-update-repo']
+                if generate_deltas:
+                    cmd.append('--generate-static-deltas')
+                cmd += [f'--gpg-sign={gpg_key.key_id}', f'--gpg-homedir={homedir}', repo_path]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+        else:
+            cmd = ['flatpak', 'build-update-repo']
+            if generate_deltas:
+                cmd.append('--generate-static-deltas')
+            cmd.append(repo_path)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
 
         if result.returncode != 0:
             logger.warning("flatpak build-update-repo failed: %s", result.stderr)
             # Fallback: at least keep the summary signed
-            if gpg_key:
-                with temp_gpg_homedir(gpg_key) as homedir:
-                    sign_repo_summary(repo_path, gpg_key.key_id, gpg_homedir=homedir)
-            else:
-                subprocess.run(
-                    ['ostree', 'summary', '-u', f'--repo={repo_path}'],
-                    capture_output=True, text=True
-                )
+            _sign_summary()
             return {
                 'success': False,
                 'message': 'flatpak build-update-repo failed; summary refreshed via fallback',
@@ -227,6 +239,18 @@ def update_repo_metadata(repo_path, gpg_key=None):
             'message': 'Repository metadata updated and signed successfully',
         }
 
+    except subprocess.TimeoutExpired:
+        # Delta generation timed out; ensure the summary is still signed.
+        logger.warning("update_repo_metadata timed out for %s; signing summary via fallback", repo_path)
+        try:
+            _sign_summary()
+        except Exception:
+            logger.exception("Fallback summary signing also failed for %s", repo_path)
+        return {
+            'success': False,
+            'message': 'build-update-repo timed out; summary signed via fallback',
+            'error': 'timeout',
+        }
     except Exception as e:
         logger.exception("update_repo_metadata failed for %s", repo_path)
         return {
