@@ -473,6 +473,10 @@ class Client(models.Model):
         default=list,
         help_text="Flatpaks with available updates: [{app_id, current_version, new_version, origin}, ...]."
     )
+    user_flatpaks = models.JSONField(
+        default=list,
+        help_text="Per-user installed flatpaks: [{username, installed: [...], updates_available: [...]}]."
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

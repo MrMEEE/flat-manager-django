@@ -1622,6 +1622,36 @@ class ClientListView(LoginRequiredMixin, ListView):
         return context
 
 
+class ClientDetailView(LoginRequiredMixin, DetailView):
+    template_name = 'flatpak/client_detail.html'
+    context_object_name = 'client'
+
+    def get_object(self):
+        from .models import Client
+        return get_object_or_404(Client, pk=self.kwargs['pk'])
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from .models import SiteConfig
+        from django.utils import timezone
+        from datetime import timedelta
+        client = context['client']
+        stale_hours = SiteConfig.get_solo().client_stale_hours
+        threshold = timezone.now() - timedelta(hours=stale_hours)
+        if client.last_checkin is None or client.last_checkin < threshold:
+            client.status = 'red'
+        elif client.outdated_count > 0 or client.foreign_count > 0:
+            client.status = 'yellow'
+        else:
+            client.status = 'green'
+        # Only pass users who have at least one installed or pending update
+        context['user_flatpaks'] = [
+            u for u in (client.user_flatpaks or [])
+            if u.get('installed') or u.get('updates_available')
+        ]
+        return context
+
+
 import json
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
@@ -1652,6 +1682,7 @@ class ClientCheckinView(View):
         managed_remote_names = data.get('managed_remotes', [])
         installed = data.get('installed', [])
         updates_available = data.get('updates_available', [])
+        user_flatpaks = data.get('user_flatpaks', [])
 
         # Compute derived fields
         foreign_flatpaks = [
@@ -1670,6 +1701,7 @@ class ClientCheckinView(View):
         client.foreign_count = len(foreign_flatpaks)
         client.outdated_flatpaks = outdated_flatpaks
         client.outdated_count = len(outdated_flatpaks)
+        client.user_flatpaks = user_flatpaks
         client.save()
 
         return JsonResponse({'status': 'ok', 'hostname': hostname})

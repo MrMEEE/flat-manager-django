@@ -50,7 +50,9 @@
                             </span>
                             {% endif %}
                         </td>
-                        <td><strong>{{ client.hostname }}</strong></td>
+                        <td><strong>
+                            <a href="{% url 'flatpak:client_detail' client.pk %}">{{ client.hostname }}</a>
+                        </strong></td>
                         <td>
                             {% if client.managed_remotes %}
                                 {% for r in client.managed_remotes %}

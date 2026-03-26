@@ -1,0 +1,202 @@
+{% extends 'base.html' %}
+
+{% block title %}Client: {{ client.hostname }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>
+        <i class="bi bi-pc-display"></i> {{ client.hostname }}
+        {% if client.status == 'green' %}
+        <span class="badge bg-success ms-2"><i class="bi bi-check-circle"></i> OK</span>
+        {% elif client.status == 'yellow' %}
+        <span class="badge bg-warning text-dark ms-2"><i class="bi bi-exclamation-triangle"></i> Issues</span>
+        {% else %}
+        <span class="badge bg-danger ms-2"><i class="bi bi-x-circle"></i> Stale</span>
+        {% endif %}
+    </h2>
+    <a href="{% url 'flatpak:client_list' %}" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Clients
+    </a>
+</div>
+
+<!-- Summary row -->
+<div class="row g-3 mb-4">
+    <div class="col-sm-4">
+        <div class="card text-center">
+            <div class="card-body py-3">
+                <div class="fs-4 fw-bold">{{ client.installed_count }}</div>
+                <div class="text-muted small">System-wide installed</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-4">
+        <div class="card text-center {% if client.foreign_count > 0 %}border-warning{% endif %}">
+            <div class="card-body py-3">
+                <div class="fs-4 fw-bold {% if client.foreign_count > 0 %}text-warning{% endif %}">{{ client.foreign_count }}</div>
+                <div class="text-muted small">Foreign (non-managed)</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-4">
+        <div class="card text-center {% if client.outdated_count > 0 %}border-danger{% endif %}">
+            <div class="card-body py-3">
+                <div class="fs-4 fw-bold {% if client.outdated_count > 0 %}text-danger{% endif %}">{{ client.outdated_count }}</div>
+                <div class="text-muted small">System-wide outdated</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Meta info -->
+<div class="card mb-4">
+    <div class="card-body">
+        <dl class="row mb-0">
+            <dt class="col-sm-3">Last check-in</dt>
+            <dd class="col-sm-9">
+                {% if client.last_checkin %}
+                    {{ client.last_checkin|date:"Y-m-d H:i:s" }} UTC
+                    <span class="text-muted">({{ client.last_checkin|timesince }} ago)</span>
+                {% else %}
+                    <span class="text-muted">Never</span>
+                {% endif %}
+            </dd>
+            <dt class="col-sm-3">Managed remotes</dt>
+            <dd class="col-sm-9">
+                {% for r in client.managed_remotes %}
+                    <span class="badge bg-primary me-1">{{ r }}</span>
+                {% empty %}
+                    <span class="text-muted">None</span>
+                {% endfor %}
+            </dd>
+            <dt class="col-sm-3">All remotes</dt>
+            <dd class="col-sm-9">
+                {% for r in client.remotes %}
+                    <span class="badge bg-secondary me-1" title="{{ r.url }}">{{ r.name }}</span>
+                {% empty %}
+                    <span class="text-muted">None</span>
+                {% endfor %}
+            </dd>
+        </dl>
+    </div>
+</div>
+
+<!-- ── System-wide installs ───────────────────────────────────────────────── -->
+<h5 class="mb-3"><i class="bi bi-hdd-stack"></i> System-wide Flatpaks</h5>
+
+{% if client.outdated_flatpaks %}
+<div class="card mb-3 border-danger">
+    <div class="card-header text-danger fw-semibold">
+        <i class="bi bi-arrow-up-circle"></i> Updates available ({{ client.outdated_flatpaks|length }})
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+            <thead class="table-light"><tr><th>App ID</th><th>Current</th><th>Available</th><th>Remote</th></tr></thead>
+            <tbody>
+                {% for pkg in client.outdated_flatpaks %}
+                <tr>
+                    <td>{{ pkg.app_id }}</td>
+                    <td class="text-muted">{{ pkg.current_version }}</td>
+                    <td class="text-danger fw-semibold">{{ pkg.new_version }}</td>
+                    <td>{{ pkg.origin }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% if client.foreign_flatpaks %}
+<div class="card mb-3 border-warning">
+    <div class="card-header text-warning fw-semibold">
+        <i class="bi bi-exclamation-triangle"></i> Foreign flatpaks ({{ client.foreign_flatpaks|length }})
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+            <thead class="table-light"><tr><th>App ID</th><th>Version</th><th>Remote</th></tr></thead>
+            <tbody>
+                {% for pkg in client.foreign_flatpaks %}
+                <tr><td>{{ pkg.app_id }}</td><td>{{ pkg.version }}</td><td>{{ pkg.origin }}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% if client.installed_flatpaks %}
+<div class="card mb-4">
+    <div class="card-header">
+        <i class="bi bi-list-ul"></i> All installed ({{ client.installed_flatpaks|length }})
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+            <thead class="table-light"><tr><th>App ID</th><th>Version</th><th>Remote</th></tr></thead>
+            <tbody>
+                {% for pkg in client.installed_flatpaks %}
+                <tr><td>{{ pkg.app_id }}</td><td>{{ pkg.version }}</td><td>{{ pkg.origin }}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<p class="text-muted mb-4">No system-wide flatpaks installed.</p>
+{% endif %}
+
+<!-- ── Per-user installs ──────────────────────────────────────────────────── -->
+<h5 class="mb-3"><i class="bi bi-people"></i> Per-user Flatpaks</h5>
+
+{% if user_flatpaks %}
+    {% for uf in user_flatpaks %}
+    <div class="card mb-3">
+        <div class="card-header fw-semibold">
+            <i class="bi bi-person-circle"></i> {{ uf.username }}
+            <span class="badge bg-secondary ms-2">{{ uf.installed|length }} installed</span>
+            {% if uf.updates_available %}
+            <span class="badge bg-danger ms-1">{{ uf.updates_available|length }} outdated</span>
+            {% endif %}
+        </div>
+        {% if uf.updates_available %}
+        <div class="card-body p-0 border-bottom">
+            <div class="px-3 pt-2 pb-1 small text-danger fw-semibold">Updates available</div>
+            <table class="table table-sm mb-0">
+                <thead class="table-light"><tr><th>App ID</th><th>Current</th><th>Available</th><th>Remote</th></tr></thead>
+                <tbody>
+                    {% for upd in uf.updates_available %}
+                    <tr>
+                        <td>{{ upd.app_id }}</td>
+                        <td class="text-muted">{{ upd.current_version|default:"—" }}</td>
+                        <td class="text-danger fw-semibold">{{ upd.new_version }}</td>
+                        <td>{{ upd.origin }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+        {% if uf.installed %}
+        <div class="card-body p-0">
+            <table class="table table-sm mb-0">
+                <thead class="table-light"><tr><th>App ID</th><th>Version</th><th>Remote</th></tr></thead>
+                <tbody>
+                    {% for pkg in uf.installed %}
+                    <tr><td>{{ pkg.app_id }}</td><td>{{ pkg.version }}</td><td>{{ pkg.origin }}</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+    {% endfor %}
+{% else %}
+<p class="text-muted">No per-user flatpak data available.
+    {% if client.last_checkin %}
+    The check-in agent may not be running as root.
+    {% else %}
+    No check-in received yet.
+    {% endif %}
+</p>
+{% endif %}
+
+{% endblock %}

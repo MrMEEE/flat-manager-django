@@ -151,17 +151,27 @@ jobs:
             | `*el9*.rpm` | CentOS Stream 9 / RHEL 9 |
             | `*el10*.rpm` | CentOS Stream 10 / RHEL 10 |
 
-            Each release produces two RPMs per distro:
+            Each release produces three RPMs per distro:
             - **`flat-manager-django-*`** — application source, systemd units, nginx config
             - **`flat-manager-django-python-libs-*`** — pre-built Python virtualenv (compiled extensions)
+            - **`flat-manager-django-client-*`** — check-in agent for client machines (noarch)
 
-            Install both packages together:
+            Install the server:
             ```
             dnf install flat-manager-django-<version>.rpm \
                         flat-manager-django-python-libs-<version>.rpm
             ```
 
-            ### First-time setup
+            Install the client agent on machines consuming the repositories:
+            ```
+            dnf install flat-manager-django-client-<version>.noarch.rpm
+            # Edit config:
+            vi /etc/flat-manager-django-client/config
+            # Run manually or add to cron:
+            flat-manager-checkin
+            ```
+
+            ### First-time server setup
             ```
             # 1. Edit the environment file
             vi /etc/flat-manager/flat-manager.env
