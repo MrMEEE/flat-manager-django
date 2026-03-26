@@ -79,6 +79,9 @@ class SiteConfigAdmin(admin.ModelAdmin):
         ('Available Version Scan', {
             'fields': ['available_version_check_interval_hours'],
         }),
+        ('BuildStream', {
+            'fields': ['bst_checkout_timeout_minutes'],
+        }),
         ('Promotions', {
             'fields': ['promotion_retry_interval_minutes', 'promotion_stale_timeout_minutes'],
         }),

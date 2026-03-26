@@ -201,6 +201,11 @@ CORS_ALLOWED_ORIGINS = os.environ.get(
 FLATPAK_REPO_PATH = os.environ.get('REPOS_BASE_PATH', str(BASE_DIR / 'repos'))
 FLATPAK_BUILD_PATH = os.environ.get('FLATPAK_BUILD_PATH', str(BASE_DIR / 'builds'))
 
+# BuildStream venv paths — set to the venv root (e.g. /opt/bst2-venv).
+# The bst binary is resolved as <venv>/bin/bst.  Leave empty to use system PATH.
+BST1_VENV_PATH = os.environ.get('BST1_VENV_PATH', '')
+BST2_VENV_PATH = os.environ.get('BST2_VENV_PATH', '')
+
 # Logging Configuration
 _LOG_DIR = os.environ.get('LOG_DIR', str(BASE_DIR / 'logs'))
 LOGGING = {

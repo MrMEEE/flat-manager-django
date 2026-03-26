@@ -234,12 +234,24 @@ class BuildStreamSource(models.Model):
                   "The element must produce an OSTree flatpak repo in its artifact.",
     )
 
+    BST_VERSION_CHOICES = [
+        ('bst2', 'BuildStream 2'),
+        ('bst1', 'BuildStream 1 (legacy)'),
+    ]
+    bst_version = models.CharField(
+        max_length=10, choices=BST_VERSION_CHOICES, default='bst2',
+        help_text="BuildStream major version. BST 1 and BST 2 have incompatible project.conf formats.",
+    )
+
     # Build state
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     build_number = models.IntegerField(default=1)
     version = models.CharField(max_length=255, blank=True)
     source_commit = models.CharField(max_length=255, blank=True)
     error_message = models.TextField(blank=True)
+    # Newline-separated list of OSTree refs produced by the last successful build
+    # (captured from `ostree refs --repo=<checkout>` after `bst artifact checkout`).
+    produced_refs = models.TextField(blank=True, default='')
 
     # Metadata
     created_by = models.ForeignKey(
@@ -404,6 +416,10 @@ class SiteConfig(models.Model):
     stale_build_timeout_minutes = models.PositiveIntegerField(
         default=30,
         help_text="Minutes of log inactivity before an in-progress build is considered stuck and marked as failed."
+    )
+    bst_checkout_timeout_minutes = models.PositiveIntegerField(
+        default=30,
+        help_text="Maximum time (in minutes) allowed for 'bst artifact checkout' and the subsequent 'flatpak build-commit-from' import. Increase for large SDKs."
     )
     promotion_retry_interval_minutes = models.PositiveIntegerField(
         default=1,

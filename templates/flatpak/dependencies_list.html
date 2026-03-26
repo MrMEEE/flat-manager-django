@@ -1,160 +1,231 @@
 {% extends 'base.html' %}
 
-{% block title %}Flatpak Dependencies{% endblock %}
+{% block title %}Dependencies — Flat Manager{% endblock %}
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h2>
-        <i class="bi bi-puzzle"></i> Flatpak Dependencies
-    </h2>
-    <div>
-        <span class="badge bg-primary">System: {{ total_system }}</span>
-        <span class="badge bg-info">User: {{ total_user }}</span>
-    </div>
+    <h2><i class="bi bi-puzzle"></i> Dependencies</h2>
 </div>
 
 {% if dependencies.errors %}
 <div class="alert alert-warning">
-    <strong>Errors:</strong>
-    <ul class="mb-0">
-        {% for error in dependencies.errors %}
-        <li>{{ error }}</li>
-        {% endfor %}
-    </ul>
+    <strong>Errors detecting installed Flatpaks:</strong>
+    <ul class="mb-0">{% for e in dependencies.errors %}<li>{{ e }}</li>{% endfor %}</ul>
 </div>
 {% endif %}
 
-<div class="row">
-    <!-- System Dependencies -->
-    <div class="col-md-6">
-        <div class="card mb-4">
-            <div class="card-header bg-primary text-white">
-                <h5 class="mb-0">
-                    <i class="bi bi-hdd"></i> System Dependencies ({{ total_system }})
-                </h5>
-            </div>
-            <div class="card-body p-0">
-                {% if dependencies.system %}
-                <div class="table-responsive">
-                    <table class="table table-hover mb-0">
-                        <thead>
-                            <tr>
-                                <th>Name</th>
-                                <th>Type</th>
-                                <th>Version</th>
-                                <th>Branch</th>
-                                <th>Origin</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for dep in dependencies.system %}
-                            <tr>
-                                <td>
-                                    <strong>{{ dep.name }}</strong><br>
-                                    <small class="text-muted">{{ dep.id }}</small>
-                                </td>
-                                <td>
-                                    {% if dep.type == 'SDK' %}
-                                    <span class="badge bg-success">SDK</span>
-                                    {% elif dep.type == 'Runtime' %}
-                                    <span class="badge bg-info">Runtime</span>
-                                    {% elif dep.type == 'Extension' %}
-                                    <span class="badge bg-warning">Extension</span>
-                                    {% else %}
-                                    <span class="badge bg-secondary">{{ dep.type }}</span>
-                                    {% endif %}
-                                </td>
-                                <td>{{ dep.version|default:"—" }}</td>
-                                <td><code>{{ dep.branch }}</code></td>
-                                <td>{{ dep.origin }}</td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-                {% else %}
-                <div class="p-3 text-center text-muted">
-                    <i class="bi bi-inbox" style="font-size: 2rem;"></i>
-                    <p class="mb-0 mt-2">No system dependencies installed</p>
-                </div>
-                {% endif %}
-            </div>
-        </div>
+<!-- ====================================================== -->
+<!-- Common Dependencies catalog                           -->
+<!-- ====================================================== -->
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-collection"></i> Common Dependencies</h5>
+        <small class="text-muted">Runtimes, SDKs and extensions commonly needed by Flatpak apps</small>
     </div>
-
-    <!-- User Dependencies -->
-    <div class="col-md-6">
-        <div class="card mb-4">
-            <div class="card-header bg-info text-white">
-                <h5 class="mb-0">
-                    <i class="bi bi-person"></i> User Dependencies ({{ total_user }})
-                </h5>
-            </div>
-            <div class="card-body p-0">
-                {% if dependencies.user %}
-                <div class="table-responsive">
-                    <table class="table table-hover mb-0">
-                        <thead>
-                            <tr>
-                                <th>Name</th>
-                                <th>Type</th>
-                                <th>Version</th>
-                                <th>Branch</th>
-                                <th>Origin</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for dep in dependencies.user %}
-                            <tr>
-                                <td>
-                                    <strong>{{ dep.name }}</strong><br>
-                                    <small class="text-muted">{{ dep.id }}</small>
-                                </td>
-                                <td>
-                                    {% if dep.type == 'SDK' %}
-                                    <span class="badge bg-success">SDK</span>
-                                    {% elif dep.type == 'Runtime' %}
-                                    <span class="badge bg-info">Runtime</span>
-                                    {% elif dep.type == 'Extension' %}
-                                    <span class="badge bg-warning">Extension</span>
-                                    {% else %}
-                                    <span class="badge bg-secondary">{{ dep.type }}</span>
-                                    {% endif %}
-                                </td>
-                                <td>{{ dep.version|default:"—" }}</td>
-                                <td><code>{{ dep.branch }}</code></td>
-                                <td>{{ dep.origin }}</td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-                {% else %}
-                <div class="p-3 text-center text-muted">
-                    <i class="bi bi-inbox" style="font-size: 2rem;"></i>
-                    <p class="mb-0 mt-2">No user dependencies installed</p>
-                </div>
-                {% endif %}
-            </div>
-        </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Name / ID</th>
+                    <th>Type</th>
+                    <th>Build system</th>
+                    <th>Status in flat-manager</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for dep in known_deps %}
+            <tr>
+                <td>
+                    <strong>{{ dep.name }}</strong>
+                    {% if dep.warning %}
+                    <i class="bi bi-exclamation-triangle-fill text-warning ms-1" title="{{ dep.warning }}"></i>
+                    {% endif %}
+                    <br>
+                    <code class="small text-muted">{{ dep.id }}</code>
+                    <br>
+                    <small class="text-muted">{{ dep.description }}</small>
+                </td>
+                <td>
+                    {% if dep.type == 'SDK' %}
+                    <span class="badge bg-success">SDK</span>
+                    {% elif dep.type == 'Runtime' %}
+                    <span class="badge bg-info text-dark">Runtime</span>
+                    {% else %}
+                    <span class="badge bg-warning text-dark">Extension</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if dep.build_type == 'bst' %}
+                    <span class="badge bg-primary"><i class="bi bi-layers"></i> BuildStream</span>
+                    {% else %}
+                    <span class="badge bg-secondary"><i class="bi bi-box"></i> flatpak-builder</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if dep.managed_bst %}
+                    <a href="{% url 'flatpak:bst_source_detail' dep.managed_bst.pk %}" class="badge bg-success text-decoration-none">
+                        <i class="bi bi-layers"></i> BST: {{ dep.managed_bst.name }}
+                    </a>
+                    {% elif dep.managed_pkg %}
+                    <a href="{% url 'flatpak:package_detail' dep.managed_pkg.pk %}" class="badge bg-primary text-decoration-none">
+                        <i class="bi bi-box"></i> Package: {{ dep.managed_pkg.package_name|default:dep.managed_pkg.package_id }}
+                    </a>
+                    {% else %}
+                    <span class="text-muted small"><i class="bi bi-dash-circle"></i> Not managed</span>
+                    {% endif %}
+                </td>
+                <td class="text-end">
+                    {% if not dep.managed_bst and not dep.managed_pkg %}
+                    {% if dep.build_type == 'bst' %}
+                    <a href="{{ dep.add_bst_url }}" class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-plus-circle"></i> Add as BST
+                    </a>
+                    {% else %}
+                    <a href="{{ dep.add_pkg_url }}" class="btn btn-sm btn-outline-success">
+                        <i class="bi bi-plus-circle"></i> Add as Package
+                    </a>
+                    {% endif %}
+                    {% else %}
+                    <span class="text-success small"><i class="bi bi-check-circle-fill"></i> Managed</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 
-<div class="card">
-    <div class="card-body">
-        <h5 class="card-title">About Dependencies</h5>
-        <p class="card-text">
-            This page shows all Flatpak SDKs, runtimes, and extensions installed on this system. 
-            These dependencies are used when building Flatpak applications.
-        </p>
-        <ul>
-            <li><strong>SDKs</strong>: Development kits containing compilers, libraries, and tools for building applications</li>
-            <li><strong>Runtimes</strong>: Platform libraries required to run applications</li>
-            <li><strong>Extensions</strong>: Additional tools and libraries that extend SDKs (e.g., programming language runtimes)</li>
-        </ul>
-        <p class="card-text">
-            <strong>System</strong> dependencies are available to all users, while <strong>User</strong> dependencies are only available to the current user.
-        </p>
+<!-- ====================================================== -->
+<!-- Installed Flatpak runtimes/SDKs (from flatpak list)   -->
+<!-- ====================================================== -->
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-hdd"></i> Installed — System
+            <span class="badge bg-primary ms-1">{{ total_system }}</span>
+        </h5>
+    </div>
+    <div class="card-body p-0">
+        {% if dependencies.system %}
+        <div class="table-responsive">
+            <table class="table table-hover table-sm align-middle mb-0">
+                <thead class="table-light">
+                    <tr><th>Name / ID</th><th>Type</th><th>Branch</th><th>Status in flat-manager</th><th class="text-end">Actions</th></tr>
+                </thead>
+                <tbody>
+                {% for dep in dependencies.system %}
+                <tr>
+                    <td>
+                        <strong>{{ dep.name }}</strong><br>
+                        <code class="small text-muted">{{ dep.id }}</code>
+                    </td>
+                    <td>
+                        {% if dep.type == 'SDK' %}<span class="badge bg-success">SDK</span>
+                        {% elif dep.type == 'Runtime' %}<span class="badge bg-info text-dark">Runtime</span>
+                        {% else %}<span class="badge bg-warning text-dark">Extension</span>{% endif %}
+                    </td>
+                    <td><code class="small">{{ dep.branch }}</code></td>
+                    <td>
+                        {% if dep.managed_bst %}
+                        <a href="{% url 'flatpak:bst_source_detail' dep.managed_bst.pk %}" class="badge bg-success text-decoration-none">
+                            <i class="bi bi-layers"></i> BST: {{ dep.managed_bst.name }}
+                        </a>
+                        {% elif dep.managed_pkg %}
+                        <a href="{% url 'flatpak:package_detail' dep.managed_pkg.pk %}" class="badge bg-primary text-decoration-none">
+                            <i class="bi bi-box"></i> Package: {{ dep.managed_pkg.package_name|default:dep.managed_pkg.package_id }}
+                        </a>
+                        {% else %}
+                        <span class="text-muted small"><i class="bi bi-dash-circle"></i> Not managed</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-end">
+                        {% if not dep.is_managed %}
+                        {% if dep.has_bst_info %}
+                        <a href="{{ dep.add_bst_url }}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-plus-circle"></i> Add as BST
+                        </a>
+                        {% endif %}
+                        <a href="{{ dep.add_pkg_url }}" class="btn btn-sm btn-outline-success{% if dep.has_bst_info %} ms-1{% endif %}">
+                            <i class="bi bi-plus-circle"></i> Add as Package
+                        </a>
+                        {% else %}
+                        <span class="text-success small"><i class="bi bi-check-circle-fill"></i> Managed</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted text-center py-3 mb-0">No system runtimes/SDKs installed.</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-person"></i> Installed — User
+            <span class="badge bg-info text-dark ms-1">{{ total_user }}</span>
+        </h5>
+    </div>
+    <div class="card-body p-0">
+        {% if dependencies.user %}
+        <div class="table-responsive">
+            <table class="table table-hover table-sm align-middle mb-0">
+                <thead class="table-light">
+                    <tr><th>Name / ID</th><th>Type</th><th>Branch</th><th>Status in flat-manager</th><th class="text-end">Actions</th></tr>
+                </thead>
+                <tbody>
+                {% for dep in dependencies.user %}
+                <tr>
+                    <td>
+                        <strong>{{ dep.name }}</strong><br>
+                        <code class="small text-muted">{{ dep.id }}</code>
+                    </td>
+                    <td>
+                        {% if dep.type == 'SDK' %}<span class="badge bg-success">SDK</span>
+                        {% elif dep.type == 'Runtime' %}<span class="badge bg-info text-dark">Runtime</span>
+                        {% else %}<span class="badge bg-warning text-dark">Extension</span>{% endif %}
+                    </td>
+                    <td><code class="small">{{ dep.branch }}</code></td>
+                    <td>
+                        {% if dep.managed_bst %}
+                        <a href="{% url 'flatpak:bst_source_detail' dep.managed_bst.pk %}" class="badge bg-success text-decoration-none">
+                            <i class="bi bi-layers"></i> BST: {{ dep.managed_bst.name }}
+                        </a>
+                        {% elif dep.managed_pkg %}
+                        <a href="{% url 'flatpak:package_detail' dep.managed_pkg.pk %}" class="badge bg-primary text-decoration-none">
+                            <i class="bi bi-box"></i> Package: {{ dep.managed_pkg.package_name|default:dep.managed_pkg.package_id }}
+                        </a>
+                        {% else %}
+                        <span class="text-muted small"><i class="bi bi-dash-circle"></i> Not managed</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-end">
+                        {% if not dep.is_managed %}
+                        {% if dep.has_bst_info %}
+                        <a href="{{ dep.add_bst_url }}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-plus-circle"></i> Add as BST
+                        </a>
+                        {% endif %}
+                        <a href="{{ dep.add_pkg_url }}" class="btn btn-sm btn-outline-success{% if dep.has_bst_info %} ms-1{% endif %}">
+                            <i class="bi bi-plus-circle"></i> Add as Package
+                        </a>
+                        {% else %}
+                        <span class="text-success small"><i class="bi bi-check-circle-fill"></i> Managed</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted text-center py-3 mb-0">No user runtimes/SDKs installed.</p>
+        {% endif %}
     </div>
 </div>
 {% endblock %}
+

@@ -666,13 +666,33 @@ def package_from_git_task(self, package_id):
                 logger.warning(f"Failed to cleanup temp directory {temp_dir}: {e}")
 
 
+def _get_bst_binary(bst_version):
+    """Return the path to the bst executable for the given BST major version.
+
+    Resolution order:
+      1. If BST1_VENV_PATH / BST2_VENV_PATH is set in Django settings, use
+         <venv>/bin/bst.
+      2. Otherwise fall back to bare ``bst`` (resolved via PATH).
+    """
+    from django.conf import settings
+    if bst_version == 'bst1':
+        venv = getattr(settings, 'BST1_VENV_PATH', '').strip()
+    else:
+        venv = getattr(settings, 'BST2_VENV_PATH', '').strip()
+    if venv:
+        return os.path.join(venv, 'bin', 'bst')
+    return 'bst'
+
+
 @shared_task(bind=True)
-def buildstream_build_task(self, bst_source_id):
+def buildstream_build_task(self, bst_source_id, force_rebuild=False):
     """
     Build a BuildStream project from a git repository.
 
     Pipeline:
       1. Clone the git repository at the requested branch.
+      1b. (force_rebuild only) Run ``bst artifact delete <bst_element>`` to
+          purge the cached artifact so BST performs a full rebuild from source.
       2. Run ``bst build <bst_element>`` inside the cloned project directory.
       3. Run ``bst artifact checkout <bst_element> --directory <checkout_dir>``
          to extract the artifact.  The checkout directory is an OSTree flatpak
@@ -687,6 +707,8 @@ def buildstream_build_task(self, bst_source_id):
 
     try:
         source = BuildStreamSource.objects.get(id=bst_source_id)
+
+        bst_binary = _get_bst_binary(getattr(source, 'bst_version', 'bst2'))
 
         # Create Build history record
         build = Build.objects.create(
@@ -731,9 +753,32 @@ def buildstream_build_task(self, bst_source_id):
             source.save()
             log_build(build, 'info', f"Source commit: {source.source_commit}")
 
+        # ── 1b. Clear artifact cache (force rebuild only) ──────────────────
+        # Use --deps all so that every sub-element artifact is purged, not just
+        # the top-level element.  Without this, BST re-assembles the top-level
+        # from its still-cached (still-corrupt) dependencies and the import
+        # step brings the corrupted content objects back in unchanged.
+        # With all deps cleared, BST re-pulls each from the remote cache
+        # (freedesktop-sdk's own servers, which are clean) or rebuilds from
+        # source, giving us guaranteed-clean artifacts.
+        if force_rebuild:
+            send_build_status_update(bst_source_id, 'building', 'Clearing BST artifact cache for full rebuild')
+            log_build(build, 'info', f"Force rebuild: deleting all cached artifacts (--deps all) for {source.bst_element}")
+            delete_result = subprocess.run(
+                [bst_binary, 'artifact', 'delete', '--deps', 'all', source.bst_element],
+                cwd=source_dir, capture_output=True, text=True, timeout=300,
+            )
+            if delete_result.returncode != 0:
+                # Log the warning but don't abort — BST may report non-zero if
+                # the artifact simply isn't cached yet (first-ever build).
+                log_build(build, 'warning',
+                    f"bst artifact delete exited {delete_result.returncode}: {delete_result.stderr.strip()[:500]}")
+            else:
+                log_build(build, 'info', "All artifact caches cleared — BST will re-pull or rebuild all elements")
+
         # bst build
         send_build_status_update(bst_source_id, 'building', f'Running bst build {source.bst_element}')
-        log_build(build, 'info', f"Running: bst build {source.bst_element}")
+        log_build(build, 'info', f"Running: {bst_binary} build {source.bst_element}")
 
         try:
             config = SiteConfig.get_solo()
@@ -741,7 +786,7 @@ def buildstream_build_task(self, bst_source_id):
         except Exception:
             build_timeout = 7200
 
-        bst_cmd = ['bst', 'build', source.bst_element]
+        bst_cmd = [bst_binary, 'build', source.bst_element]
         bst_build_result = run_cancellable(bst_cmd, cwd=source_dir, build=build, timeout_seconds=build_timeout)
 
         if bst_build_result.returncode != 0:
@@ -759,10 +804,16 @@ def buildstream_build_task(self, bst_source_id):
         send_build_status_update(bst_source_id, 'building', 'Checking out BuildStream artifact')
         log_build(build, 'info', f"Checking out artifact to {checkout_dir}")
 
-        checkout_cmd = ['bst', 'artifact', 'checkout', source.bst_element, '--directory', checkout_dir]
+        try:
+            _cfg = SiteConfig.get_solo()
+            bst_checkout_timeout = max(getattr(_cfg, 'bst_checkout_timeout_minutes', 30), 10) * 60
+        except Exception:
+            bst_checkout_timeout = 1800
+
+        checkout_cmd = [bst_binary, 'artifact', 'checkout', source.bst_element, '--directory', checkout_dir]
         checkout_result = subprocess.run(
             checkout_cmd, cwd=source_dir,
-            capture_output=True, text=True, timeout=600,
+            capture_output=True, text=True, timeout=bst_checkout_timeout,
         )
         if checkout_result.returncode != 0:
             raise RuntimeError(
@@ -771,6 +822,18 @@ def buildstream_build_task(self, bst_source_id):
             )
 
         log_build(build, 'info', "Artifact checked out")
+
+        # Always capture the full list of OSTree refs exported by this element
+        # so it can be displayed on the detail page without re-running BST.
+        refs_in_checkout = subprocess.run(
+            ['ostree', 'refs', f'--repo={checkout_dir}'],
+            capture_output=True, text=True, timeout=30,
+        )
+        if refs_in_checkout.returncode == 0:
+            ref_list = sorted(r.strip() for r in refs_in_checkout.stdout.splitlines() if r.strip())
+            source.produced_refs = '\n'.join(ref_list)
+            source.save(update_fields=['produced_refs'])
+            log_build(build, 'info', f"Captured {len(ref_list)} produced refs from checkout")
 
         # flatpak build-commit-from -> build-repo
         # The checked-out artifact is a flatpak OSTree repo.
@@ -784,17 +847,74 @@ def buildstream_build_task(self, bst_source_id):
                 check=True, capture_output=True, text=True,
             )
 
+        # ── 3b. Force reimport: delete build-repo refs matching the checkout ──
+        # This is the critical step that makes force_rebuild actually fix
+        # OSTree-level corruption.  When the destination refs already exist with
+        # the same commit hash, flatpak build-commit-from says "no change" and
+        # never rewrites content objects — leaving corrupted ones in place.
+        # By deleting the refs first and pruning orphaned objects, we guarantee
+        # that every content object (including any corrupted ones) is rewritten
+        # from scratch during the subsequent import.
+        if force_rebuild:
+            send_build_status_update(bst_source_id, 'building', 'Clearing build-repo refs for clean reimport')
+            log_build(build, 'info', "Force rebuild: listing refs in BST checkout to clear from build-repo")
+            list_refs_result = subprocess.run(
+                ['ostree', 'refs', f'--repo={checkout_dir}'],
+                capture_output=True, text=True, timeout=30,
+            )
+            if list_refs_result.returncode == 0:
+                checkout_refs = [r.strip() for r in list_refs_result.stdout.splitlines() if r.strip()]
+                log_build(build, 'info', f"Deleting {len(checkout_refs)} refs from build-repo to force fresh commits")
+                for ref in checkout_refs:
+                    subprocess.run(
+                        ['ostree', 'refs', '--delete', ref, f'--repo={build_repo_path}'],
+                        capture_output=True, text=True, timeout=30,
+                    )
+                # Prune objects no longer reachable from any ref
+                prune_result = subprocess.run(
+                    ['ostree', 'prune', '--refs-only', f'--repo={build_repo_path}'],
+                    capture_output=True, text=True, timeout=300,
+                )
+                if prune_result.returncode == 0:
+                    log_build(build, 'info',
+                        f"Orphaned objects pruned from build-repo: {prune_result.stdout.strip()[:300]}")
+                else:
+                    log_build(build, 'warning',
+                        f"ostree prune warning: {prune_result.stderr.strip()[:300]}")
+                # Delete any corrupted objects that are still referenced by OTHER
+                # refs (e.g. a different BST source's refs staying in build-repo).
+                # Without this, OSTree skips re-writing objects it thinks it already
+                # has, leaving the corrupted data in place even after a clean import.
+                fsck_delete_result = subprocess.run(
+                    ['ostree', 'fsck', '--delete', f'--repo={build_repo_path}'],
+                    capture_output=True, text=True, timeout=300,
+                )
+                if fsck_delete_result.returncode == 0:
+                    log_build(build, 'info', "ostree fsck --delete: no corrupted objects found (repo is clean)")
+                else:
+                    # Non-zero means corrupted objects were found AND deleted
+                    log_build(build, 'info',
+                        f"Corrupted objects removed from build-repo by fsck --delete: "
+                        f"{fsck_delete_result.stderr.strip()[:500]}")
+            else:
+                log_build(build, 'warning',
+                    f"Could not list checkout refs for cleanup: {list_refs_result.stderr.strip()[:300]}")
+
         send_build_status_update(bst_source_id, 'building', 'Importing artifact into build-repo')
         log_build(build, 'info', "Importing artifact into build-repo via flatpak build-commit-from")
 
+        # NOTE: --disable-fsync is intentionally omitted.
+        # build-repo uses archive-z2 mode (zlib-compressed .filez objects).  With
+        # --disable-fsync the kernel may not flush dirty pages before the process
+        # exits, leaving compressed objects whose decompressed content does not
+        # match the filename (SHA256 mismatch → ostree fsck corruption).
         import_cmd = [
             'flatpak', 'build-commit-from',
             f'--src-repo={checkout_dir}',
             f'--subject=BuildStream build {source.build_number} of {source.bst_element}',
-            '--disable-fsync',
             build_repo_path,
         ]
-        import_result = run_cancellable(import_cmd, cwd=temp_dir, build=build, timeout_seconds=600)
+        import_result = run_cancellable(import_cmd, cwd=temp_dir, build=build, timeout_seconds=bst_checkout_timeout)
 
         if import_result.returncode != 0:
             raise RuntimeError(
@@ -803,6 +923,22 @@ def buildstream_build_task(self, bst_source_id):
             )
 
         log_build(build, 'info', "Artifact imported into build-repo successfully")
+
+        # Post-import integrity check: remove any corrupted objects that were
+        # written during this import.  Runs on every build (not only force_rebuild)
+        # so we catch hardware/fs corruption early and never ship a broken repo.
+        post_fsck = subprocess.run(
+            ['ostree', 'fsck', '--delete', f'--repo={build_repo_path}'],
+            capture_output=True, text=True, timeout=300,
+        )
+        if post_fsck.returncode == 0:
+            log_build(build, 'info', "Post-import fsck: build-repo is clean")
+        else:
+            log_build(build, 'warning',
+                f"Post-import fsck found and deleted corrupted objects: "
+                f"{post_fsck.stderr.strip()[:800]}")
+            # Warn but do not abort — the corrupted objects have been removed;
+            # the refs they belonged to will show up as broken in the UI checker.
 
         # Version detection: query BST variables for the top-level element only
         # and extract the 'version' key from the YAML vars block.
@@ -2123,7 +2259,7 @@ def promote_bst_task(bst_promotion_id):
 
         result = subprocess.run(
             [
-                'flatpak', 'build-commit-from', '--disable-fsync',
+                'flatpak', 'build-commit-from',
                 f'--src-repo={build_repo_path}',
                 target_repo_path,
             ] + bst_refs,

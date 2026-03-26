@@ -5,9 +5,14 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2><i class="bi bi-layers"></i> BuildStream Sources</h2>
-    <a href="{% url 'flatpak:bst_source_create' %}" class="btn btn-primary">
-        <i class="bi bi-plus-circle"></i> New Source
-    </a>
+    <div class="d-flex gap-2">
+        <button type="button" class="btn btn-outline-secondary" id="btn-check-integrity" onclick="checkIntegrity()">
+            <i class="bi bi-shield-check"></i> Check Integrity
+        </button>
+        <a href="{% url 'flatpak:bst_source_create' %}" class="btn btn-primary">
+            <i class="bi bi-plus-circle"></i> New Source
+        </a>
+    </div>
 </div>
 
 {% if sources %}
@@ -72,6 +77,26 @@
     </a>
 </div>
 {% endif %}
+<!-- Integrity check results modal -->
+<div class="modal fade" id="integrityModal" tabindex="-1" aria-labelledby="integrityModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="integrityModalLabel"><i class="bi bi-shield-check"></i> Build Repository Integrity</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="integrity-modal-body">
+                <div class="text-center py-3">
+                    <span class="spinner-border text-primary"></span>
+                    <p class="mt-2 text-muted">Running ostree fsck on build-repo&hellip;</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -93,6 +118,54 @@ const statusCells = {};
 document.querySelectorAll('tr[data-source-id]').forEach(row => {
     statusCells[row.dataset.sourceId] = row.querySelector('.bst-status-cell');
 });
+
+function checkIntegrity() {
+    const btn = document.getElementById('btn-check-integrity');
+    const body = document.getElementById('integrity-modal-body');
+    const modal = new bootstrap.Modal(document.getElementById('integrityModal'));
+
+    body.innerHTML = '<div class="text-center py-3"><span class="spinner-border text-primary"></span><p class="mt-2 text-muted">Running ostree fsck on build-repo&hellip;</p></div>';
+    modal.show();
+    btn.disabled = true;
+
+    fetch("{% url 'flatpak:bst_integrity_check' %}")
+        .then(r => r.json())
+        .then(data => {
+            btn.disabled = false;
+            if (data.status === 'clean') {
+                const note = data.note ? `<br><small class="text-muted">${data.note}</small>` : '';
+                body.innerHTML = '<div class="alert alert-success mb-0"><i class="bi bi-check-circle-fill me-2"></i><strong>No corruption detected.</strong> build-repo passed all integrity checks.' + note + '</div>';
+            } else if (data.status === 'corrupted') {
+                let html = '<div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i><strong>Corruption detected!</strong> ' +
+                    data.corrupted_commit_count + ' commit(s) reference corrupted objects.</div>';
+                if (data.corrupted_objects && data.corrupted_objects.length) {
+                    html += '<p class="fw-semibold mb-1">Corrupted content objects:</p><ul class="mb-3 font-monospace small">';
+                    data.corrupted_objects.forEach(o => { html += `<li>${o}</li>`; });
+                    html += '</ul>';
+                }
+                if (data.corrupted_refs && data.corrupted_refs.length) {
+                    html += '<p class="fw-semibold mb-1">Affected refs:</p>' +
+                        '<table class="table table-sm table-bordered mb-3"><thead><tr><th>Ref</th><th>Commit</th></tr></thead><tbody>';
+                    data.corrupted_refs.forEach(r => {
+                        html += `<tr><td><code>${r.ref}</code></td><td><code>${r.commit}</code></td></tr>`;
+                    });
+                    html += '</tbody></table>';
+                    html += '<div class="alert alert-warning mb-0"><i class="bi bi-info-circle me-1"></i>' +
+                        'Use <strong>Force Full Rebuild</strong> on the corresponding BST source(s) to fix corruption.</div>';
+                } else {
+                    html += '<div class="alert alert-warning mb-0"><i class="bi bi-info-circle me-1"></i>' +
+                        'No active refs are currently pointing to corrupted commits. The corrupted commits may be orphaned and will be removed by the next prune.</div>';
+                }
+                body.innerHTML = html;
+            } else {
+                body.innerHTML = '<div class="alert alert-danger mb-0">Error: ' + (data.message || 'Unknown error') + '</div>';
+            }
+        })
+        .catch(err => {
+            btn.disabled = false;
+            body.innerHTML = '<div class="alert alert-danger mb-0">Request failed: ' + err + '</div>';
+        });
+}
 
 (function () {
     const wsScheme = window.location.protocol === 'https:' ? 'wss' : 'ws';

@@ -1248,6 +1248,13 @@ class PackageCreateView(LoginRequiredMixin, CreateView):
     template_name = 'flatpak/package_form.html'
     fields = ['repository', 'package_id', 'package_name', 'version', 'git_repo_url', 'git_branch', 'upstream_url', 'upstream_version_script', 'branch', 'arch', 'installation_type']
     
+    def get_initial(self):
+        initial = super().get_initial()
+        for field in ('package_id', 'package_name', 'git_repo_url', 'git_branch', 'upstream_url', 'arch', 'branch'):
+            if field in self.request.GET:
+                initial[field] = self.request.GET[field]
+        return initial
+
     def get_form(self, form_class=None):
         form = super().get_form(form_class)
         # Filter repositories to exclude those with parent repos
@@ -1601,82 +1608,222 @@ class RunUpstreamVersionScanView(LoginRequiredMixin, View):
 
 @login_required
 def dependencies_list(request):
-    """List all installed Flatpak dependencies (SDKs, runtimes, extensions)."""
+    """List known common Flatpak dependencies and installed Flatpak runtimes/SDKs/extensions."""
     import subprocess
-    import re
-    
-    dependencies = {
-        'system': [],
-        'user': [],
-        'errors': []
-    }
-    
-    # Get system installations
-    try:
-        result = subprocess.run(
-            ['flatpak', 'list', '--system', '--columns=name,application,version,branch,origin'],
-            capture_output=True,
-            text=True,
-            timeout=30
+    from urllib.parse import urlencode
+
+    # ------------------------------------------------------------------ #
+    # Curated catalog of well-known common Flatpak runtime dependencies.  #
+    # Each entry carries enough info to pre-fill either create form.      #
+    # ------------------------------------------------------------------ #
+    KNOWN_DEPS = [
+        {
+            'id': 'org.gnome.Platform',
+            'name': 'GNOME Platform',
+            'type': 'Runtime',
+            'build_type': 'bst',
+            'git_repo_url': 'https://gitlab.gnome.org/GNOME/gnome-build-meta.git',
+            'git_branch': 'master',
+            'bst_element': 'elements/flatpak/platform/platform.bst',
+            'description': 'GNOME Platform runtime — built with BuildStream (gnome-build-meta)',
+        },
+        {
+            'id': 'org.gnome.Sdk',
+            'name': 'GNOME SDK',
+            'type': 'SDK',
+            'build_type': 'bst',
+            'git_repo_url': 'https://gitlab.gnome.org/GNOME/gnome-build-meta.git',
+            'git_branch': 'master',
+            'bst_element': 'elements/flatpak/sdk/sdk.bst',
+            'description': 'GNOME SDK — built with BuildStream (gnome-build-meta)',
+        },
+        {
+            'id': 'org.kde.Platform',
+            'name': 'KDE Plasma Platform',
+            'type': 'Runtime',
+            'build_type': 'flatpak',
+            'git_repo_url': 'https://invent.kde.org/packaging/flatpak-kde-runtime.git',
+            'git_branch': 'qt6.10',
+            'bst_element': None,
+            'description': 'KDE Platform runtime — built with flatpak-builder (flatpak-kde-runtime)',
+        },
+        {
+            'id': 'org.kde.Sdk',
+            'name': 'KDE SDK',
+            'type': 'SDK',
+            'build_type': 'flatpak',
+            'git_repo_url': 'https://invent.kde.org/packaging/flatpak-kde-runtime.git',
+            'git_branch': 'qt6.10',
+            'bst_element': None,
+            'description': 'KDE SDK — built with flatpak-builder (flatpak-kde-runtime)',
+        },
+        {
+            'id': 'org.freedesktop.Platform.openh264',
+            'name': 'OpenH264 Extension',
+            'type': 'Extension',
+            'build_type': 'bst',
+            'git_repo_url': 'https://gitlab.com/freedesktop-sdk/openh264-extension.git',
+            'git_branch': 'master',
+            'bst_element': 'elements/openh264-extension.bst',
+            'description': 'Cisco OpenH264 codec extension — BST (openh264-extension)',
+            'warning': 'Only supported on freedesktop-sdk 24.08 and earlier; obsolete in 25.08+',
+        },
+        {
+            'id': 'org.freedesktop.Sdk.Extension.golang',
+            'name': 'Go SDK Extension',
+            'type': 'Extension',
+            'build_type': 'flatpak',
+            'git_repo_url': 'https://github.com/flathub/org.freedesktop.Sdk.Extension.golang.git',
+            'git_branch': 'master',
+            'bst_element': None,
+            'description': 'Go programming language SDK extension — flatpak-builder (Flathub)',
+        },
+        {
+            'id': 'org.freedesktop.Sdk.Extension.openjdk17',
+            'name': 'OpenJDK 17 Extension',
+            'type': 'Extension',
+            'build_type': 'flatpak',
+            'git_repo_url': 'https://github.com/flathub/org.freedesktop.Sdk.Extension.openjdk17.git',
+            'git_branch': 'master',
+            'bst_element': None,
+            'description': 'Java 17 (OpenJDK) SDK extension — flatpak-builder (Flathub)',
+        },
+        {
+            'id': 'org.freedesktop.Sdk.Extension.openjdk21',
+            'name': 'OpenJDK 21 Extension',
+            'type': 'Extension',
+            'build_type': 'flatpak',
+            'git_repo_url': 'https://github.com/flathub/org.freedesktop.Sdk.Extension.openjdk21.git',
+            'git_branch': 'master',
+            'bst_element': None,
+            'description': 'Java 21 (OpenJDK) SDK extension — flatpak-builder (Flathub)',
+        },
+        {
+            'id': 'org.freedesktop.Sdk.Extension.rust-stable',
+            'name': 'Rust SDK Extension',
+            'type': 'Extension',
+            'build_type': 'flatpak',
+            'git_repo_url': 'https://github.com/flathub/org.freedesktop.Sdk.Extension.rust-stable.git',
+            'git_branch': 'master',
+            'bst_element': None,
+            'description': 'Rust (stable) SDK extension — flatpak-builder (Flathub)',
+        },
+        {
+            'id': 'org.freedesktop.Sdk.Extension.node20',
+            'name': 'Node.js 20 SDK Extension',
+            'type': 'Extension',
+            'build_type': 'flatpak',
+            'git_repo_url': 'https://github.com/flathub/org.freedesktop.Sdk.Extension.node20.git',
+            'git_branch': 'master',
+            'bst_element': None,
+            'description': 'Node.js 20 SDK extension — flatpak-builder (Flathub)',
+        },
+    ]
+
+    # For each known dep, check managed status against flat-manager DB
+    all_bst = list(BuildStreamSource.objects.only('pk', 'name', 'produced_refs'))
+    all_pkg = list(Package.objects.only('pk', 'package_id', 'package_name'))
+
+    bst_create_url = reverse('flatpak:bst_source_create')
+    pkg_create_url = reverse('flatpak:package_create')
+
+    for dep in KNOWN_DEPS:
+        app_id = dep['id']
+        # Check BST: produced_refs contains the app ID string, or the BST name matches
+        dep['managed_bst'] = next(
+            (b for b in all_bst if app_id in b.produced_refs or app_id.lower() in b.name.lower()),
+            None,
         )
-        if result.returncode == 0:
-            for line in result.stdout.strip().split('\n'):
-                if line:
+        # Check Package: exact package_id match
+        dep['managed_pkg'] = next((p for p in all_pkg if p.package_id == app_id), None)
+        dep['is_managed'] = dep['managed_bst'] is not None or dep['managed_pkg'] is not None
+
+        # Build pre-filled URLs
+        bst_params = {'name': dep['name']}
+        for k in ('git_repo_url', 'git_branch', 'bst_element'):
+            if dep.get(k):
+                bst_params[k] = dep[k]
+        dep['add_bst_url'] = bst_create_url + '?' + urlencode(bst_params)
+
+        pkg_params = {'package_id': app_id, 'package_name': dep['name']}
+        for k in ('git_repo_url', 'git_branch'):
+            if dep.get(k):
+                pkg_params[k] = dep[k]
+        dep['add_pkg_url'] = pkg_create_url + '?' + urlencode(pkg_params)
+
+    # ------------------------------------------------------------------ #
+    # Also list locally-installed Flatpak runtimes/SDKs/extensions       #
+    # ------------------------------------------------------------------ #
+    dependencies = {'system': [], 'user': [], 'errors': []}
+
+    for scope in ('system', 'user'):
+        try:
+            result = subprocess.run(
+                ['flatpak', 'list', f'--{scope}', '--columns=name,application,version,branch,origin'],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n'):
+                    if not line:
+                        continue
                     parts = line.split('\t')
-                    if len(parts) >= 5:
-                        dependencies['system'].append({
-                            'name': parts[0],
-                            'id': parts[1],
-                            'version': parts[2],
-                            'branch': parts[3],
-                            'origin': parts[4],
-                            'type': 'SDK' if 'Sdk' in parts[1] else 'Runtime' if 'Platform' in parts[1] or 'runtime' in parts[1].lower() else 'Extension' if 'Extension' in parts[1] else 'App'
+                    if len(parts) < 5:
+                        continue
+                    app_type = (
+                        'SDK'       if 'Sdk'       in parts[1] else
+                        'Runtime'   if 'Platform'  in parts[1] or 'runtime' in parts[1].lower() else
+                        'Extension' if 'Extension' in parts[1] else
+                        'App'
+                    )
+                    if app_type in ('SDK', 'Runtime', 'Extension'):
+                        dependencies[scope].append({
+                            'name': parts[0], 'id': parts[1], 'version': parts[2],
+                            'branch': parts[3], 'origin': parts[4], 'type': app_type,
                         })
-    except subprocess.TimeoutExpired:
-        dependencies['errors'].append('Timeout listing system flatpaks')
-    except Exception as e:
-        dependencies['errors'].append(f'Error listing system flatpaks: {str(e)}')
-    
-    # Get user installations
-    try:
-        result = subprocess.run(
-            ['flatpak', 'list', '--user', '--columns=name,application,version,branch,origin'],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        if result.returncode == 0:
-            for line in result.stdout.strip().split('\n'):
-                if line:
-                    parts = line.split('\t')
-                    if len(parts) >= 5:
-                        dependencies['user'].append({
-                            'name': parts[0],
-                            'id': parts[1],
-                            'version': parts[2],
-                            'branch': parts[3],
-                            'origin': parts[4],
-                            'type': 'SDK' if 'Sdk' in parts[1] else 'Runtime' if 'Platform' in parts[1] or 'runtime' in parts[1].lower() else 'Extension' if 'Extension' in parts[1] else 'App'
-                        })
-    except subprocess.TimeoutExpired:
-        dependencies['errors'].append('Timeout listing user flatpaks')
-    except Exception as e:
-        dependencies['errors'].append(f'Error listing user flatpaks: {str(e)}')
-    
-    # Filter to only show SDKs, Runtimes, and Extensions (not apps)
-    dependencies['system'] = [d for d in dependencies['system'] if d['type'] in ['SDK', 'Runtime', 'Extension']]
-    dependencies['user'] = [d for d in dependencies['user'] if d['type'] in ['SDK', 'Runtime', 'Extension']]
-    
-    # Sort by type, then name
-    dependencies['system'].sort(key=lambda x: (x['type'], x['name']))
-    dependencies['user'].sort(key=lambda x: (x['type'], x['name']))
-    
+                dependencies[scope].sort(key=lambda x: (x['type'], x['name']))
+        except subprocess.TimeoutExpired:
+            dependencies['errors'].append(f'Timeout listing {scope} flatpaks')
+        except Exception as exc:
+            dependencies['errors'].append(f'Error listing {scope} flatpaks: {exc}')
+
+    # Enrich installed flatpaks with managed status and pre-filled add URLs.
+    # Cross-reference KNOWN_DEPS to supply BST element info where available.
+    known_deps_by_id = {d['id']: d for d in KNOWN_DEPS}
+    for scope in ('system', 'user'):
+        for dep in dependencies[scope]:
+            app_id = dep['id']
+            dep['managed_bst'] = next(
+                (b for b in all_bst if app_id in b.produced_refs or app_id.lower() in b.name.lower()),
+                None,
+            )
+            dep['managed_pkg'] = next((p for p in all_pkg if p.package_id == app_id), None)
+            dep['is_managed'] = dep['managed_bst'] is not None or dep['managed_pkg'] is not None
+
+            known = known_deps_by_id.get(app_id, {})
+
+            bst_params = {'name': dep['name']}
+            if known.get('git_repo_url'):
+                bst_params['git_repo_url'] = known['git_repo_url']
+            if known.get('git_branch'):
+                bst_params['git_branch'] = known['git_branch']
+            if known.get('bst_element'):
+                bst_params['bst_element'] = known['bst_element']
+            dep['has_bst_info'] = bool(known.get('bst_element'))
+            dep['add_bst_url'] = (bst_create_url + '?' + urlencode(bst_params)) if dep['has_bst_info'] else None
+
+            pkg_params = {'package_id': app_id, 'package_name': dep['name']}
+            if known.get('git_repo_url'):
+                pkg_params['git_repo_url'] = known['git_repo_url']
+            if known.get('git_branch'):
+                pkg_params['git_branch'] = known['git_branch']
+            dep['add_pkg_url'] = pkg_create_url + '?' + urlencode(pkg_params)
+
     context = {
+        'known_deps': KNOWN_DEPS,
         'dependencies': dependencies,
         'total_system': len(dependencies['system']),
         'total_user': len(dependencies['user']),
     }
-    
     return render(request, 'flatpak/dependencies_list.html', context)
 
 
@@ -1872,7 +2019,14 @@ class BuildStreamSourceListView(LoginRequiredMixin, ListView):
 class BuildStreamSourceCreateView(LoginRequiredMixin, CreateView):
     model = BuildStreamSource
     template_name = 'flatpak/buildstreamsource_form.html'
-    fields = ['repository', 'name', 'git_repo_url', 'git_branch', 'bst_element']
+    fields = ['repository', 'name', 'git_repo_url', 'git_branch', 'bst_element', 'bst_version']
+
+    def get_initial(self):
+        initial = super().get_initial()
+        for field in ('name', 'git_repo_url', 'git_branch', 'bst_element'):
+            if field in self.request.GET:
+                initial[field] = self.request.GET[field]
+        return initial
 
     def get_form(self, form_class=None):
         form = super().get_form(form_class)
@@ -1916,13 +2070,40 @@ class BuildStreamSourceDetailView(LoginRequiredMixin, DetailView):
             .select_related('build', 'target_repo', 'promoted_by')
             .order_by('-created_at')[:20]
         )
+        # Build a coverage map: ref -> {'kind': 'bst'|'package', 'pk': int, 'name': str}
+        # Used by the template to show whether each produced ref is already managed elsewhere.
+        ref_coverage = {}
+        for bst in BuildStreamSource.objects.exclude(pk=self.object.pk).only('pk', 'name', 'produced_refs'):
+            for raw in bst.produced_refs.splitlines():
+                r = raw.strip()
+                if r and r not in ref_coverage:
+                    ref_coverage[r] = {'kind': 'bst', 'pk': bst.pk, 'name': bst.name}
+        for pkg in Package.objects.all().only('pk', 'package_id', 'package_name', 'arch', 'branch'):
+            disp = pkg.package_name or pkg.package_id
+            for prefix in ('app', 'runtime', 'appstream'):
+                key = f"{prefix}/{pkg.package_id}/{pkg.arch}/{pkg.branch}"
+                if key not in ref_coverage:
+                    ref_coverage[key] = {'kind': 'package', 'pk': pkg.pk, 'name': disp}
+
+        # Parse produced refs into grouped sections with per-ref coverage info.
+        # Refs look like: runtime/org.freedesktop.Sdk/x86_64/24.08
+        produced = [r for r in self.object.produced_refs.splitlines() if r.strip()]
+        grouped = {}
+        for ref in sorted(produced):
+            bucket = ref.split('/')[0] if '/' in ref else 'other'
+            grouped.setdefault(bucket, []).append({
+                'ref': ref,
+                'coverage': ref_coverage.get(ref),
+            })
+        context['produced_refs'] = produced
+        context['produced_refs_grouped'] = grouped
         return context
 
 
 class BuildStreamSourceUpdateView(LoginRequiredMixin, UpdateView):
     model = BuildStreamSource
     template_name = 'flatpak/buildstreamsource_form.html'
-    fields = ['repository', 'name', 'git_repo_url', 'git_branch', 'bst_element']
+    fields = ['repository', 'name', 'git_repo_url', 'git_branch', 'bst_element', 'bst_version']
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -1958,3 +2139,99 @@ class BuildStreamSourceRetryView(LoginRequiredMixin, View):
         else:
             messages.warning(request, f'Cannot retry: current status is {source.status}.')
         return redirect('flatpak:bst_source_detail', pk=pk)
+
+
+class BuildStreamSourceForceRebuildView(LoginRequiredMixin, View):
+    """Clear the BST artifact cache for a source and trigger a full rebuild from source."""
+
+    ALLOWED_STATUSES = {'failed', 'built', 'published', 'cancelled'}
+
+    def post(self, request, pk):
+        source = get_object_or_404(BuildStreamSource, pk=pk)
+        if source.status not in self.ALLOWED_STATUSES:
+            return JsonResponse(
+                {'error': f'Cannot force-rebuild: current status is \'{source.status}\''},
+                status=400,
+            )
+        source.status = 'pending'
+        source.build_number += 1
+        source.error_message = ''
+        source.save()
+        from apps.flatpak.tasks import buildstream_build_task
+        buildstream_build_task.delay(source.pk, force_rebuild=True)
+        return JsonResponse({'status': 'ok', 'build_number': source.build_number})
+
+
+class BuildStreamIntegrityCheckView(LoginRequiredMixin, View):
+    """Run ostree fsck on build-repo and return corruption status as JSON."""
+
+    def get(self, request):
+        import re as _re
+        build_repo_path = os.path.join(settings.REPOS_BASE_PATH, 'build-repo')
+        if not os.path.exists(os.path.join(build_repo_path, 'config')):
+            return JsonResponse({'status': 'error', 'message': 'build-repo does not exist'}, status=400)
+
+        try:
+            fsck = subprocess.run(
+                ['ostree', 'fsck', '--repo', build_repo_path],
+                capture_output=True, text=True, timeout=300,
+            )
+        except subprocess.TimeoutExpired:
+            return JsonResponse({'status': 'error', 'message': 'ostree fsck timed out after 300s'}, status=500)
+
+        if fsck.returncode == 0:
+            return JsonResponse({'status': 'clean', 'corrupted_refs': [], 'corrupted_objects': []})
+
+        # Parse corrupted commit hashes and object hashes from fsck output.
+        # Error format: "In commits <hash1>, <hash2>, ...: fsck content object <obj>: ..."
+        output = fsck.stderr + '\n' + fsck.stdout
+        corrupted_commits = set()
+        corrupted_objects = set()
+        for line in output.splitlines():
+            if 'In commits' in line:
+                # Extract hex64 strings from the "In commits ..." part only
+                before_fsck = line.split(': fsck')[0] if ': fsck' in line else line
+                for h in _re.findall(r'[0-9a-f]{64}', before_fsck):
+                    corrupted_commits.add(h)
+            obj_m = _re.search(r'content object ([0-9a-f]{64})', line)
+            if obj_m:
+                corrupted_objects.add(obj_m.group(1))
+
+        # fsck can exit non-zero for reasons other than live corruption
+        # (e.g. "N partial commits not verified" after objects were previously
+        # deleted by fsck --delete).  If we parsed zero corrupted commits the
+        # repo is effectively clean.
+        if not corrupted_commits:
+            return JsonResponse({
+                'status': 'clean',
+                'corrupted_refs': [],
+                'corrupted_objects': [],
+                'note': 'fsck reported partial commits (from prior cleanup) but no active corruption.',
+            })
+
+        # Map corrupted commits → active refs in build-repo
+        corrupted_refs = []
+        try:
+            refs_result = subprocess.run(
+                ['ostree', 'refs', f'--repo={build_repo_path}'],
+                capture_output=True, text=True, timeout=30,
+            )
+            if refs_result.returncode == 0:
+                for ref in (r.strip() for r in refs_result.stdout.splitlines() if r.strip()):
+                    rev = subprocess.run(
+                        ['ostree', 'rev-parse', f'--repo={build_repo_path}', ref],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    if rev.returncode == 0:
+                        commit = rev.stdout.strip()
+                        if commit in corrupted_commits:
+                            corrupted_refs.append({'ref': ref, 'commit': commit[:16]})
+        except Exception:
+            pass
+
+        return JsonResponse({
+            'status': 'corrupted',
+            'corrupted_refs': corrupted_refs,
+            'corrupted_objects': sorted(corrupted_objects),
+            'corrupted_commit_count': len(corrupted_commits),
+        })

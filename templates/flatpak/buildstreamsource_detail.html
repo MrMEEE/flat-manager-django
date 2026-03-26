@@ -13,6 +13,10 @@
                 <i class="bi bi-arrow-clockwise"></i> Retry Build
             </button>
         </form>
+        <button type="button" class="btn btn-outline-danger" id="btn-force-rebuild"
+            onclick="forceRebuild({{ source.pk }}, '{{ source.name|escapejs }}')">
+            <i class="bi bi-fire"></i> Force Full Rebuild
+        </button>
         {% endif %}
         <a href="{% url 'flatpak:bst_source_edit' source.pk %}" class="btn btn-outline-secondary">
             <i class="bi bi-pencil"></i> Edit
@@ -26,8 +30,7 @@
 <div class="row mb-4">
     <div class="col-md-8">
         <div class="card mb-4">
-            <div class="card-header"><h5 class="mb-0">Source Details</h5></div>
-            <div class="card-body">
+            <div class="card-header"><h5 class="mb-0">Source Details</h5></div>            <div class="card-body">
                 <dl class="row">
                     <dt class="col-sm-4">Repository:</dt>
                     <dd class="col-sm-8">
@@ -134,6 +137,64 @@
         </div>
         {% endif %}
     </div>
+
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-box-seam"></i> Included Refs</h5>
+                {% if produced_refs %}
+                <span class="badge bg-secondary">{{ produced_refs|length }}</span>
+                {% endif %}
+            </div>
+            <div class="card-body p-0">
+                {% if produced_refs %}
+                    {% for bucket, refs in produced_refs_grouped.items %}
+                    <div class="px-3 pt-3 pb-1">
+                        <p class="text-muted small fw-semibold text-uppercase mb-1" style="letter-spacing:.05em">{{ bucket }}</p>
+                        <ul class="list-unstyled mb-0">
+                        {% for item in refs %}
+                            <li class="small py-1 border-bottom d-flex align-items-center justify-content-between gap-2">
+                                <span class="font-monospace text-truncate" style="font-size:.72rem;flex:1;min-width:0" title="{{ item.ref }}">
+                                    <i class="bi bi-box text-muted" style="font-size:.72rem"></i>
+                                    {{ item.ref }}
+                                </span>
+                                {% if item.coverage %}
+                                    {% if item.coverage.kind == 'bst' %}
+                                    <a href="{% url 'flatpak:bst_source_detail' item.coverage.pk %}"
+                                       class="badge bg-success text-decoration-none text-nowrap flex-shrink-0"
+                                       title="Managed by BST: {{ item.coverage.name|escapejs }}">
+                                        <i class="bi bi-layers"></i> BST
+                                    </a>
+                                    {% else %}
+                                    <a href="{% url 'flatpak:package_detail' item.coverage.pk %}"
+                                       class="badge bg-primary text-decoration-none text-nowrap flex-shrink-0"
+                                       title="Managed as Package: {{ item.coverage.name|escapejs }}">
+                                        <i class="bi bi-box"></i> Pkg
+                                    </a>
+                                    {% endif %}
+                                {% else %}
+                                <button type="button"
+                                        class="btn btn-outline-secondary flex-shrink-0 py-0 px-1 text-nowrap"
+                                        style="font-size:.7rem;line-height:1.5"
+                                        onclick="openAddRefModal('{{ item.ref|escapejs }}')">
+                                    <i class="bi bi-plus-circle"></i> Add
+                                </button>
+                                {% endif %}
+                            </li>
+                        {% endfor %}
+                        </ul>
+                    </div>
+                    {% endfor %}
+                    <p class="text-muted small px-3 py-2 mb-0">Captured from last successful build.</p>
+                {% else %}
+                    <div class="text-center text-muted py-4 px-3">
+                        <i class="bi bi-box-seam display-6 d-block mb-2 opacity-25"></i>
+                        <p class="small mb-0">No ref data yet.<br>Refs are captured after the next build completes.</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
 </div>
 
 {% if available_bst_targets or bst_promotions %}
@@ -215,6 +276,35 @@
 </div>
 {% endif %}
 
+<!-- Add Dependency modal -->
+<div class="modal fade" id="addRefModal" tabindex="-1" aria-labelledby="addRefModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="addRefModalLabel"><i class="bi bi-plus-circle"></i> Add Dependency</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-1">Add <code id="addRefModalRef" class="text-break"></code> for building:</p>
+                <p class="text-muted small mb-3">Choose how to track this ref in flat-manager.</p>
+                <div class="d-grid gap-2">
+                    <a id="addRefAsBst" href="#" class="btn btn-outline-primary">
+                        <i class="bi bi-layers"></i> Add as BuildStream Source
+                        <small class="d-block text-muted fw-normal" style="font-size:.75rem">For runtimes/SDKs built with BuildStream (e.g. gnome-build-meta, freedesktop-sdk)</small>
+                    </a>
+                    <a id="addRefAsPkg" href="#" class="btn btn-outline-success">
+                        <i class="bi bi-box"></i> Add as Flatpak Package
+                        <small class="d-block text-muted fw-normal" style="font-size:.75rem">For apps/extensions built with flatpak-builder</small>
+                    </a>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Confirm / Error modals -->
 <div class="modal fade" id="confirmModal" tabindex="-1">
     <div class="modal-dialog">
@@ -240,6 +330,29 @@
 {% endblock %}
 
 {% block extra_js %}
+<script>
+const BST_CREATE_URL = "{% url 'flatpak:bst_source_create' %}";
+const PKG_CREATE_URL = "{% url 'flatpak:package_create' %}";
+
+function openAddRefModal(ref) {
+    const parts = ref.split('/');
+    // ref format: type/app_id/arch/branch  e.g.  runtime/org.freedesktop.Sdk/x86_64/24.08
+    const appId  = parts[1] || ref;
+    const arch   = parts[2] || 'x86_64';
+    const branch = parts[3] || 'stable';
+
+    document.getElementById('addRefModalRef').textContent = ref;
+    document.getElementById('addRefAsBst').href =
+        BST_CREATE_URL + '?name=' + encodeURIComponent(appId);
+    document.getElementById('addRefAsPkg').href =
+        PKG_CREATE_URL + '?package_id=' + encodeURIComponent(appId)
+                       + '&arch=' + encodeURIComponent(arch)
+                       + '&branch=' + encodeURIComponent(branch);
+
+    new bootstrap.Modal(document.getElementById('addRefModal')).show();
+}
+</script>
+
 <script>
 function showConfirmModal(title, body, okLabel, onOk) {
     document.getElementById('confirmModalTitle').textContent = title;
@@ -299,6 +412,29 @@ async function bstPromoDelete(promoPk, repoName) {
         } catch (e) { showErrorModal('Delete Error', e.message); }
     });
 }
+
+async function forceRebuild(sourcePk, sourceName) {
+    showConfirmModal(
+        'Force Full Rebuild',
+        `This will delete the BST artifact cache for "${sourceName}" and trigger a full rebuild from source. This may take a very long time. Continue?`,
+        'Force Rebuild',
+        async () => {
+            try {
+                const r = await fetch(`/bst-sources/${sourcePk}/force-rebuild/`, {
+                    method: 'POST',
+                    headers: { 'X-CSRFToken': '{{ csrf_token }}' },
+                    credentials: 'same-origin',
+                });
+                if (r.ok) {
+                    setTimeout(() => window.location.reload(), 500);
+                } else {
+                    const d = await r.json().catch(() => ({}));
+                    showErrorModal('Force Rebuild Failed', d.error || r.statusText);
+                }
+            } catch (e) { showErrorModal('Force Rebuild Error', e.message); }
+        }
+    );
+}
 </script>
 
 <script>
@@ -338,8 +474,19 @@ function applyStatusUpdate(status, message) {
                 </button>`;
             actionBtns.insertBefore(form, actionBtns.firstChild);
         }
+        // Show force-rebuild button if not already present
+        if (!document.getElementById('btn-force-rebuild') && actionBtns) {
+            const forceBtn = document.createElement('button');
+            forceBtn.type = 'button';
+            forceBtn.className = 'btn btn-outline-danger';
+            forceBtn.id = 'btn-force-rebuild';
+            forceBtn.innerHTML = '<i class="bi bi-fire"></i> Force Full Rebuild';
+            forceBtn.onclick = () => forceRebuild(sourceId, '{{ source.name|escapejs }}');
+            actionBtns.insertBefore(forceBtn, actionBtns.firstChild.nextSibling);
+        }
     } else if (activeStatuses.includes(status) && retryBtn) {
         retryBtn.closest('form')?.remove();
+        document.getElementById('btn-force-rebuild')?.remove();
     }
 
     // If build arrives (terminal state), reload to refresh all fields
