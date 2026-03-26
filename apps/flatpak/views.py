@@ -1582,3 +1582,94 @@ def serve_repository(request, repo_path):
         return response
     except (IOError, OSError):
         raise Http404("Error reading file")
+
+
+class ClientListView(LoginRequiredMixin, ListView):
+    template_name = 'flatpak/client_list.html'
+    context_object_name = 'clients'
+
+    def get_queryset(self):
+        from .models import Client, SiteConfig
+        from django.utils import timezone
+        from datetime import timedelta
+        stale_hours = SiteConfig.get_solo().client_stale_hours
+        threshold = timezone.now() - timedelta(hours=stale_hours)
+        qs = Client.objects.all()
+        # Annotate each client with its status for sorting/display
+        for client in qs:
+            if client.last_checkin is None or client.last_checkin < threshold:
+                client.status = 'red'
+            elif client.outdated_count > 0 or client.foreign_count > 0:
+                client.status = 'yellow'
+            else:
+                client.status = 'green'
+        return qs
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from .models import SiteConfig
+        from django.utils import timezone
+        from datetime import timedelta
+        stale_hours = SiteConfig.get_solo().client_stale_hours
+        threshold = timezone.now() - timedelta(hours=stale_hours)
+        for client in context['clients']:
+            if client.last_checkin is None or client.last_checkin < threshold:
+                client.status = 'red'
+            elif client.outdated_count > 0 or client.foreign_count > 0:
+                client.status = 'yellow'
+            else:
+                client.status = 'green'
+        return context
+
+
+import json
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
+from django.utils.decorators import method_decorator
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class ClientCheckinView(View):
+    """
+    POST /api/client-checkin/
+    No authentication required. Accepts JSON from the flat-manager-checkin agent.
+    Creates or updates the Client record for the reporting host.
+    """
+    def post(self, request):
+        try:
+            data = json.loads(request.body)
+        except (json.JSONDecodeError, ValueError):
+            return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+        hostname = data.get('hostname', '').strip()
+        if not hostname:
+            return JsonResponse({'error': 'hostname required'}, status=400)
+
+        from .models import Client
+        from django.utils import timezone
+
+        remotes = data.get('remotes', [])
+        managed_remote_names = data.get('managed_remotes', [])
+        installed = data.get('installed', [])
+        updates_available = data.get('updates_available', [])
+
+        # Compute derived fields
+        foreign_flatpaks = [
+            pkg for pkg in installed
+            if pkg.get('origin') not in managed_remote_names
+        ]
+        outdated_flatpaks = updates_available
+
+        client, _ = Client.objects.get_or_create(hostname=hostname)
+        client.last_checkin = timezone.now()
+        client.remotes = remotes
+        client.managed_remotes = managed_remote_names
+        client.installed_flatpaks = installed
+        client.installed_count = len(installed)
+        client.foreign_flatpaks = foreign_flatpaks
+        client.foreign_count = len(foreign_flatpaks)
+        client.outdated_flatpaks = outdated_flatpaks
+        client.outdated_count = len(outdated_flatpaks)
+        client.save()
+
+        return JsonResponse({'status': 'ok', 'hostname': hostname})

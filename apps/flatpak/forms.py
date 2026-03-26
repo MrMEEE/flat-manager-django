@@ -104,6 +104,7 @@ class SiteConfigForm(forms.ModelForm):
             'build_timeout_minutes',
             'stale_build_check_interval_seconds',
             'stale_build_timeout_minutes',
+            'client_stale_hours',
         ]
         widgets = {
             'failed_builds_to_keep': forms.NumberInput(
@@ -124,6 +125,9 @@ class SiteConfigForm(forms.ModelForm):
             'stale_build_timeout_minutes': forms.NumberInput(
                 attrs={'class': 'form-control', 'min': '1', 'style': 'width: 130px;'}
             ),
+            'client_stale_hours': forms.NumberInput(
+                attrs={'class': 'form-control', 'min': '1', 'style': 'width: 130px;'}
+            ),
         }
         help_texts = {
             'failed_builds_to_keep': 'Maximum number of failed builds to retain per package. Set to 0 to keep all failed builds.',
@@ -132,6 +136,7 @@ class SiteConfigForm(forms.ModelForm):
             'build_timeout_minutes': 'Maximum time (minutes) for a flatpak-builder run. Increase for large packages like GRASS GIS.',
             'stale_build_check_interval_seconds': 'How often to scan for stuck builds. Set to 0 to disable.',
             'stale_build_timeout_minutes': 'Minutes without log activity before an in-progress build is marked as failed.',
+            'client_stale_hours': 'Hours without a check-in before a client is considered stale (shown in red).',
         }
 
 

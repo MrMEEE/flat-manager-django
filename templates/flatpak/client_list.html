@@ -1,0 +1,195 @@
+{% extends 'base.html' %}
+
+{% block title %}Clients{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-pc-display"></i> Clients</h2>
+    <a href="{% url 'flatpak:config' %}" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-gear"></i> Configure stale threshold
+    </a>
+</div>
+
+{% if not clients %}
+<div class="alert alert-info">
+    <i class="bi bi-info-circle"></i>
+    No clients have checked in yet. Install the <code>flat-manager-client</code> package on the machines
+    that consume your repositories — it will automatically register them here.
+</div>
+{% else %}
+<div class="card">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Status</th>
+                        <th>Hostname</th>
+                        <th>Managed repos</th>
+                        <th>Last check-in</th>
+                        <th class="text-center">Installed</th>
+                        <th class="text-center">Foreign</th>
+                        <th class="text-center">Outdated</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for client in clients %}
+                    <tr>
+                        <td style="width:80px;">
+                            {% if client.status == 'green' %}
+                            <span class="badge bg-success" title="Checking in and up to date">
+                                <i class="bi bi-check-circle"></i> OK
+                            </span>
+                            {% elif client.status == 'yellow' %}
+                            <span class="badge bg-warning text-dark" title="Checking in but has issues">
+                                <i class="bi bi-exclamation-triangle"></i> Issues
+                            </span>
+                            {% else %}
+                            <span class="badge bg-danger" title="Not checking in or no data">
+                                <i class="bi bi-x-circle"></i> Stale
+                            </span>
+                            {% endif %}
+                        </td>
+                        <td><strong>{{ client.hostname }}</strong></td>
+                        <td>
+                            {% if client.managed_remotes %}
+                                {% for r in client.managed_remotes %}
+                                    <span class="badge bg-primary me-1">{{ r }}</span>
+                                {% endfor %}
+                            {% else %}
+                                <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if client.last_checkin %}
+                                <span title="{{ client.last_checkin|date:'Y-m-d H:i:s' }} UTC">
+                                    {{ client.last_checkin|timesince }} ago
+                                </span>
+                            {% else %}
+                                <span class="text-muted">Never</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            {% if client.installed_count > 0 %}
+                            <button class="btn btn-sm btn-outline-secondary"
+                                    onclick="showFlatpakList('{{ client.hostname|escapejs }}', 'installed', {{ client.pk }})">
+                                {{ client.installed_count }}
+                            </button>
+                            {% else %}
+                            <span class="text-muted">0</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            {% if client.foreign_count > 0 %}
+                            <button class="btn btn-sm btn-outline-warning text-warning"
+                                    onclick="showFlatpakList('{{ client.hostname|escapejs }}', 'foreign', {{ client.pk }})">
+                                {{ client.foreign_count }}
+                            </button>
+                            {% else %}
+                            <span class="text-muted">0</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            {% if client.outdated_count > 0 %}
+                            <button class="btn btn-sm btn-outline-danger text-danger"
+                                    onclick="showFlatpakList('{{ client.hostname|escapejs }}', 'outdated', {{ client.pk }})">
+                                {{ client.outdated_count }}
+                            </button>
+                            {% else %}
+                            <span class="text-muted">0</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <!-- Hidden data rows for JS to read -->
+                    <tr id="data-installed-{{ client.pk }}" style="display:none;">
+                        <td colspan="7">
+                            <script type="application/json">{{ client.installed_flatpaks|safe }}</script>
+                        </td>
+                    </tr>
+                    <tr id="data-foreign-{{ client.pk }}" style="display:none;">
+                        <td colspan="7">
+                            <script type="application/json">{{ client.foreign_flatpaks|safe }}</script>
+                        </td>
+                    </tr>
+                    <tr id="data-outdated-{{ client.pk }}" style="display:none;">
+                        <td colspan="7">
+                            <script type="application/json">{{ client.outdated_flatpaks|safe }}</script>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Flatpak detail modal -->
+<div class="modal fade" id="flatpakModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="flatpakModalTitle">Flatpaks</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-0">
+                <table class="table table-sm mb-0" id="flatpakModalTable">
+                    <thead class="table-light">
+                        <tr id="flatpakModalHeader"></tr>
+                    </thead>
+                    <tbody id="flatpakModalBody"></tbody>
+                </table>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function showFlatpakList(hostname, kind, clientPk) {
+    const row = document.getElementById('data-' + kind + '-' + clientPk);
+    const script = row.querySelector('script[type="application/json"]');
+    let items = [];
+    try { items = JSON.parse(script.textContent); } catch(e) {}
+
+    const titles = {
+        installed: 'Installed Flatpaks',
+        foreign:   'Foreign Flatpaks (not from managed repos)',
+        outdated:  'Outdated Flatpaks'
+    };
+    document.getElementById('flatpakModalTitle').textContent =
+        hostname + ' — ' + titles[kind];
+
+    const header = document.getElementById('flatpakModalHeader');
+    const body   = document.getElementById('flatpakModalBody');
+
+    let headerHTML, rowFn;
+    if (kind === 'outdated') {
+        headerHTML = '<th>App ID</th><th>Current version</th><th>New version</th><th>Remote</th>';
+        rowFn = item =>
+            `<tr><td>${esc(item.app_id)}</td><td>${esc(item.current_version||'')}</td>` +
+            `<td>${esc(item.new_version||'')}</td><td>${esc(item.origin||'')}</td></tr>`;
+    } else {
+        headerHTML = '<th>App ID</th><th>Version</th><th>Remote</th>';
+        rowFn = item =>
+            `<tr><td>${esc(item.app_id)}</td><td>${esc(item.version||'')}</td>` +
+            `<td>${esc(item.origin||'')}</td></tr>`;
+    }
+
+    header.innerHTML = headerHTML;
+    body.innerHTML = items.length
+        ? items.map(rowFn).join('')
+        : '<tr><td colspan="4" class="text-center text-muted">No entries</td></tr>';
+
+    new bootstrap.Modal(document.getElementById('flatpakModal')).show();
+}
+
+function esc(s) {
+    return String(s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+{% endblock %}

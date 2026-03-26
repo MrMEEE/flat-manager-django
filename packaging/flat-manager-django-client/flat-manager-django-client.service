@@ -1,0 +1,12 @@
+[Unit]
+Description=Flat Manager Django — client check-in
+Documentation=https://github.com/MrMEEE/flat-manager-django
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/flat-manager-checkin
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=flat-manager-django-client

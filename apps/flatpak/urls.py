@@ -51,5 +51,7 @@ urlpatterns = [
     path('config/remotes/<int:pk>/delete/', views.FlatpakRemoteDeleteView.as_view(), name='remote_delete'),
     path('config/remotes/<int:pk>/toggle/', views.FlatpakRemoteToggleView.as_view(), name='remote_toggle'),
     path('dependencies/', views.dependencies_list, name='dependencies_list'),
+    path('clients/', views.ClientListView.as_view(), name='client_list'),
+    path('api/client-checkin/', views.ClientCheckinView.as_view(), name='client_checkin'),
     path('repositories/<path:repo_path>', views.serve_repository, name='serve_repository'),
 ]

@@ -343,6 +343,10 @@ class SiteConfig(models.Model):
             "Set to 0 to never expire."
         )
     )
+    client_stale_hours = models.PositiveIntegerField(
+        default=24,
+        help_text="Hours without a client check-in before the client is shown as stale/red."
+    )
     class Meta:
         verbose_name = 'Site Configuration'
 
@@ -424,3 +428,58 @@ class FlatpakRemote(models.Model):
     def __str__(self):
         status = '' if self.is_active else ' (inactive)'
         return f"{self.name}{status}"
+
+
+class Client(models.Model):
+    """
+    Represents a machine that consumes flatpak repositories managed by this server.
+    Records are created/updated via the /api/client-checkin/ endpoint.
+    """
+    hostname = models.CharField(
+        max_length=255,
+        unique=True,
+        help_text="Hostname of the client machine."
+    )
+    last_checkin = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Timestamp of the most recent check-in from this client."
+    )
+    remotes = models.JSONField(
+        default=list,
+        help_text="All flatpak remotes on the client: [{name, url}, ...]."
+    )
+    managed_remotes = models.JSONField(
+        default=list,
+        help_text="Names of remotes that point to this server."
+    )
+    installed_count = models.IntegerField(default=0)
+    foreign_count = models.IntegerField(
+        default=0,
+        help_text="Flatpaks installed from remotes NOT managed by this server."
+    )
+    outdated_count = models.IntegerField(
+        default=0,
+        help_text="Flatpaks that have an update available (any remote)."
+    )
+    installed_flatpaks = models.JSONField(
+        default=list,
+        help_text="All installed flatpaks: [{app_id, version, origin}, ...]."
+    )
+    foreign_flatpaks = models.JSONField(
+        default=list,
+        help_text="Flatpaks from non-managed remotes: [{app_id, version, origin}, ...]."
+    )
+    outdated_flatpaks = models.JSONField(
+        default=list,
+        help_text="Flatpaks with available updates: [{app_id, current_version, new_version, origin}, ...]."
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['hostname']
+        verbose_name = 'Client'
+        verbose_name_plural = 'Clients'
+
+    def __str__(self):
+        return self.hostname

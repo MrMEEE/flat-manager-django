@@ -121,6 +121,28 @@ Keeping the virtualenv in a separate package allows the Python dependency set
 to be updated independently of the application code.
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  Sub-package: client agent  (noarch — pure Python)
+# ─────────────────────────────────────────────────────────────────────────────
+%package        client
+Summary:        Client check-in agent for flat-manager-django
+BuildArch:      noarch
+
+Requires:       python3
+Requires:       flatpak
+%{?systemd_requires}
+
+%description    client
+Lightweight check-in agent for machines that consume flatpak repositories
+managed by flat-manager-django.
+
+Runs hourly via a systemd timer.  On each run it collects the local flatpak
+state (installed apps, available updates, configured remotes) and POSTs it to
+the flat-manager-django server so the "Clients" dashboard can track which
+machines are up to date.
+
+Configuration: /etc/flat-manager-django-client/config
+
+# ─────────────────────────────────────────────────────────────────────────────
 %prep
 %autosetup -n %{name}-%{version}
 
@@ -303,6 +325,16 @@ chmod 0755 %{buildroot}%{_bindir}/flat-manager-manage
 install -D -m 0644 packaging/selinux/flat-manager-nginx.pp \
     %{buildroot}%{_datadir}/selinux/packages/flat-manager-nginx.pp
 
+# ── flat-manager-django-client files ─────────────────────────────────────────
+install -D -m 0755 packaging/flat-manager-django-client/flat-manager-checkin \
+    %{buildroot}%{_bindir}/flat-manager-checkin
+install -D -m 0644 packaging/flat-manager-django-client/flat-manager-django-client.service \
+    %{buildroot}%{_unitdir}/flat-manager-django-client.service
+install -D -m 0644 packaging/flat-manager-django-client/flat-manager-django-client.timer \
+    %{buildroot}%{_unitdir}/flat-manager-django-client.timer
+install -D -m 0644 packaging/flat-manager-django-client/config.example \
+    %{buildroot}%{_sysconfdir}/flat-manager-django-client/config.example
+
 # ─────────────────────────────────────────────────────────────────────────────
 %pre
 getent group  %{app_group} >/dev/null || groupadd  -r %{app_group}
@@ -445,6 +477,37 @@ fi
 # /opt/flat-manager is already owned by the main package (which this one
 # requires), so we must NOT declare it again here — that would be "listed twice".
 %{install_dir}/venv/
+
+# ─────────────────────────────────────────────────────────────────────────────
+%post           client
+%systemd_post flat-manager-django-client.timer flat-manager-django-client.service
+if [ $1 -eq 1 ] && [ ! -f %{_sysconfdir}/flat-manager-django-client/config ]; then
+    cp %{_sysconfdir}/flat-manager-django-client/config.example \
+       %{_sysconfdir}/flat-manager-django-client/config
+    echo ""
+    echo "================================================================="
+    echo "  flat-manager-django-client installed"
+    echo "================================================================="
+    echo "  Edit /etc/flat-manager-django-client/config"
+    echo "  then enable the timer:"
+    echo "    systemctl enable --now flat-manager-django-client.timer"
+    echo "================================================================="
+fi
+
+%preun          client
+%systemd_preun flat-manager-django-client.timer flat-manager-django-client.service
+
+%postun         client
+%systemd_postun_with_restart flat-manager-django-client.timer
+
+# ─────────────────────────────────────────────────────────────────────────────
+%files          client
+%{_bindir}/flat-manager-checkin
+%{_unitdir}/flat-manager-django-client.service
+%{_unitdir}/flat-manager-django-client.timer
+%dir %{_sysconfdir}/flat-manager-django-client
+%attr(0644, root, root) %{_sysconfdir}/flat-manager-django-client/config.example
+%ghost %attr(0600, root, root) %{_sysconfdir}/flat-manager-django-client/config
 
 # ─────────────────────────────────────────────────────────────────────────────
 %changelog

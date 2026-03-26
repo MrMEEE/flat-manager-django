@@ -1,0 +1,8 @@
+[server]
+# URL of your flat-manager-django server (no trailing slash).
+url = https://flat-manager.example.com
+
+[client]
+# Override the hostname reported to the server.
+# Defaults to the system hostname (socket.gethostname()).
+# hostname = my-custom-name

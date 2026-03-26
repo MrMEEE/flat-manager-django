@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import GPGKey, Repository, RepositorySubset, Package, Build, BuildArtifact, BuildLog, Token, SiteConfig, FlatpakRemote
+from .models import GPGKey, Repository, RepositorySubset, Package, Build, BuildArtifact, BuildLog, Token, SiteConfig, FlatpakRemote, Client
 
 
 @admin.register(GPGKey)
@@ -82,6 +82,9 @@ class SiteConfigAdmin(admin.ModelAdmin):
         ('Promotions', {
             'fields': ['promotion_retry_interval_minutes', 'promotion_stale_timeout_minutes'],
         }),
+        ('Clients', {
+            'fields': ['client_stale_hours'],
+        }),
     ]
 
     def has_add_permission(self, request):
@@ -96,3 +99,13 @@ class FlatpakRemoteAdmin(admin.ModelAdmin):
     list_display = ['name', 'url', 'is_active', 'priority', 'created_at']
     list_editable = ['is_active', 'priority']
     search_fields = ['name', 'url']
+
+
+@admin.register(Client)
+class ClientAdmin(admin.ModelAdmin):
+    list_display = ['hostname', 'last_checkin', 'installed_count', 'foreign_count', 'outdated_count', 'updated_at']
+    readonly_fields = ['created_at', 'updated_at', 'last_checkin',
+                       'remotes', 'managed_remotes', 'installed_flatpaks',
+                       'foreign_flatpaks', 'outdated_flatpaks',
+                       'installed_count', 'foreign_count', 'outdated_count']
+    search_fields = ['hostname']

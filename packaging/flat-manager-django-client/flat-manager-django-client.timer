@@ -1,0 +1,12 @@
+[Unit]
+Description=Flat Manager Django — client check-in timer
+Documentation=https://github.com/MrMEEE/flat-manager-django
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1h
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
