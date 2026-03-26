@@ -1,0 +1,116 @@
+{% extends 'base.html' %}
+
+{% block title %}BuildStream Sources - Flat Manager{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-layers"></i> BuildStream Sources</h2>
+    <a href="{% url 'flatpak:bst_source_create' %}" class="btn btn-primary">
+        <i class="bi bi-plus-circle"></i> New Source
+    </a>
+</div>
+
+{% if sources %}
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Name</th>
+                    <th>Repository</th>
+                    <th>Element</th>
+                    <th>Branch</th>
+                    <th>Status</th>
+                    <th>Version</th>
+                    <th>Build&nbsp;#</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for source in sources %}
+                <tr data-source-id="{{ source.pk }}">
+                    <td>
+                        <a href="{% url 'flatpak:bst_source_detail' source.pk %}">{{ source.name }}</a>
+                    </td>
+                    <td>{{ source.repository.name }}</td>
+                    <td><code>{{ source.bst_element }}</code></td>
+                    <td><code>{{ source.git_branch }}</code></td>
+                    <td class="bst-status-cell">
+                        {% if source.status == 'building' %}
+                            <span class="badge bg-warning text-dark"><span class="spinner-border spinner-border-sm me-1"></span> Building</span>
+                        {% elif source.status == 'built' %}
+                            <span class="badge bg-success">Built</span>
+                        {% elif source.status == 'published' %}
+                            <span class="badge bg-primary">Published</span>
+                        {% elif source.status == 'failed' %}
+                            <span class="badge bg-danger">Failed</span>
+                        {% elif source.status == 'pending' %}
+                            <span class="badge bg-secondary"><span class="spinner-border spinner-border-sm me-1"></span> Pending</span>
+                        {% else %}
+                            <span class="badge bg-secondary">{{ source.status|capfirst }}</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ source.version|default:"—" }}</td>
+                    <td>{{ source.build_number }}</td>
+                    <td class="text-end">
+                        <a href="{% url 'flatpak:bst_source_edit' source.pk %}" class="btn btn-sm btn-outline-secondary">
+                            <i class="bi bi-pencil"></i>
+                        </a>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="text-center py-5 text-muted">
+    <i class="bi bi-layers display-4 d-block mb-3"></i>
+    <p>No BuildStream sources yet.</p>
+    <a href="{% url 'flatpak:bst_source_create' %}" class="btn btn-primary">
+        <i class="bi bi-plus-circle"></i> Add Source
+    </a>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const statusBadges = {
+    pending:    '<span class="badge bg-secondary"><span class="spinner-border spinner-border-sm me-1"></span> Pending</span>',
+    building:   '<span class="badge bg-warning text-dark"><span class="spinner-border spinner-border-sm me-1"></span> Building</span>',
+    built:      '<span class="badge bg-success">Built</span>',
+    committing: '<span class="badge bg-primary"><span class="spinner-border spinner-border-sm me-1"></span> Committing</span>',
+    committed:  '<span class="badge bg-info">Committed</span>',
+    publishing: '<span class="badge bg-primary"><span class="spinner-border spinner-border-sm me-1"></span> Publishing</span>',
+    published:  '<span class="badge bg-primary">Published</span>',
+    failed:     '<span class="badge bg-danger">Failed</span>',
+    cancelled:  '<span class="badge bg-warning">Cancelled</span>',
+};
+
+// Map source_id → status cell element, built from data-source-id attributes
+const statusCells = {};
+document.querySelectorAll('tr[data-source-id]').forEach(row => {
+    statusCells[row.dataset.sourceId] = row.querySelector('.bst-status-cell');
+});
+
+(function () {
+    const wsScheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    // Connect to the general 'builds' group so we get all BST source updates
+    const ws = new WebSocket(`${wsScheme}://${window.location.host}/ws/builds/`);
+
+    ws.onopen  = () => console.log('BST list WS connected');
+    ws.onclose = () => console.log('BST list WS disconnected');
+
+    ws.onmessage = (e) => {
+        try {
+            const data = JSON.parse(e.data);
+            if (data.type !== 'build_status_update') return;
+            const cell = statusCells[String(data.build_id)];
+            if (!cell) return;
+            cell.innerHTML = statusBadges[data.status] || `<span class="badge bg-secondary">${data.status}</span>`;
+        } catch (err) { /* ignore */ }
+    };
+})();
+</script>
+{% endblock %}

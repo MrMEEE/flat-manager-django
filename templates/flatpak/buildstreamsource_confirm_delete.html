@@ -1,0 +1,29 @@
+{% extends 'base.html' %}
+
+{% block title %}Delete BuildStream Source - Flat Manager{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card border-danger">
+            <div class="card-header bg-danger text-white">
+                <h5 class="mb-0"><i class="bi bi-trash"></i> Delete BuildStream Source</h5>
+            </div>
+            <div class="card-body">
+                <p>Are you sure you want to delete the BuildStream source <strong>{{ source.name }}</strong>?</p>
+                <p class="text-muted small">Element: <code>{{ source.bst_element }}</code></p>
+                <p class="text-danger">This will also delete all associated build history.</p>
+                <div class="d-flex gap-2 mt-4">
+                    <form method="post">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-danger">
+                            <i class="bi bi-trash"></i> Delete
+                        </button>
+                    </form>
+                    <a href="{% url 'flatpak:bst_source_detail' source.pk %}" class="btn btn-outline-secondary">Cancel</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,375 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ source.name }} - BuildStream Source - Flat Manager{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-layers"></i> {{ source.name }}</h2>
+    <div class="d-flex gap-2" id="action-buttons">
+        {% if source.status in 'failed,built,published,cancelled' %}
+        <form method="post" action="{% url 'flatpak:bst_source_retry' source.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-outline-warning" id="btn-retry">
+                <i class="bi bi-arrow-clockwise"></i> Retry Build
+            </button>
+        </form>
+        {% endif %}
+        <a href="{% url 'flatpak:bst_source_edit' source.pk %}" class="btn btn-outline-secondary">
+            <i class="bi bi-pencil"></i> Edit
+        </a>
+        <a href="{% url 'flatpak:bst_source_delete' source.pk %}" class="btn btn-outline-danger">
+            <i class="bi bi-trash"></i> Delete
+        </a>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-8">
+        <div class="card mb-4">
+            <div class="card-header"><h5 class="mb-0">Source Details</h5></div>
+            <div class="card-body">
+                <dl class="row">
+                    <dt class="col-sm-4">Repository:</dt>
+                    <dd class="col-sm-8">
+                        <a href="{% url 'flatpak:repo_detail' source.repository.pk %}">{{ source.repository.name }}</a>
+                    </dd>
+
+                    <dt class="col-sm-4">BST Element:</dt>
+                    <dd class="col-sm-8"><code>{{ source.bst_element }}</code></dd>
+
+                    <dt class="col-sm-4">Git URL:</dt>
+                    <dd class="col-sm-8">
+                        <a href="{{ source.git_repo_url }}" target="_blank" rel="noopener">{{ source.git_repo_url }}</a>
+                    </dd>
+
+                    <dt class="col-sm-4">Git Branch:</dt>
+                    <dd class="col-sm-8"><code>{{ source.git_branch }}</code></dd>
+
+                    {% if source.source_commit %}
+                    <dt class="col-sm-4">Last Commit:</dt>
+                    <dd class="col-sm-8"><code>{{ source.source_commit|slice:":12" }}</code></dd>
+                    {% endif %}
+
+                    <dt class="col-sm-4">Status:</dt>
+                    <dd class="col-sm-8" id="source-status">
+                        {% if source.status == 'building' %}
+                            <span class="badge bg-warning text-dark"><span class="spinner-border spinner-border-sm me-1"></span> Building</span>
+                        {% elif source.status == 'built' %}
+                            <span class="badge bg-success">Built</span>
+                        {% elif source.status == 'published' %}
+                            <span class="badge bg-primary">Published</span>
+                        {% elif source.status == 'failed' %}
+                            <span class="badge bg-danger">Failed</span>
+                        {% elif source.status == 'pending' %}
+                            <span class="badge bg-secondary"><span class="spinner-border spinner-border-sm me-1"></span> Pending</span>
+                        {% else %}
+                            <span class="badge bg-secondary">{{ source.status|capfirst }}</span>
+                        {% endif %}
+                    </dd>
+
+                    <dt class="col-sm-4">Version:</dt>
+                    <dd class="col-sm-8" id="source-version">{{ source.version|default:"—" }}</dd>
+
+                    <dt class="col-sm-4">Build #:</dt>
+                    <dd class="col-sm-8" id="source-build-number">{{ source.build_number }}</dd>
+
+                    {% if source.error_message %}
+                    <dt class="col-sm-4" id="source-error-label">Error:</dt>
+                    <dd class="col-sm-8" id="source-error">
+                        <pre class="bg-danger-subtle p-2 rounded small">{{ source.error_message }}</pre>
+                    </dd>
+                    {% else %}
+                    <dt class="col-sm-4" id="source-error-label" style="display:none">Error:</dt>
+                    <dd class="col-sm-8" id="source-error" style="display:none"></dd>
+                    {% endif %}
+                </dl>
+            </div>
+        </div>
+
+        {% if builds %}
+        <div class="card">
+            <div class="card-header"><h5 class="mb-0">Recent Builds</h5></div>
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Build #</th>
+                            <th>Status</th>
+                            <th>Version</th>
+                            <th>Started</th>
+                            <th>Duration</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for build in builds %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'flatpak:build_detail' build.pk %}">#{{ build.build_number }}</a>
+                            </td>
+                            <td>
+                                {% if build.status == 'failed' %}
+                                    <span class="badge bg-danger">Failed</span>
+                                {% elif build.status == 'built' %}
+                                    <span class="badge bg-success">Built</span>
+                                {% elif build.status == 'building' %}
+                                    <span class="badge bg-warning text-dark">Building</span>
+                                {% elif build.status == 'published' %}
+                                    <span class="badge bg-primary">Published</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">{{ build.status|capfirst }}</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ build.version|default:"—" }}</td>
+                            <td>{{ build.started_at|timesince }} ago</td>
+                            <td>
+                                {% if build.completed_at %}
+                                    {{ build.started_at|timesince:build.completed_at }}
+                                {% else %}—{% endif %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% if available_bst_targets or bst_promotions %}
+<div class="row mb-4">
+    <div class="col-12">
+
+        {% if available_bst_targets %}
+        <div class="card mb-4">
+            <div class="card-header"><h5 class="mb-0"><i class="bi bi-arrow-right-circle"></i> Promote to Repository</h5></div>
+            <div class="card-body">
+                <p class="text-muted mb-3">Promote build <strong>#{{ latest_published_build.build_number }}</strong> to a child repository.</p>
+                <div class="d-flex flex-wrap gap-2">
+                    {% for repo in available_bst_targets %}
+                    <button type="button" class="btn btn-outline-primary"
+                        onclick="bstPromote({{ latest_published_build.pk }}, {{ repo.pk }}, '{{ repo.name|escapejs }}')">
+                        <i class="bi bi-box-arrow-up-right"></i> Promote to {{ repo.name }}
+                    </button>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if bst_promotions %}
+        <div class="card">
+            <div class="card-header"><h5 class="mb-0">Promotions</h5></div>
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Build #</th>
+                            <th>Target Repository</th>
+                            <th>Status</th>
+                            <th>Promoted By</th>
+                            <th>Completed</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for promo in bst_promotions %}
+                        <tr id="bst-promo-row-{{ promo.pk }}">
+                            <td><a href="{% url 'flatpak:build_detail' promo.build.pk %}">#{{ promo.build.build_number }}</a></td>
+                            <td>{{ promo.target_repo.name }}</td>
+                            <td class="bst-promo-status-cell" data-promo-id="{{ promo.pk }}">
+                                {% if promo.status == 'promoted' %}
+                                    <span class="badge bg-success">Promoted</span>
+                                {% elif promo.status == 'promoting' %}
+                                    <span class="badge bg-primary"><span class="spinner-border spinner-border-sm me-1"></span> Promoting</span>
+                                {% elif promo.status == 'pending' %}
+                                    <span class="badge bg-secondary">Pending</span>
+                                {% elif promo.status == 'failed' %}
+                                    <span class="badge bg-danger" title="{{ promo.error_message }}">Failed</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ promo.promoted_by.username|default:"—" }}</td>
+                            <td>{{ promo.completed_at|date:"M d, H:i"|default:"—" }}</td>
+                            <td class="d-flex gap-1">
+                                {% if promo.status == 'failed' %}
+                                <button type="button" class="btn btn-sm btn-outline-warning"
+                                    id="bst-promo-retry-{{ promo.pk }}"
+                                    onclick="bstPromoRetry({{ promo.pk }})">
+                                    <i class="bi bi-arrow-clockwise"></i> Retry
+                                </button>
+                                {% endif %}
+                                <button type="button" class="btn btn-sm btn-outline-danger"
+                                    onclick="bstPromoDelete({{ promo.pk }}, '{{ promo.target_repo.name|escapejs }}')">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+
+    </div>
+</div>
+{% endif %}
+
+<!-- Confirm / Error modals -->
+<div class="modal fade" id="confirmModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title" id="confirmModalTitle">Confirm</h5></div>
+            <div class="modal-body" id="confirmModalBody"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="confirmModalOk">OK</button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal fade" id="errorModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white"><h5 class="modal-title" id="errorModalTitle">Error</h5></div>
+            <div class="modal-body" id="errorModalBody"></div>
+            <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Close</button></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function showConfirmModal(title, body, okLabel, onOk) {
+    document.getElementById('confirmModalTitle').textContent = title;
+    document.getElementById('confirmModalBody').textContent = body;
+    const okBtn = document.getElementById('confirmModalOk');
+    okBtn.textContent = okLabel;
+    okBtn.onclick = () => { bootstrap.Modal.getInstance(document.getElementById('confirmModal')).hide(); onOk(); };
+    new bootstrap.Modal(document.getElementById('confirmModal')).show();
+}
+function showErrorModal(title, msg) {
+    document.getElementById('errorModalTitle').textContent = title;
+    document.getElementById('errorModalBody').textContent = msg;
+    new bootstrap.Modal(document.getElementById('errorModal')).show();
+}
+
+async function bstPromote(buildPk, repoPk, repoName) {
+    showConfirmModal('Promote Build', `Promote to "${repoName}"?`, 'Promote', async () => {
+        try {
+            const r = await fetch(`/builds/${buildPk}/bst-promote/`, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': '{{ csrf_token }}', 'Content-Type': 'application/json' },
+                body: JSON.stringify({ target_repo_id: repoPk }),
+                credentials: 'same-origin',
+            });
+            if (r.ok) {
+                setTimeout(() => window.location.reload(), 500);
+            } else {
+                const d = await r.json().catch(() => ({}));
+                showErrorModal('Promote Failed', d.error || r.statusText);
+            }
+        } catch (e) { showErrorModal('Promote Error', e.message); }
+    });
+}
+
+async function bstPromoRetry(promoPk) {
+    try {
+        const r = await fetch(`/bst-promotions/${promoPk}/retry/`, {
+            method: 'POST',
+            headers: { 'X-CSRFToken': '{{ csrf_token }}' },
+            credentials: 'same-origin',
+        });
+        if (r.ok) { setTimeout(() => window.location.reload(), 400); }
+        else { const d = await r.json().catch(() => ({})); showErrorModal('Retry Failed', d.error || r.statusText); }
+    } catch (e) { showErrorModal('Retry Error', e.message); }
+}
+
+async function bstPromoDelete(promoPk, repoName) {
+    showConfirmModal('Delete Promotion', `Remove promotion to "${repoName}"?`, 'Delete', async () => {
+        try {
+            const r = await fetch(`/bst-promotions/${promoPk}/delete/`, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': '{{ csrf_token }}' },
+                credentials: 'same-origin',
+            });
+            if (r.ok) { document.getElementById(`bst-promo-row-${promoPk}`)?.remove(); }
+            else { const d = await r.json().catch(() => ({})); showErrorModal('Delete Failed', d.error || r.statusText); }
+        } catch (e) { showErrorModal('Delete Error', e.message); }
+    });
+}
+</script>
+
+<script>
+const sourceId = {{ source.pk }};
+let currentStatus = '{{ source.status }}';
+    pending:    '<span class="badge bg-secondary"><span class="spinner-border spinner-border-sm me-1"></span> Pending</span>',
+    building:   '<span class="badge bg-warning text-dark"><span class="spinner-border spinner-border-sm me-1"></span> Building</span>',
+    built:      '<span class="badge bg-success">Built</span>',
+    committing: '<span class="badge bg-primary"><span class="spinner-border spinner-border-sm me-1"></span> Committing</span>',
+    committed:  '<span class="badge bg-info">Committed</span>',
+    publishing: '<span class="badge bg-primary"><span class="spinner-border spinner-border-sm me-1"></span> Publishing</span>',
+    published:  '<span class="badge bg-primary">Published</span>',
+    failed:     '<span class="badge bg-danger">Failed</span>',
+    cancelled:  '<span class="badge bg-warning">Cancelled</span>',
+};
+
+function applyStatusUpdate(status, message) {
+    const statusEl = document.getElementById('source-status');
+    if (statusEl) statusEl.innerHTML = statusMap[status] || `<span class="badge bg-secondary">${status}</span>`;
+
+    currentStatus = status;
+
+    // Show/hide retry button
+    const retryBtn = document.getElementById('btn-retry');
+    const actionBtns = document.getElementById('action-buttons');
+    const activeStatuses = ['pending', 'building', 'committing', 'publishing'];
+    const doneStatuses   = ['failed', 'built', 'published'];
+
+    if (doneStatuses.includes(status)) {
+        if (!retryBtn && actionBtns) {
+            const form = document.createElement('form');
+            form.method = 'post';
+            form.action = `/bst-sources/${sourceId}/retry/`;
+            form.innerHTML = `<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">
+                <button type="submit" class="btn btn-outline-warning" id="btn-retry">
+                    <i class="bi bi-arrow-clockwise"></i> Retry Build
+                </button>`;
+            actionBtns.insertBefore(form, actionBtns.firstChild);
+        }
+    } else if (activeStatuses.includes(status) && retryBtn) {
+        retryBtn.closest('form')?.remove();
+    }
+
+    // If build arrives (terminal state), reload to refresh all fields
+    if (!activeStatuses.includes(status)) {
+        setTimeout(() => window.location.reload(), 1500);
+    } else if (status === 'building') {
+        // A new Build record was just created — reload to show the new row in the builds table
+        setTimeout(() => window.location.reload(), 800);
+    }
+}
+
+(function () {
+    const wsScheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const ws = new WebSocket(`${wsScheme}://${window.location.host}/ws/builds/${sourceId}/`);
+
+    ws.onopen  = () => console.log('BST detail WS connected, source', sourceId);
+    ws.onclose = () => console.log('BST detail WS disconnected');
+    ws.onerror = (e) => console.error('BST detail WS error:', e);
+
+    ws.onmessage = (e) => {
+        try {
+            const data = JSON.parse(e.data);
+            if (data.type !== 'build_status_update') return;
+            if (String(data.build_id) !== String(sourceId)) return;
+            if (!data.status || data.status === currentStatus) return;
+            applyStatusUpdate(data.status, data.message || '');
+        } catch (err) {
+            console.error('BST WS parse error:', err);
+        }
+    };
+})();
+</script>
+{% endblock %}

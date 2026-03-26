@@ -1,0 +1,209 @@
+{% extends 'base.html' %}
+
+{% block title %}{% if edit_mode %}Edit{% else %}New{% endif %} BuildStream Source - Flat Manager{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>
+        <i class="bi bi-layers"></i>
+        {% if edit_mode %}Edit BuildStream Source{% else %}New BuildStream Source{% endif %}
+    </h2>
+    <a href="{% url 'flatpak:bst_source_list' %}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back
+    </a>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+
+                    {% if form.non_field_errors %}
+                    <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+                    {% endif %}
+
+                    <div class="mb-3">
+                        <label for="id_repository" class="form-label">Repository *</label>
+                        {{ form.repository }}
+                        {% if form.repository.errors %}
+                        <div class="text-danger">{{ form.repository.errors }}</div>
+                        {% endif %}
+                        <div class="form-text">{{ form.repository.help_text }}</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="id_name" class="form-label">Name *</label>
+                        <input type="text" class="form-control" id="id_name" name="name"
+                               value="{{ form.name.value|default:'' }}"
+                               placeholder="freedesktop-sdk">
+                        {% if form.name.errors %}
+                        <div class="text-danger">{{ form.name.errors }}</div>
+                        {% endif %}
+                        <div class="form-text">Display name for this BuildStream source</div>
+                    </div>
+
+                    <hr class="my-4">
+                    <h5>Source</h5>
+
+                    <div class="mb-3">
+                        <label for="id_git_repo_url" class="form-label">Git Repository URL *</label>
+                        <input type="url" class="form-control" id="id_git_repo_url" name="git_repo_url"
+                               value="{{ form.git_repo_url.value|default:'' }}"
+                               placeholder="https://gitlab.gnome.org/GNOME/freedesktop-sdk.git">
+                        {% if form.git_repo_url.errors %}
+                        <div class="text-danger">{{ form.git_repo_url.errors }}</div>
+                        {% endif %}
+                        <div class="form-text">Git repository containing a BuildStream project (<code>project.conf</code>)</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="id_git_branch" class="form-label">Git Branch *</label>
+                        <input type="text" class="form-control" id="id_git_branch" name="git_branch"
+                               value="{{ form.git_branch.value|default:'master' }}"
+                               placeholder="master">
+                        {% if form.git_branch.errors %}
+                        <div class="text-danger">{{ form.git_branch.errors }}</div>
+                        {% endif %}
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="id_bst_element" class="form-label">BuildStream Element *</label>
+                        <input type="text" class="form-control" id="id_bst_element" name="bst_element"
+                               value="{{ form.bst_element.value|default:'' }}"
+                               placeholder="flatpak-release-repo.bst">
+                        {% if form.bst_element.errors %}
+                        <div class="text-danger">{{ form.bst_element.errors }}</div>
+                        {% endif %}
+                        <div class="form-text">
+                            The <code>.bst</code> element to build. Its artifact must be a flatpak OSTree repo
+                            (e.g. <code>flatpak-release-repo.bst</code> in freedesktop-sdk).
+                            All refs in the artifact are imported via <code>flatpak build-commit-from</code>.
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-2 mt-4">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-lg"></i>
+                            {% if edit_mode %}Save Changes{% else %}Create Source{% endif %}
+                        </button>
+                        <a href="{% url 'flatpak:bst_source_list' %}" class="btn btn-outline-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card bg-light">
+            <div class="card-body">
+                <h5 class="card-title">About BuildStream Sources</h5>
+                <p class="card-text">
+                    A BuildStream source represents a project that produces multiple Flatpak
+                    refs (runtimes, SDKs, extensions) in a single build. Unlike a regular Package,
+                    there is no single application ID.
+                </p>
+                <p class="card-text">
+                    <strong>Pipeline:</strong><br>
+                    <code>git clone</code> → <code>bst build</code> → <code>bst artifact checkout</code>
+                    → <code>flatpak build-commit-from</code>
+                </p>
+                <p class="card-text text-muted small">
+                    The element's artifact is expected to be a complete OSTree flatpak repo
+                    (like <code>flatpak-release-repo.bst</code> in freedesktop-sdk).
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const gitRepoInput = document.getElementById('id_git_repo_url');
+    const gitBranchInput = document.getElementById('id_git_branch');
+
+    if (!gitRepoInput || !gitBranchInput) return;
+
+    const gitBranchContainer = gitBranchInput.parentElement;
+    let branchSelect = null;
+
+    function debounce(func, wait) {
+        let timeout;
+        return function(...args) {
+            clearTimeout(timeout);
+            timeout = setTimeout(() => func(...args), wait);
+        };
+    }
+
+    async function lookupBranches(repoUrl) {
+        if (!repoUrl || !repoUrl.trim()) {
+            if (branchSelect) {
+                const current = branchSelect.value;
+                branchSelect.remove();
+                gitBranchInput.style.display = '';
+                gitBranchInput.value = current || 'master';
+                branchSelect = null;
+            }
+            return;
+        }
+
+        try {
+            const loadingMsg = document.createElement('small');
+            loadingMsg.className = 'text-muted d-block mt-1';
+            loadingMsg.id = 'branch-loading';
+            loadingMsg.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Looking up branches...';
+            gitBranchContainer.appendChild(loadingMsg);
+
+            const response = await fetch(`/api/git-branches/?repo_url=${encodeURIComponent(repoUrl)}`);
+            document.getElementById('branch-loading')?.remove();
+
+            if (response.ok) {
+                const data = await response.json();
+                if (data.branches && data.branches.length > 0) {
+                    if (!branchSelect) {
+                        const currentValue = gitBranchInput.value;
+                        gitBranchInput.style.display = 'none';
+                        branchSelect = document.createElement('select');
+                        branchSelect.className = 'form-select';
+                        branchSelect.name = 'git_branch';
+                        gitBranchInput.parentNode.insertBefore(branchSelect, gitBranchInput.nextSibling);
+                        branchSelect.addEventListener('change', function() {
+                            gitBranchInput.value = this.value;
+                        });
+                    }
+                    const currentValue = gitBranchInput.value || 'master';
+                    branchSelect.innerHTML = '';
+                    data.branches.forEach(branch => {
+                        const opt = document.createElement('option');
+                        opt.value = branch;
+                        opt.textContent = branch;
+                        if (branch === currentValue) opt.selected = true;
+                        branchSelect.appendChild(opt);
+                    });
+                    gitBranchInput.value = branchSelect.value;
+                }
+            }
+        } catch (e) {
+            document.getElementById('branch-loading')?.remove();
+        }
+    }
+
+    ['input', 'change', 'keyup', 'paste'].forEach(evt => {
+        gitRepoInput.addEventListener(evt, debounce(e => lookupBranches(e.target.value), 800));
+    });
+
+    let lastValue = gitRepoInput.value;
+    setInterval(() => {
+        if (gitRepoInput.value !== lastValue) {
+            lookupBranches(gitRepoInput.value);
+            lastValue = gitRepoInput.value;
+        }
+    }, 1000);
+
+    if (gitRepoInput.value) lookupBranches(gitRepoInput.value);
+});
+</script>
+{% endblock %}
