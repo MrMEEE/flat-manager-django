@@ -370,24 +370,30 @@
                 </thead>
                 <tbody>
                     {% for promo in external_ref_promotions %}
-                    <tr>
+                    <tr data-promotion-id="external-{{ promo.pk }}"
+                        data-promotion-status="{{ promo.status }}"
+                        data-ref-name="{{ promo.external_ref.display_name|default:promo.external_ref.ref|escapejs }}"
+                        data-repo-name="{{ promo.target_repo.name|escapejs }}">
                         <td>
                             <a href="{% url 'flatpak:external_detail' promo.external_ref.pk %}">{{ promo.external_ref.display_name|default:promo.external_ref.ref }}</a>
                             <br><small class="text-muted"><code>{{ promo.external_ref.ref }}</code></small>
                         </td>
                         <td>{{ promo.external_ref.repository.name }}</td>
                         <td>{{ promo.target_repo.name }}</td>
-                        <td>
+                        <td data-role="status-cell">
                             {% if promo.status == 'promoted' %}<span class="badge bg-success">Promoted</span>
-                            {% elif promo.status == 'promoting' %}<span class="badge bg-primary">Promoting…</span>
+                            {% elif promo.status == 'promoting' %}<span class="badge bg-primary"><span class="spinner-border spinner-border-sm me-1"></span>Promoting</span>
                             {% elif promo.status == 'pending' %}<span class="badge bg-secondary">Pending</span>
                             {% elif promo.status == 'failed' %}<span class="badge bg-danger" title="{{ promo.error_message }}">Failed</span>
+                            {% endif %}
+                            {% if promo.error_message %}
+                            <br><small class="text-danger">{{ promo.error_message|truncatechars:80 }}</small>
                             {% endif %}
                         </td>
                         <td>{{ promo.promoted_by.username|default:"—" }}</td>
                         <td>{{ promo.completed_at|date:"M d, H:i"|default:"—" }}</td>
-                        <td class="d-flex gap-1">
-                            {% if promo.status == 'failed' %}
+                        <td data-role="actions-cell" class="d-flex gap-1">
+                            {% if promo.status != 'promoted' %}
                             <button class="btn btn-sm btn-outline-warning" onclick="externalPromoRetry({{ promo.pk }}, '{{ promo.external_ref.display_name|default:promo.external_ref.ref|escapejs }}', '{{ promo.target_repo.name|escapejs }}')">
                                 <i class="bi bi-arrow-clockwise"></i>
                             </button>
@@ -746,6 +752,17 @@
         return eyeBtn;
     }
 
+    function renderExtActionButtons(promoPk, status, refName, repoName) {
+        var numPk = String(promoPk).replace('external-', '');
+        var safe = function (s) { return (s || '').replace(/'/g, "\\'"); };
+        var btns = '';
+        if (status !== 'promoted') {
+            btns += '<button class="btn btn-sm btn-outline-warning" onclick="externalPromoRetry(' + numPk + ', \'' + safe(refName) + '\', \'' + safe(repoName) + '\')"><i class="bi bi-arrow-clockwise"></i></button> ';
+        }
+        btns += '<button class="btn btn-sm btn-outline-danger" onclick="externalPromoDelete(' + numPk + ', \'' + safe(repoName) + '\')"><i class="bi bi-trash"></i></button>';
+        return btns;
+    }
+
     function _applyPromotionUpdate(id, status, errorMessage) {
         var tr = document.querySelector('tr[data-promotion-id="' + id + '"]');
         if (!tr || tr.dataset.promotionStatus === status) return;
@@ -753,7 +770,13 @@
         var statusCell = tr.querySelector('[data-role="status-cell"]');
         if (statusCell) statusCell.innerHTML = renderStatusBadge(status, errorMessage);
         var actionsCell = tr.querySelector('[data-role="actions-cell"]');
-        if (actionsCell) actionsCell.innerHTML = renderActionButtons(id, status, tr.dataset.pkgName, tr.dataset.repoName, actionsCell.dataset.buildPk);
+        if (actionsCell) {
+            if (String(id).indexOf('external-') === 0) {
+                actionsCell.innerHTML = renderExtActionButtons(id, status, tr.dataset.refName, tr.dataset.repoName);
+            } else {
+                actionsCell.innerHTML = renderActionButtons(id, status, tr.dataset.pkgName, tr.dataset.repoName, actionsCell.dataset.buildPk);
+            }
+        }
     }
 
     function onWebSocketMessage(data) {
@@ -772,7 +795,7 @@
     // One-shot REST sync for pending/promoting rows — used on page load and WS reconnect
     // to catch transitions that happened while the socket was down.
     window._syncPromotionStatuses = function () {
-        var rows = Array.from(document.querySelectorAll('tr[data-promotion-id]')).filter(function (tr) {
+        var rows = Array.from(document.querySelectorAll('tr[data-promotion-id]:not([data-promotion-id^="external-"])')).filter(function (tr) {
             var s = tr.dataset.promotionStatus;
             return s === 'pending' || s === 'promoting';
         });
@@ -789,8 +812,29 @@
             .catch(function () {});
     };
 
+    // One-shot REST sync for external-ref promotion rows.
+    window._syncExtPromotionStatuses = function () {
+        var rows = Array.from(document.querySelectorAll('tr[data-promotion-id^="external-"]')).filter(function (tr) {
+            var s = tr.dataset.promotionStatus;
+            return s === 'pending' || s === 'promoting';
+        });
+        if (rows.length === 0) return;
+        var ids = rows.map(function (tr) { return tr.dataset.promotionId.replace('external-', ''); }).join(',');
+        fetch('/external-promotions/status/?ids=' + ids, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                rows.forEach(function (tr) {
+                    var numId = tr.dataset.promotionId.replace('external-', '');
+                    var info = data[numId];
+                    if (info) _applyPromotionUpdate(tr.dataset.promotionId, info.status, info.error_message);
+                });
+            })
+            .catch(function () {});
+    };
+
     // Sync immediately in case any rows already finished before we loaded the page.
     window._syncPromotionStatuses();
+    window._syncExtPromotionStatuses();
 })();
 </script>
 
@@ -800,6 +844,9 @@
 function onWebSocketReconnect() {
     if (typeof window._syncPromotionStatuses === 'function') {
         window._syncPromotionStatuses();
+    }
+    if (typeof window._syncExtPromotionStatuses === 'function') {
+        window._syncExtPromotionStatuses();
     }
 }
 </script>

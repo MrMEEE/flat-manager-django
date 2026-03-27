@@ -136,6 +136,10 @@ class NotificationsConsumer(AsyncWebsocketConsumer):
             'completed_at': event.get('completed_at'),
         }))
 
+    # Alias — older worker code sends this type; forward identically.
+    async def bst_promotion_status_update(self, event):
+        await self.promotion_status_update(event)
+
 
 class RepoStatusConsumer(AsyncWebsocketConsumer):
     """

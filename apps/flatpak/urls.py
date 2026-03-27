@@ -61,6 +61,7 @@ urlpatterns = [
     path('externals/<int:pk>/status/', views.ExternalRefStatusView.as_view(), name='external_status'),
     path('external-promotions/<int:pk>/retry/', views.ExternalRefPromotionRetryView.as_view(), name='external_promotion_retry'),
     path('external-promotions/<int:pk>/delete/', views.ExternalRefPromotionDeleteView.as_view(), name='external_promotion_delete'),
+    path('external-promotions/status/', views.ExternalRefPromotionStatusBulkView.as_view(), name='external_promotion_status_bulk'),
     path('clients/', views.ClientListView.as_view(), name='client_list'),
     path('clients/<int:pk>/', views.ClientDetailView.as_view(), name='client_detail'),
     path('api/client-checkin/', views.ClientCheckinView.as_view(), name='client_checkin'),

@@ -1035,6 +1035,21 @@ def buildstream_build_task(self, bst_source_id, force_rebuild=False):
         log_build(build, 'info', "BuildStream build completed and published to build-repo")
         send_build_status_update(bst_source_id, 'published', 'Build completed and ready to promote')
 
+        # Auto-reset any promotions that were waiting on a rebuild triggered by
+        # missing build-repo objects — the rebuild has now completed successfully.
+        waiting = source.promotions.filter(
+            status='failed', error_message__contains='[REBUILD_TRIGGERED]'
+        )
+        reset_count = waiting.count()
+        if reset_count:
+            waiting.update(status='pending', error_message='', completed_at=None)
+            log_build(build, 'info',
+                      f"Auto-reset {reset_count} promotion(s) to pending after successful rebuild")
+            logger.info(
+                f"BST source {bst_source_id}: auto-reset {reset_count} failed promotion(s) "
+                f"to pending after rebuild"
+            )
+
     except BuildStreamSource.DoesNotExist:
         logger.error(f"BuildStreamSource {bst_source_id} not found")
     except Exception as e:
@@ -2530,7 +2545,7 @@ def promote_external_ref_task(external_promotion_id):
         if pull_result.returncode != 0:
             raise RuntimeError(f"ostree pull-local failed: {pull_result.stderr.strip()}")
 
-        update_repo_metadata(target_repo_path, target_repo.gpg_key)
+        update_repo_metadata(target_repo_path, target_repo.gpg_key, generate_deltas=False)
 
         promotion.status = 'promoted'
         promotion.completed_at = timezone.now()
@@ -2590,31 +2605,34 @@ def promote_bst_task(bst_promotion_id):
         # promoted from a different source (e.g. via the regular flatpak pipeline).
         # We keep: app/<bst_name>/*, runtime/<bst_name>.Locale/*, runtime/<bst_name>.Debug/*
         # We exclude: appstream, appstream2, ostree-metadata, freedesktop.*, flathub.*
-        refs_result = subprocess.run(
-            ['ostree', 'refs', '--list', f'--repo={build_repo_path}'],
-            capture_output=True, text=True, timeout=30,
-        )
-        if refs_result.returncode != 0:
-            raise RuntimeError(f"ostree refs failed: {refs_result.stderr.strip()}")
+        # Enumerate which refs to promote.
+        # Primary: use the refs recorded on the source at build time (most accurate).
+        # Fallback: scan build-repo and filter by source name prefix (for old builds
+        # that predate the produced_refs field).
+        if promo.bst_source.produced_refs.strip():
+            bst_refs = [r.strip() for r in promo.bst_source.produced_refs.splitlines() if r.strip()]
+            logger.info(f"Using {len(bst_refs)} refs from bst_source.produced_refs")
+        else:
+            refs_result = subprocess.run(
+                ['ostree', 'refs', '--list', f'--repo={build_repo_path}'],
+                capture_output=True, text=True, timeout=30,
+            )
+            if refs_result.returncode != 0:
+                raise RuntimeError(f"ostree refs failed: {refs_result.stderr.strip()}")
+            bst_name = promo.bst_source.name
+            bst_refs = [
+                r.strip() for r in refs_result.stdout.splitlines()
+                if r.strip() and (
+                    r.strip().startswith(f"app/{bst_name}/")
+                    or r.strip().startswith(f"runtime/{bst_name}.")
+                )
+            ]
+            if not bst_refs:
+                raise RuntimeError(
+                    f"No refs found in build-repo for BST source '{bst_name}'. "
+                    f"Build-repo refs: {refs_result.stdout.strip()[:500]}"
+                )
 
-        # Build a safe allowlist: only refs whose name starts with the BST source
-        # app-ID component.  BST produces refs like:
-        #   app/<AppId>/arch/branch
-        #   runtime/<AppId>.Locale/arch/branch
-        #   runtime/<AppId>.Debug/arch/branch
-        bst_name = promo.bst_source.name  # e.g. "nl.hjdskes.gcolor3"
-        bst_refs = [
-            r.strip() for r in refs_result.stdout.splitlines()
-            if r.strip() and (
-                r.strip().startswith(f"app/{bst_name}/")
-                or r.strip().startswith(f"runtime/{bst_name}.")
-            )
-        ]
-        if not bst_refs:
-            raise RuntimeError(
-                f"No refs found in build-repo for BST source '{bst_name}'. "
-                f"Build-repo refs: {refs_result.stdout.strip()[:500]}"
-            )
         logger.info(f"BST refs to promote: {bst_refs}")
 
         result = subprocess.run(
@@ -2654,8 +2672,32 @@ def promote_bst_task(bst_promotion_id):
         logger.error(f"BstPromotion {bst_promotion_id} failed: {e}")
         try:
             p = BstPromotion.objects.get(id=bst_promotion_id)
+            error_str = str(e)
+            # linkat failure → build-repo objects missing/corrupted.
+            # Auto-trigger a rebuild; once it finishes the promotion will be
+            # reset to pending automatically (see buildstream_build_task success path).
+            if 'linkat' in error_str or ('build-commit-from failed' in error_str and 'No such file' in error_str):
+                logger.warning(
+                    f"BstPromotion {bst_promotion_id}: build-repo objects missing; "
+                    f"triggering automatic rebuild of {p.bst_source.name}"
+                )
+                error_str = (
+                    f"Build-repo objects missing (linkat failed). "
+                    f"A rebuild of '{p.bst_source.name}' has been triggered automatically. "
+                    f"Retry this promotion after the rebuild completes. "
+                    f"[REBUILD_TRIGGERED]"
+                )
+                try:
+                    src = p.bst_source
+                    src.status = 'pending'
+                    src.save(update_fields=['status'])
+                    buildstream_build_task.delay(src.id, force_rebuild=True)
+                    logger.info(f"Auto-rebuild queued for BST source {src.id} ({src.name})")
+                except Exception as rebuild_err:
+                    logger.error(f"Failed to queue auto-rebuild: {rebuild_err}")
+                    error_str += f" (rebuild queue failed: {rebuild_err})"
             p.status = 'failed'
-            p.error_message = str(e)
+            p.error_message = error_str
             p.completed_at = timezone.now()
             p.save()
             send_bst_promotion_status_update(p)
@@ -2671,7 +2713,7 @@ def send_bst_promotion_status_update(promo):
     async_to_sync(channel_layer.group_send)(
         'notifications',
         {
-            'type': 'bst_promotion_status_update',
+            'type': 'promotion_status_update',
             'promotion_id': promo.id,
             'status': promo.status,
             'error_message': promo.error_message,
