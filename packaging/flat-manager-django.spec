@@ -78,7 +78,6 @@ Requires:       mariadb
 Requires:       flatpak
 Requires:       flatpak-builder
 Requires:       ostree
-Requires:       breezy
 Requires:       openssl
 Requires:       policycoreutils-python-utils
 
