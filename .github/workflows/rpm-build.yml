@@ -49,6 +49,7 @@ jobs:
             rpmdevtools \
             git \
             gcc \
+            gcc-c++ \
             rust \
             cargo \
             mariadb-connector-c-devel \

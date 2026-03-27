@@ -109,6 +109,7 @@ Summary:        Python virtualenv for flat-manager-django
 
 BuildRequires:  %{pypkg_prefix}-devel
 BuildRequires:  gcc
+BuildRequires:  gcc-c++
 BuildRequires:  mariadb-connector-c-devel
 BuildRequires:  rust
 BuildRequires:  cargo
