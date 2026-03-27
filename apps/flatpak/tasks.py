@@ -11,6 +11,7 @@ import subprocess
 import shutil
 import tempfile
 import time
+import sys
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -734,10 +735,17 @@ def package_from_git_task(self, package_id):
 def _get_bst_binary(bst_version):
     """Return the path to the bst executable for the given BST major version.
 
-    - BST 2: uses bare ``bst`` (the primary virtualenv).
+    - BST 2: prefers the active Python virtualenv's ``bin/bst``.
     - BST 1: reads ``bst1_venv_path`` from SiteConfig (UI-configurable),
       falling back to ``BST1_VENV_PATH`` in settings.py.
     """
+    # 1) Helper for resolving tools inside a venv root.
+    def _tool_in_venv(venv_root, tool_name='bst'):
+        if not venv_root:
+            return ''
+        candidate = os.path.join(venv_root, 'bin', tool_name)
+        return candidate if os.path.exists(candidate) else ''
+
     if bst_version == 'bst1':
         venv = ''
         try:
@@ -748,9 +756,27 @@ def _get_bst_binary(bst_version):
         if not venv:
             from django.conf import settings
             venv = getattr(settings, 'BST1_VENV_PATH', '').strip()
-        if venv:
-            return os.path.join(venv, 'bin', 'bst')
-    return 'bst'
+        resolved = _tool_in_venv(venv, 'bst')
+        if resolved:
+            return resolved
+
+    # BST 2: prefer the currently running interpreter's sibling binary.
+    # Celery is started from /opt/flat-manager/venv/bin/celery in RPM installs,
+    # so sys.executable is expected to be /opt/flat-manager/venv/bin/python.
+    py_bin = os.path.dirname(sys.executable or '')
+    if py_bin:
+        candidate = os.path.join(py_bin, 'bst')
+        if os.path.exists(candidate):
+            return candidate
+
+    # Secondary fallback: explicit VIRTUAL_ENV, if present.
+    resolved = _tool_in_venv(os.environ.get('VIRTUAL_ENV', '').strip(), 'bst')
+    if resolved:
+        return resolved
+
+    # Last resort: PATH lookup.
+    which_bst = shutil.which('bst')
+    return which_bst or 'bst'
 
 
 @shared_task(bind=True)
@@ -778,6 +804,11 @@ def buildstream_build_task(self, bst_source_id, force_rebuild=False):
         source = BuildStreamSource.objects.get(id=bst_source_id)
 
         bst_binary = _get_bst_binary(getattr(source, 'bst_version', 'bst2'))
+        logger.info(
+            "BuildStream source %s resolved bst binary: %s",
+            bst_source_id,
+            bst_binary,
+        )
 
         # Create Build history record
         build = Build.objects.create(
@@ -791,6 +822,7 @@ def buildstream_build_task(self, bst_source_id, force_rebuild=False):
         source.save()
 
         log_build(build, 'info', f"Starting BuildStream build for {source.name}")
+        log_build(build, 'info', f"Using BuildStream binary: {bst_binary}")
         log_build(build, 'info', f"Element: {source.bst_element}")
         send_build_status_update(bst_source_id, 'building', 'Cloning git repository')
 
@@ -1012,7 +1044,7 @@ def buildstream_build_task(self, bst_source_id, force_rebuild=False):
         # Version detection: query BST variables for the top-level element only
         # and extract the 'version' key from the YAML vars block.
         version_result = subprocess.run(
-            ['bst', 'show', '--deps', 'none', '--format', '%{vars}', source.bst_element],
+            [bst_binary, 'show', '--deps', 'none', '--format', '%{vars}', source.bst_element],
             cwd=source_dir, capture_output=True, text=True, timeout=60,
         )
         if version_result.returncode == 0:

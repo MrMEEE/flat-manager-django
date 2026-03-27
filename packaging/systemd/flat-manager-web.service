@@ -16,6 +16,8 @@ User=flat-manager
 Group=flat-manager
 WorkingDirectory=/opt/flat-manager/app
 EnvironmentFile=/etc/flat-manager/flat-manager.env
+Environment=VIRTUAL_ENV=/opt/flat-manager/venv
+Environment=PATH=/opt/flat-manager/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 ExecStartPre=/bin/chown -R flat-manager:flat-manager /var/log/flat-manager
 # UMask=0111 ensures the UNIX socket is created with mode 0666 (world r/w)
 # immediately, so nginx can connect without any post-start chmod step.
