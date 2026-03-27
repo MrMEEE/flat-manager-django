@@ -803,12 +803,20 @@ def buildstream_build_task(self, bst_source_id, force_rebuild=False):
     try:
         source = BuildStreamSource.objects.get(id=bst_source_id)
 
-        bst_binary = _get_bst_binary(getattr(source, 'bst_version', 'bst2'))
+        bst_version_str = getattr(source, 'bst_version', 'bst2')
+        bst_binary = _get_bst_binary(bst_version_str)
         logger.info(
             "BuildStream source %s resolved bst binary: %s",
             bst_source_id,
             bst_binary,
         )
+        # BST 2 uses a FUSE-based CAS stager (buildboxcommon_fusestager) by
+        # default.  On server hosts where /dev/fuse is absent or unprivileged
+        # FUSE mounts are disallowed, the stager child process dies with exit
+        # code 2 and the whole build fails.  --no-fuse forces BST 2 to use the
+        # plain (non-FUSE) fallback stager which works in any environment.
+        # BST 1 does not recognise this flag, so only add it for BST 2.
+        bst_global_flags = ['--no-fuse'] if bst_version_str != 'bst1' else []
 
         # Create Build history record
         build = Build.objects.create(
@@ -866,7 +874,7 @@ def buildstream_build_task(self, bst_source_id, force_rebuild=False):
             send_build_status_update(bst_source_id, 'building', 'Clearing BST artifact cache for full rebuild')
             log_build(build, 'info', f"Force rebuild: deleting all cached artifacts (--deps all) for {source.bst_element}")
             delete_result = subprocess.run(
-                [bst_binary, 'artifact', 'delete', '--deps', 'all', source.bst_element],
+                [bst_binary, *bst_global_flags, 'artifact', 'delete', '--deps', 'all', source.bst_element],
                 cwd=source_dir, capture_output=True, text=True, timeout=300,
             )
             if delete_result.returncode != 0:
@@ -887,7 +895,7 @@ def buildstream_build_task(self, bst_source_id, force_rebuild=False):
         except Exception:
             build_timeout = 7200
 
-        bst_cmd = [bst_binary, 'build', source.bst_element]
+        bst_cmd = [bst_binary, *bst_global_flags, 'build', source.bst_element]
         bst_build_result = run_cancellable(bst_cmd, cwd=source_dir, build=build, timeout_seconds=build_timeout)
 
         if bst_build_result.returncode != 0:
@@ -911,7 +919,7 @@ def buildstream_build_task(self, bst_source_id, force_rebuild=False):
         except Exception:
             bst_checkout_timeout = 1800
 
-        checkout_cmd = [bst_binary, 'artifact', 'checkout', source.bst_element, '--directory', checkout_dir]
+        checkout_cmd = [bst_binary, *bst_global_flags, 'artifact', 'checkout', source.bst_element, '--directory', checkout_dir]
         checkout_result = subprocess.run(
             checkout_cmd, cwd=source_dir,
             capture_output=True, text=True, timeout=bst_checkout_timeout,
@@ -1044,7 +1052,7 @@ def buildstream_build_task(self, bst_source_id, force_rebuild=False):
         # Version detection: query BST variables for the top-level element only
         # and extract the 'version' key from the YAML vars block.
         version_result = subprocess.run(
-            [bst_binary, 'show', '--deps', 'none', '--format', '%{vars}', source.bst_element],
+            [bst_binary, *bst_global_flags, 'show', '--deps', 'none', '--format', '%{vars}', source.bst_element],
             cwd=source_dir, capture_output=True, text=True, timeout=60,
         )
         if version_result.returncode == 0:
@@ -1471,6 +1479,26 @@ def pull_external_ref_task(external_ref_id):
             ext.commit_hash = commit
             _log_external(ext, 'info',
                           f"Resolved commit {commit[:12]} from {resolved_ref_name}")
+
+            # Ensure the canonical plain ref exists in build-repo so later
+            # pull-local / promotion paths can reference ext.ref directly.
+            refs_result = subprocess.run(
+                ['ostree', 'refs', f'--repo={build_repo_path}'],
+                capture_output=True, text=True
+            )
+            visible_refs = [r.strip() for r in refs_result.stdout.splitlines() if r.strip()]
+            if ref not in visible_refs:
+                create_ref = subprocess.run(
+                    ['ostree', 'refs', f'--repo={build_repo_path}', f'--create={ref}', commit],
+                    capture_output=True, text=True
+                )
+                if create_ref.returncode == 0:
+                    _log_external(ext, 'info',
+                                  f"Created canonical local ref {ref} -> {commit[:12]}")
+                else:
+                    _log_external(ext, 'warning',
+                                  "Could not create canonical local ref "
+                                  f"{ref}: {create_ref.stderr.strip() or create_ref.stdout.strip()}")
         else:
             refs_result = subprocess.run(
                 ['ostree', 'refs', f'--repo={build_repo_path}'],
@@ -1537,12 +1565,47 @@ def publish_external_ref_task(external_ref_id):
 
         _log_external(ext, 'info', f"Publishing {ext.ref} to {ext.repository.name}")
 
-        pull_result = subprocess.run(
-            ['ostree', 'pull-local', build_repo_path, ext.ref, f'--repo={target_repo_path}'],
-            capture_output=True, text=True, timeout=600
-        )
-        if pull_result.returncode != 0:
-            raise RuntimeError(f"ostree pull-local failed: {pull_result.stderr.strip()}")
+        # Try canonical ref first, then remote-namespaced ref, then commit hash.
+        source_candidates = [ext.ref]
+        if ext.remote and ext.remote.name:
+            source_candidates.append(f"{ext.remote.name}:{ext.ref}")
+        if ext.commit_hash:
+            source_candidates.append(ext.commit_hash)
+
+        pull_result = None
+        used_source = None
+        pull_errors = []
+        for source in source_candidates:
+            pull_result = subprocess.run(
+                ['ostree', 'pull-local', build_repo_path, source, f'--repo={target_repo_path}'],
+                capture_output=True, text=True, timeout=600
+            )
+            if pull_result.returncode == 0:
+                used_source = source
+                break
+            pull_errors.append(f"{source}: {pull_result.stderr.strip() or pull_result.stdout.strip()}")
+
+        if used_source is None:
+            raise RuntimeError(f"ostree pull-local failed: {' | '.join(pull_errors)}")
+
+        if used_source != ext.ref and ext.commit_hash:
+            # Ensure target repo always exports the expected branch name.
+            create_target_ref = subprocess.run(
+                ['ostree', 'refs', f'--repo={target_repo_path}', f'--create={ext.ref}', ext.commit_hash],
+                capture_output=True, text=True
+            )
+            if create_target_ref.returncode != 0:
+                _log_external(
+                    ext,
+                    'warning',
+                    f"Copied via {used_source}, but could not create target ref {ext.ref}: "
+                    f"{create_target_ref.stderr.strip() or create_target_ref.stdout.strip()}"
+                )
+            else:
+                _log_external(ext, 'info',
+                              f"Copied via {used_source} and created target ref {ext.ref}")
+        elif used_source != ext.ref:
+            _log_external(ext, 'info', f"Copied via source {used_source}")
 
         _log_external(ext, 'info', "Ref copied to repository — updating metadata")
 
