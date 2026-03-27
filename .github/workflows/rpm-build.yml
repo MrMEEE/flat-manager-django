@@ -9,6 +9,11 @@ on:
 permissions:
   contents: write   # needed to create GitHub Releases
 
+env:
+  # Proactively run JavaScript-based actions on Node.js 24 before
+  # GitHub's forced migration date, so any incompatibilities are caught early.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   # ────────────────────────────────────────────────────────────────────────────
   build-rpm:
