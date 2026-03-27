@@ -64,8 +64,6 @@ BuildRequires:  %{pypkg_prefix}
 BuildRequires:  systemd-rpm-macros
 BuildRequires:  checkpolicy
 BuildRequires:  policycoreutils
-BuildRequires:  rust
-BuildRequires:  cargo
 
 # Python runtime interpreter
 Requires:       %{pypkg_prefix}
@@ -119,6 +117,8 @@ BuildRequires:  cargo
 BuildRequires:  %{pypkg_prefix}-devel
 BuildRequires:  gcc
 BuildRequires:  mariadb-connector-c-devel
+BuildRequires:  rust
+BuildRequires:  cargo
 
 Requires:       %{pypkg_prefix}
 
