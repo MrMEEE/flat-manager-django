@@ -32,7 +32,7 @@ def ostree_refs(repo_path: str) -> dict[str, str]:
         if not ref.startswith('app/'):
             continue
         rev = subprocess.run(
-            ['ostree', 'rev-parse', ref, f'--repo={repo_path}'],
+            ['ostree', 'rev-parse', f'--repo={repo_path}', ref],
             capture_output=True, text=True, timeout=10
         )
         refs[ref] = rev.stdout.strip() if rev.returncode == 0 else ''

@@ -171,7 +171,7 @@ def update_repo_metadata(repo_path, gpg_key=None, generate_deltas=True):
                 sign_repo_summary(repo_path, gpg_key.key_id, gpg_homedir=homedir)
         else:
             subprocess.run(
-                ['ostree', 'summary', '-u', f'--repo={repo_path}'],
+                ['ostree', 'summary', f'--repo={repo_path}', '-u'],
                 capture_output=True, text=True
             )
 

@@ -1184,7 +1184,7 @@ def commit_package_task(package_id):
         
         # Get the commit hash for this ref
         show_commit = subprocess.run(
-            ['ostree', 'show', ref_name, f'--repo={build_repo_path}', '--print-metadata-key=ostree.commit.timestamp'],
+            ['ostree', 'show', f'--repo={build_repo_path}', '--print-metadata-key=ostree.commit.timestamp', ref_name],
             capture_output=True,
             text=True
         )
@@ -1192,7 +1192,7 @@ def commit_package_task(package_id):
         if show_commit.returncode == 0:
             # Extract commit hash from ostree show output
             rev_parse = subprocess.run(
-                ['ostree', 'rev-parse', ref_name, f'--repo={build_repo_path}'],
+                ['ostree', 'rev-parse', f'--repo={build_repo_path}', ref_name],
                 capture_output=True,
                 text=True
             )
@@ -1371,6 +1371,27 @@ def _log_external(ext_ref, level, message):
     ext_ref.save(update_fields=['log', 'updated_at'])
 
 
+def _get_flatpak_remote_commit(remote_name, ref):
+    """Resolve the current commit hash for a Flatpak remote ref.
+
+    Tries default, system, and user flatpak scopes because server installs may
+    have the remote configured in either location.
+    """
+    for scope_flag in ('', '--system', '--user'):
+        cmd = ['flatpak', 'remote-info']
+        if scope_flag:
+            cmd.append(scope_flag)
+        cmd.extend(['--show-commit', remote_name, ref])
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if result.returncode == 0:
+            commit = (result.stdout or '').strip().splitlines()
+            if commit:
+                value = commit[-1].strip()
+                if re.fullmatch(r'[0-9a-f]{64}', value):
+                    return value
+    return ''
+
+
 @shared_task
 def pull_external_ref_task(external_ref_id):
     """
@@ -1445,11 +1466,18 @@ def pull_external_ref_task(external_ref_id):
         )
         _log_external(ext, 'info', f"Remote '{remote_name}' configured in build-repo")
 
-        # Pull via ostree from the remote's OSTree URL.
-        # --mirror stores refs under refs/heads/ (not refs/remotes/) so that
-        # a subsequent ostree pull-local can find them by their plain ref name.
+        upstream_commit = _get_flatpak_remote_commit(remote_name, ref)
+        if upstream_commit:
+            _log_external(ext, 'info', f"Upstream commit: {upstream_commit[:12]}")
+        else:
+            _log_external(ext, 'warning',
+                          f"Could not determine upstream commit for {ref} via flatpak remote-info")
+
+        # Pull the exact commit from the remote. We create/update the plain ref
+        # explicitly afterwards instead of relying on --mirror ref semantics.
+        pull_target = f'{ref}@{upstream_commit}' if upstream_commit else ref
         pull_result = subprocess.run(
-            ['ostree', 'pull', f'--repo={build_repo_path}', '--mirror', remote_name, ref],
+            ['ostree', 'pull', f'--repo={build_repo_path}', remote_name, pull_target],
             capture_output=True, text=True, timeout=1800
         )
 
@@ -1458,22 +1486,18 @@ def pull_external_ref_task(external_ref_id):
 
         _log_external(ext, 'info', f"ostree pull succeeded")
 
-        # With --mirror, ostree stores the pulled branch directly under
-        # refs/heads/<ref>, which is exactly what pull-local expects.
-        # Resolve the commit from the plain ref first and preserve that ref.
-        # Older repos / edge cases may still expose the remote-namespaced form,
-        # so keep that as a fallback.
-        commit = ''
-        resolved_ref_name = None
-        for candidate_ref in (ref, f'{remote_name}:{ref}'):
+        # Resolve the pulled commit in build-repo. Prefer the upstream commit we
+        # just queried; otherwise fall back to resolving the ref locally.
+        commit = upstream_commit
+        resolved_ref_name = f'{ref}@{upstream_commit}' if upstream_commit else None
+        if not commit:
             rev_result = subprocess.run(
-                ['ostree', 'rev-parse', candidate_ref, f'--repo={build_repo_path}'],
+                ['ostree', 'rev-parse', f'--repo={build_repo_path}', ref],
                 capture_output=True, text=True
             )
             if rev_result.returncode == 0:
                 commit = rev_result.stdout.strip()
-                resolved_ref_name = candidate_ref
-                break
+                resolved_ref_name = ref
 
         if commit:
             ext.commit_hash = commit
@@ -1489,7 +1513,7 @@ def pull_external_ref_task(external_ref_id):
             visible_refs = [r.strip() for r in refs_result.stdout.splitlines() if r.strip()]
             if ref not in visible_refs:
                 create_ref = subprocess.run(
-                    ['ostree', 'refs', f'--repo={build_repo_path}', f'--create={ref}', commit],
+                    ['ostree', 'refs', f'--repo={build_repo_path}', '--force', commit, f'--create={ref}'],
                     capture_output=True, text=True
                 )
                 if create_ref.returncode == 0:
@@ -1514,7 +1538,7 @@ def pull_external_ref_task(external_ref_id):
 
         # Regenerate the summary so pull-local can find the ref by name.
         subprocess.run(
-            ['ostree', 'summary', '-u', f'--repo={build_repo_path}'],
+            ['ostree', 'summary', f'--repo={build_repo_path}', '-u'],
             capture_output=True, text=True
         )
 
@@ -1545,7 +1569,7 @@ def publish_external_ref_task(external_ref_id):
     Publish an already-pulled ExternalRef from build-repo into the target repository.
     """
     from apps.flatpak.models import ExternalRef
-    from apps.flatpak.utils.ostree import update_repo_metadata
+    from apps.flatpak.utils.ostree import update_repo_metadata, temp_gpg_homedir
 
     try:
         ext = ExternalRef.objects.select_related('repository').get(pk=external_ref_id)
@@ -1567,8 +1591,6 @@ def publish_external_ref_task(external_ref_id):
 
         # Try canonical ref first, then remote-namespaced ref, then commit hash.
         source_candidates = [ext.ref]
-        if ext.remote and ext.remote.name:
-            source_candidates.append(f"{ext.remote.name}:{ext.ref}")
         if ext.commit_hash:
             source_candidates.append(ext.commit_hash)
 
@@ -1591,7 +1613,7 @@ def publish_external_ref_task(external_ref_id):
         if used_source != ext.ref and ext.commit_hash:
             # Ensure target repo always exports the expected branch name.
             create_target_ref = subprocess.run(
-                ['ostree', 'refs', f'--repo={target_repo_path}', f'--create={ext.ref}', ext.commit_hash],
+                ['ostree', 'refs', f'--repo={target_repo_path}', '--force', f'--create={ext.ref}', ext.commit_hash],
                 capture_output=True, text=True
             )
             if create_target_ref.returncode != 0:
@@ -1610,6 +1632,40 @@ def publish_external_ref_task(external_ref_id):
         _log_external(ext, 'info', "Ref copied to repository — updating metadata")
 
         gpg_key = ext.repository.gpg_key
+
+        # Explicitly sign the imported commit in the target repo with the
+        # repository's key before metadata refresh. This guarantees that each
+        # imported external artifact is signed even if metadata generation later
+        # downgrades to a warning/fallback path.
+        target_commit = ''
+        target_commit_result = subprocess.run(
+            ['ostree', 'rev-parse', f'--repo={target_repo_path}', ext.ref],
+            capture_output=True, text=True
+        )
+        if target_commit_result.returncode == 0:
+            target_commit = target_commit_result.stdout.strip()
+        elif ext.commit_hash:
+            target_commit = ext.commit_hash
+
+        if gpg_key and target_commit:
+            with temp_gpg_homedir(gpg_key) as homedir:
+                sign_result = subprocess.run(
+                    ['ostree', f'--repo={target_repo_path}', 'gpg-sign',
+                     f'--gpg-homedir={homedir}', target_commit, gpg_key.key_id],
+                    capture_output=True, text=True
+                )
+            if sign_result.returncode != 0:
+                raise RuntimeError(
+                    "Imported commit signing failed: "
+                    f"{sign_result.stderr.strip() or sign_result.stdout.strip()}"
+                )
+            _log_external(ext, 'info',
+                          f"Signed imported commit {target_commit[:12]} with key {gpg_key.key_id}")
+        elif gpg_key and not target_commit:
+            raise RuntimeError(
+                "Imported ref copied, but could not resolve target commit for GPG signing"
+            )
+
         meta_result = update_repo_metadata(target_repo_path, gpg_key)
         if not meta_result['success']:
             _log_external(ext, 'warning',
