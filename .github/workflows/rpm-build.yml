@@ -49,17 +49,13 @@ jobs:
             rpmdevtools \
             git \
             gcc \
+            rust \
+            cargo \
             mariadb-connector-c-devel \
             flatpak \
             checkpolicy \
             policycoreutils \
             ${{ matrix.python_pkg }}
-
-          # python3.11 on CS9 ships without pip — bootstrap it
-          if command -v python3.11 &>/dev/null && ! python3.11 -m pip --version &>/dev/null; then
-            python3.11 -m ensurepip --upgrade || \
-              curl -sS https://bootstrap.pypa.io/get-pip.py | python3.11
-          fi
 
           rpmdev-setuptree
 
