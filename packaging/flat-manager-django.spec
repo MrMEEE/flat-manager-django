@@ -119,8 +119,6 @@ BuildRequires:  cargo
 BuildRequires:  %{pypkg_prefix}-devel
 BuildRequires:  gcc
 BuildRequires:  mariadb-connector-c-devel
-# BST1 venv requires Python 3.11 (BST1 is incompatible with Python 3.12+)
-BuildRequires:  python3.11
 
 Requires:       %{pypkg_prefix}
 
