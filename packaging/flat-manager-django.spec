@@ -64,6 +64,8 @@ BuildRequires:  %{pypkg_prefix}
 BuildRequires:  systemd-rpm-macros
 BuildRequires:  checkpolicy
 BuildRequires:  policycoreutils
+BuildRequires:  rust
+BuildRequires:  cargo
 
 # Python runtime interpreter
 Requires:       %{pypkg_prefix}
