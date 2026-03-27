@@ -1666,7 +1666,10 @@ def publish_external_ref_task(external_ref_id):
                 "Imported ref copied, but could not resolve target commit for GPG signing"
             )
 
-        meta_result = update_repo_metadata(target_repo_path, gpg_key)
+        # External dependency pulls can happen frequently; regenerating static
+        # deltas on every import is expensive and not required for correctness.
+        # Keep the repo metadata + signatures fresh, but skip delta rebuilds.
+        meta_result = update_repo_metadata(target_repo_path, gpg_key, generate_deltas=False)
         if not meta_result['success']:
             _log_external(ext, 'warning',
                 f"Metadata update issue: {meta_result.get('message', '')} {meta_result.get('detail', '')}")
