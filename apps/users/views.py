@@ -65,7 +65,7 @@ class DashboardView(LoginRequiredMixin, View):
 
         recent_builds = (
             Build.objects
-            .select_related('package', 'package__repository')
+            .select_related('package', 'package__repository', 'bst_source', 'bst_source__repository')
             .order_by('-started_at')[:10]
         )
 
