@@ -10,7 +10,7 @@ from django.urls import reverse_lazy, reverse
 from django.contrib import messages
 from django.shortcuts import render, redirect, get_object_or_404
 from django.conf import settings
-from .models import GPGKey, Repository, RepositorySubset, Package, Build, Promotion, BuildStreamSource, Client
+from .models import GPGKey, Repository, RepositorySubset, Package, Build, Promotion, BuildStreamSource, Client, ExternalRef, ExternalRefPromotion
 from .forms import GPGKeyGenerateForm, GPGKeyImportForm
 from .utils.gpg import generate_gpg_key, import_gpg_key
 from .utils.ostree import init_ostree_repo, sign_repo_summary, delete_ostree_repo, temp_gpg_homedir, update_repo_metadata
@@ -509,6 +509,31 @@ class PackageDetailView(LoginRequiredMixin, DetailView):
         context = super().get_context_data(**kwargs)
         # Get all builds (history) for this package
         context['builds'] = self.object.builds.all().order_by('-build_number')
+
+        # Build a coverage map for produced refs
+        ref_coverage = {}
+        for bst in BuildStreamSource.objects.all().only('pk', 'name', 'produced_refs'):
+            for raw in bst.produced_refs.splitlines():
+                r = raw.strip()
+                if r and r not in ref_coverage:
+                    ref_coverage[r] = {'kind': 'bst', 'pk': bst.pk, 'name': bst.name}
+        for pkg in Package.objects.exclude(pk=self.object.pk).only('pk', 'package_id', 'package_name', 'arch', 'branch'):
+            disp = pkg.package_name or pkg.package_id
+            for prefix in ('app', 'runtime', 'appstream'):
+                key = f"{prefix}/{pkg.package_id}/{pkg.arch}/{pkg.branch}"
+                if key not in ref_coverage:
+                    ref_coverage[key] = {'kind': 'package', 'pk': pkg.pk, 'name': disp}
+
+        produced = [r for r in self.object.produced_refs.splitlines() if r.strip()]
+        grouped = {}
+        for ref in sorted(produced):
+            bucket = ref.split('/')[0] if '/' in ref else 'other'
+            grouped.setdefault(bucket, []).append({
+                'ref': ref,
+                'coverage': ref_coverage.get(ref),
+            })
+        context['produced_refs'] = produced
+        context['produced_refs_grouped'] = grouped
         return context
 
 
@@ -652,6 +677,32 @@ def get_available_bst_promotion_targets(build):
     )
     taken_ids = set(
         build.bst_promotions.exclude(status='failed').values_list('target_repo_id', flat=True)
+    )
+    available = []
+    visited = {source_repo.id}
+    to_explore = [source_repo] + list(Repository.objects.filter(id__in=completed_ids))
+    for from_repo in to_explore:
+        for child in from_repo.child_repos.filter(is_active=True):
+            if child.id in visited:
+                continue
+            visited.add(child.id)
+            parent_ids = set(child.parent_repos.values_list('id', flat=True)) - {source_repo.id}
+            if parent_ids.issubset(completed_ids) and child.id not in taken_ids:
+                available.append(child)
+    return available
+
+
+def get_available_external_ref_promotion_targets(external_ref):
+    """
+    Returns list of Repository objects that this ExternalRef can currently be
+    promoted to. Same chain logic as package/BST promotions.
+    """
+    source_repo = external_ref.repository
+    completed_ids = set(
+        external_ref.promotions.filter(status='promoted').values_list('target_repo_id', flat=True)
+    )
+    taken_ids = set(
+        external_ref.promotions.exclude(status='failed').values_list('target_repo_id', flat=True)
     )
     available = []
     visited = {source_repo.id}
@@ -856,6 +907,78 @@ class BstPromoteView(LoginRequiredMixin, View):
         from apps.flatpak.tasks import promote_bst_task
         promote_bst_task.delay(promo.id)
         return JsonResponse({'status': 'ok', 'promotion_id': promo.id})
+
+
+class ExternalRefPromoteView(LoginRequiredMixin, View):
+    """Promote a published ExternalRef to a child repository."""
+
+    def post(self, request, pk):
+        import json
+        from apps.flatpak.tasks import promote_external_ref_task
+
+        ext = get_object_or_404(ExternalRef, pk=pk)
+        if ext.status != 'published':
+            return JsonResponse({'error': f'External ref must be published first (current: {ext.status})'}, status=400)
+
+        try:
+            data = json.loads(request.body or '{}')
+        except json.JSONDecodeError:
+            data = {}
+
+        target_repo_id = data.get('target_repo_id')
+        if not target_repo_id:
+            return JsonResponse({'error': 'target_repo_id is required'}, status=400)
+
+        available_targets = get_available_external_ref_promotion_targets(ext)
+        target_repo = next((repo for repo in available_targets if repo.pk == int(target_repo_id)), None)
+        if target_repo is None:
+            return JsonResponse({'error': 'Invalid promotion target for this external ref'}, status=400)
+
+        promo = ExternalRefPromotion.objects.create(
+            external_ref=ext,
+            target_repo=target_repo,
+            status='pending',
+            promoted_by=request.user,
+        )
+        promote_external_ref_task.delay(promo.id)
+        return JsonResponse({'status': 'ok', 'promotion_id': promo.id})
+
+
+class ExternalRefPromotionRetryView(LoginRequiredMixin, View):
+    def post(self, request, pk):
+        from apps.flatpak.tasks import promote_external_ref_task
+
+        promo = get_object_or_404(ExternalRefPromotion, pk=pk)
+        promo.status = 'pending'
+        promo.error_message = ''
+        promo.completed_at = None
+        promo.save()
+        promote_external_ref_task.delay(promo.id)
+        return JsonResponse({'status': 'ok'})
+
+
+class ExternalRefPromotionDeleteView(LoginRequiredMixin, View):
+    def post(self, request, pk):
+        from apps.flatpak.utils.ostree import update_repo_metadata
+
+        promo = get_object_or_404(ExternalRefPromotion.objects.select_related('external_ref', 'target_repo'), pk=pk)
+        target_repo = promo.target_repo
+        repo_path = target_repo.repo_path
+        ref_name = promo.external_ref.ref
+
+        try:
+            delete_result = subprocess.run(
+                ['ostree', 'refs', '--delete', ref_name, f'--repo={repo_path}'],
+                capture_output=True, text=True, timeout=120,
+            )
+            if delete_result.returncode != 0 and 'No such ref' not in (delete_result.stderr or ''):
+                raise RuntimeError(delete_result.stderr.strip() or delete_result.stdout.strip())
+
+            update_repo_metadata(repo_path, target_repo.gpg_key)
+            promo.delete()
+            return JsonResponse({'status': 'ok'})
+        except Exception as exc:
+            return JsonResponse({'error': str(exc)}, status=400)
 
 
 class BstPromotionRetryView(LoginRequiredMixin, View):
@@ -1140,6 +1263,13 @@ class PromotionListView(LoginRequiredMixin, ListView):
         if pub_repo:
             pub_qs = pub_qs.filter(package__repository_id=pub_repo)
         context['published_builds'] = pub_qs
+        context['published_externals'] = (
+            ExternalRef.objects
+            .filter(status='published')
+            .select_related('repository', 'remote', 'created_by')
+            .prefetch_related('promotions', 'promotions__target_repo')
+            .order_by('-updated_at')
+        )
         # Use Package.status (canonical truth) so we always see the current
         # state of each package, not stale Build rows from previous attempts.
         context['ready_to_commit'] = (
@@ -1177,6 +1307,12 @@ class PromotionListView(LoginRequiredMixin, ListView):
                 ready_to_promote.append({'build': build, 'targets': targets})
                 seen_packages.add(build.package_id)
         context['ready_to_promote'] = ready_to_promote
+        ready_to_promote_externals = []
+        for ext in context['published_externals']:
+            targets = get_available_external_ref_promotion_targets(ext)
+            if targets:
+                ready_to_promote_externals.append({'external_ref': ext, 'targets': targets})
+        context['ready_to_promote_externals'] = ready_to_promote_externals
         context['repositories'] = Repository.objects.filter(is_active=True)
         context['promo_status_choices'] = Promotion.STATUS_CHOICES
         context['filter_q'] = self.request.GET.get('q', '')
@@ -1220,6 +1356,11 @@ class PromotionListView(LoginRequiredMixin, ListView):
             .select_related('build', 'bst_source', 'target_repo', 'promoted_by')
             .order_by('-created_at')[:50]
         )
+        context['external_ref_promotions'] = (
+            ExternalRefPromotion.objects
+            .select_related('external_ref', 'target_repo', 'promoted_by', 'external_ref__repository')
+            .order_by('-created_at')[:50]
+        )
         # BST builds ready to promote
         ready_to_promote_bst = []
         bst_published = (
@@ -1246,7 +1387,7 @@ class PackageCreateView(LoginRequiredMixin, CreateView):
     """Create new package."""
     model = Package
     template_name = 'flatpak/package_form.html'
-    fields = ['repository', 'package_id', 'package_name', 'version', 'git_repo_url', 'git_branch', 'upstream_url', 'upstream_version_script', 'branch', 'arch', 'installation_type']
+    fields = ['repository', 'package_id', 'package_name', 'version', 'git_repo_url', 'git_branch', 'manifest_file', 'upstream_url', 'upstream_version_script', 'branch', 'arch', 'installation_type']
     
     def get_initial(self):
         initial = super().get_initial()
@@ -1302,7 +1443,7 @@ class PackageUpdateView(LoginRequiredMixin, UpdateView):
     """Edit package details."""
     model = Package
     template_name = 'flatpak/package_form.html'
-    fields = ['repository', 'package_id', 'package_name', 'version', 'branch', 'arch', 'git_repo_url', 'git_branch', 'upstream_url', 'upstream_version_script', 'installation_type']
+    fields = ['repository', 'package_id', 'package_name', 'version', 'branch', 'arch', 'git_repo_url', 'git_branch', 'manifest_file', 'upstream_url', 'upstream_version_script', 'installation_type']
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -1726,6 +1867,7 @@ def dependencies_list(request):
 
     bst_create_url = reverse('flatpak:bst_source_create')
     pkg_create_url = reverse('flatpak:package_create')
+    external_create_url = reverse('flatpak:external_create')
 
     for dep in KNOWN_DEPS:
         app_id = dep['id']
@@ -1750,6 +1892,10 @@ def dependencies_list(request):
             if dep.get(k):
                 pkg_params[k] = dep[k]
         dep['add_pkg_url'] = pkg_create_url + '?' + urlencode(pkg_params)
+
+        # Pre-build the "Import as External" URL with a best-guess ref.
+        ref_type = 'runtime' if dep['type'] in ('SDK', 'Runtime', 'Extension') else 'app'
+        dep['add_external_url'] = external_create_url + '?' + urlencode({'ref': f"{ref_type}/{dep['id']}/x86_64/stable"})
 
     # ------------------------------------------------------------------ #
     # Also list locally-installed Flatpak runtimes/SDKs/extensions       #
@@ -1818,6 +1964,11 @@ def dependencies_list(request):
                 pkg_params['git_branch'] = known['git_branch']
             dep['add_pkg_url'] = pkg_create_url + '?' + urlencode(pkg_params)
 
+            # Import as External ref (pre-fill the ref using installed branch)
+            ref_type = 'runtime' if dep['type'] in ('SDK', 'Runtime', 'Extension') else 'app'
+            ext_ref_str = f"{ref_type}/{app_id}/x86_64/{dep['branch']}"
+            dep['add_external_url'] = external_create_url + '?' + urlencode({'ref': ext_ref_str})
+
     context = {
         'known_deps': KNOWN_DEPS,
         'dependencies': dependencies,
@@ -1882,6 +2033,166 @@ def serve_repository(request, repo_path):
         return response
     except (IOError, OSError):
         raise Http404("Error reading file")
+
+
+# ---------------------------------------------------------------------------
+# ExternalRef views
+# ---------------------------------------------------------------------------
+
+class ExternalRefListView(LoginRequiredMixin, ListView):
+    template_name = 'flatpak/external_list.html'
+    context_object_name = 'externals'
+    paginate_by = 30
+
+    def get_queryset(self):
+        from .models import ExternalRef
+        from django.db.models import Q
+        qs = ExternalRef.objects.select_related('repository', 'remote', 'created_by').order_by('-updated_at')
+        q = self.request.GET.get('q', '').strip()
+        status = self.request.GET.get('status', '').strip()
+        repo = self.request.GET.get('repo', '').strip()
+        if q:
+            qs = qs.filter(Q(ref__icontains=q) | Q(display_name__icontains=q))
+        if status:
+            qs = qs.filter(status=status)
+        if repo:
+            qs = qs.filter(repository_id=repo)
+        return qs
+
+    def get_context_data(self, **kwargs):
+        from .models import ExternalRef
+        ctx = super().get_context_data(**kwargs)
+        ctx['repositories'] = Repository.objects.filter(is_active=True)
+        ctx['status_choices'] = ExternalRef.STATUS_CHOICES
+        ctx['filter_q'] = self.request.GET.get('q', '')
+        ctx['filter_status'] = self.request.GET.get('status', '')
+        ctx['filter_repo'] = self.request.GET.get('repo', '')
+        get_params = self.request.GET.copy()
+        get_params.pop('page', None)
+        ctx['filter_params'] = get_params.urlencode()
+        return ctx
+
+
+class ExternalRefDetailView(LoginRequiredMixin, DetailView):
+    template_name = 'flatpak/external_detail.html'
+    context_object_name = 'ext'
+
+    def get_queryset(self):
+        from .models import ExternalRef
+        return ExternalRef.objects.select_related('repository', 'remote', 'created_by')
+
+
+class ExternalRefCreateView(LoginRequiredMixin, CreateView):
+    template_name = 'flatpak/external_form.html'
+
+    def get_form_class(self):
+        from django import forms
+        from .models import ExternalRef, FlatpakRemote
+
+        class ExternalRefForm(forms.ModelForm):
+            class Meta:
+                model = ExternalRef
+                fields = ['repository', 'remote', 'ref']
+                widgets = {
+                    'ref': forms.TextInput(attrs={
+                        'placeholder': 'e.g. runtime/org.kde.Platform/x86_64/5.15',
+                        'class': 'form-control font-monospace',
+                    }),
+                }
+
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                # Only allow parent (top-level) repositories
+                self.fields['repository'].queryset = Repository.objects.filter(
+                    parent_repos__isnull=True, is_active=True
+                )
+                self.fields['remote'].queryset = FlatpakRemote.objects.filter(is_active=True)
+
+        return ExternalRefForm
+
+    def get_initial(self):
+        initial = super().get_initial()
+        for field in ('ref', 'remote', 'repository'):
+            if field in self.request.GET:
+                initial[field] = self.request.GET[field]
+        return initial
+
+    def form_valid(self, form):
+        form.instance.created_by = self.request.user
+        # Auto-derive display_name from ref
+        ref = form.instance.ref
+        parts = ref.split('/')
+        if len(parts) >= 4:
+            form.instance.display_name = f"{parts[1]}/{parts[3]}"
+        elif len(parts) >= 2:
+            form.instance.display_name = parts[1]
+        response = super().form_valid(form)
+        # Immediately queue the pull task so "Save & Pull" actually pulls
+        from apps.flatpak.tasks import pull_external_ref_task
+        pull_external_ref_task.delay(self.object.pk)
+        return response
+
+    def get_success_url(self):
+        return reverse('flatpak:external_detail', kwargs={'pk': self.object.pk})
+
+
+class ExternalRefDeleteView(LoginRequiredMixin, DeleteView):
+    template_name = 'flatpak/external_confirm_delete.html'
+    success_url = reverse_lazy('flatpak:external_list')
+
+    def get_queryset(self):
+        from .models import ExternalRef
+        return ExternalRef.objects.all()
+
+
+class ExternalRefPullView(LoginRequiredMixin, View):
+    """Queue a pull (and subsequent publish) task for an ExternalRef."""
+
+    def post(self, request, pk):
+        from .models import ExternalRef
+        from apps.flatpak.tasks import pull_external_ref_task
+
+        ext = get_object_or_404(ExternalRef, pk=pk)
+        if ext.status in ('pulling', 'publishing'):
+            return JsonResponse({'error': f'Already in progress (status: {ext.status})'}, status=400)
+
+        # Reset for re-pull
+        ext.status = 'pending'
+        ext.log = ''
+        ext.error_message = ''
+        ext.save()
+
+        pull_external_ref_task.delay(ext.pk)
+        return JsonResponse({'status': 'success', 'message': f'Pull started for {ext.display_name or ext.ref}'})
+
+
+class ExternalRefPublishView(LoginRequiredMixin, View):
+    """Re-publish an already-pulled ExternalRef (e.g. to a different repository after editing)."""
+
+    def post(self, request, pk):
+        from .models import ExternalRef
+        from apps.flatpak.tasks import publish_external_ref_task
+
+        ext = get_object_or_404(ExternalRef, pk=pk)
+        if ext.status != 'pulled':
+            return JsonResponse({'error': f'Ref must be in pulled state (current: {ext.status})'}, status=400)
+
+        publish_external_ref_task.delay(ext.pk)
+        return JsonResponse({'status': 'success', 'message': f'Publish started for {ext.display_name or ext.ref}'})
+
+
+class ExternalRefStatusView(LoginRequiredMixin, View):
+    """Return current status + log for an ExternalRef (polling endpoint)."""
+
+    def get(self, request, pk):
+        from .models import ExternalRef
+        ext = get_object_or_404(ExternalRef, pk=pk)
+        return JsonResponse({
+            'status': ext.status,
+            'log': ext.log,
+            'commit_hash': ext.commit_hash,
+            'error_message': ext.error_message,
+        })
 
 
 class ClientListView(LoginRequiredMixin, ListView):

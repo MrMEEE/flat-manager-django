@@ -516,18 +516,26 @@ def package_from_git_task(self, package_id):
         
         send_build_status_update(package_id, 'building', 'Running flatpak-builder')
         
-        # Find manifest file — try exact names first, then fall back to scanning
-        # the source directory for any file that looks like a flatpak manifest.
+        # Find manifest file — use explicit override first, then exact names, then scan.
         manifest_file = None
-        for name in [
-            f'{package.package_id}.yml', f'{package.package_id}.yaml', f'{package.package_id}.json',
-            f'{package.package_id}.metainfo.xml',
-            'flatpak.yml', 'flatpak.yaml', 'flatpak.json',
-        ]:
-            candidate = os.path.join(source_dir, name)
-            if os.path.exists(candidate):
-                manifest_file = candidate
-                break
+        if package.manifest_file:
+            override_path = os.path.join(source_dir, package.manifest_file)
+            if os.path.exists(override_path):
+                manifest_file = override_path
+                log_build(build, 'info', f"Using manifest override: {package.manifest_file}")
+            else:
+                log_build(build, 'warning', f"Manifest override '{package.manifest_file}' not found in repo, falling back to auto-detection")
+
+        if not manifest_file:
+            for name in [
+                f'{package.package_id}.yml', f'{package.package_id}.yaml', f'{package.package_id}.json',
+                f'{package.package_id}.metainfo.xml',
+                'flatpak.yml', 'flatpak.yaml', 'flatpak.json',
+            ]:
+                candidate = os.path.join(source_dir, name)
+                if os.path.exists(candidate):
+                    manifest_file = candidate
+                    break
 
         # Fallback: scan root (and one level deep) for any .json/.yml/.yaml/.metainfo.xml
         # that contains a flatpak app-id field, preferring files whose name matches the
@@ -671,17 +679,31 @@ def package_from_git_task(self, package_id):
             else:
                 raise RuntimeError(f"flatpak-builder failed: {error_msg}")
         
-        # Success - update both Package and Build history
-        package.status = 'built'
-        package.save()
-        
+        # Success - update Build history record
         build.status = 'built'
         build.completed_at = timezone.now()
         build.save()
         
         log_build(build, 'info', "Build completed successfully")
+
+        # Capture produced refs from build-repo
+        check_refs_result = subprocess.run(
+            ['ostree', 'refs', f'--repo={build_repo_path}'],
+            capture_output=True, text=True
+        )
+        if check_refs_result.returncode == 0:
+            all_package_refs = sorted(
+                r for r in check_refs_result.stdout.strip().split('\n')
+                if r and package.package_id in r
+            )
+            if all_package_refs:
+                package.produced_refs = '\n'.join(all_package_refs)
+                log_build(build, 'info', f"Captured {len(all_package_refs)} produced ref(s): {', '.join(all_package_refs)}")
+
+        package.status = 'built'
+        package.save()
         send_build_status_update(package_id, 'built', 'Build completed, ready to publish')
-        
+
     except Package.DoesNotExist:
         logger.error(f"Package {package_id} not found")
     except Exception as e:
@@ -1098,6 +1120,12 @@ def commit_package_task(package_id):
                     ref_name = app_refs[0]  # Use the first match
                 else:
                     raise ValueError(f"No refs found for {package.package_id}")
+
+            # Capture all refs that belong to this package (app + appstream + runtime variants)
+            all_package_refs = sorted(r for r in refs if r and package.package_id in r)
+            if all_package_refs:
+                package.produced_refs = '\n'.join(all_package_refs)
+                log_build(build, 'info', f"Captured {len(all_package_refs)} produced ref(s): {', '.join(all_package_refs)}")
         
         # Get the commit hash for this ref
         show_commit = subprocess.run(
@@ -1278,6 +1306,212 @@ def publish_package_task(package_id):
 
 # Pre-compiled regex for ANSI escape sequences (CSI + other ESC sequences)
 _ANSI_ESC_RE = re.compile(r'\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+
+
+def _log_external(ext_ref, level, message):
+    """Append a timestamped line to ExternalRef.log and save."""
+    from django.utils import timezone as tz
+    line = f"[{tz.now().strftime('%H:%M:%S')}] [{level.upper()}] {message}"
+    ext_ref.log = (ext_ref.log + '\n' + line).lstrip('\n')
+    ext_ref.save(update_fields=['log', 'updated_at'])
+
+
+@shared_task
+def pull_external_ref_task(external_ref_id):
+    """
+    Pull an OSTree ref from its configured flatpak remote into build-repo,
+    then immediately publish it to the target repository.
+    """
+    from apps.flatpak.models import ExternalRef
+    from apps.flatpak.utils.ostree import update_repo_metadata
+
+    try:
+        ext = ExternalRef.objects.select_related('repository', 'remote').get(pk=external_ref_id)
+    except ExternalRef.DoesNotExist:
+        logger.error(f"ExternalRef {external_ref_id} not found")
+        return
+
+    try:
+        ext.status = 'pulling'
+        ext.error_message = ''
+        ext.log = ''
+        ext.save()
+
+        if not ext.remote:
+            raise ValueError("No remote associated with this external ref")
+
+        remote_name = ext.remote.name
+        ref = ext.ref
+
+        _log_external(ext, 'info', f"Pulling {ref} from remote '{remote_name}'")
+
+        # Ensure the flatpak remote is registered (try system first, then user)
+        ensure_flatpak_remote(remote_name, ext.remote.url, '--system')
+        # Also try user scope in case system scope fails silently
+        ensure_flatpak_remote(remote_name, ext.remote.url, '--user')
+
+        # Get the actual OSTree URL from flatpak
+        url_result = subprocess.run(
+            ['flatpak', 'remotes', '--columns=name,url'],
+            capture_output=True, text=True
+        )
+        remote_url = None
+        for line in url_result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[0] == remote_name:
+                remote_url = parts[1]
+                break
+
+        if not remote_url:
+            # Fall back to the URL stored in the FlatpakRemote record (may be .flatpakrepo URL)
+            # Try to derive OSTree URL by removing .flatpakrepo suffix
+            remote_url = ext.remote.url
+            if remote_url.endswith('.flatpakrepo'):
+                # Common pattern: https://dl.flathub.org/repo/ from https://dl.flathub.org/repo/flathub.flatpakrepo
+                remote_url = remote_url.rsplit('/', 1)[0] + '/'
+            _log_external(ext, 'warning', f"Could not detect remote URL via flatpak, using: {remote_url}")
+
+        _log_external(ext, 'info', f"Remote OSTree URL: {remote_url}")
+
+        build_repo_path = os.path.join(settings.REPOS_BASE_PATH, 'build-repo')
+        os.makedirs(build_repo_path, exist_ok=True)
+        if not os.path.exists(os.path.join(build_repo_path, 'config')):
+            subprocess.run(
+                ['ostree', 'init', '--mode=archive-z2', f'--repo={build_repo_path}'],
+                check=True, capture_output=True
+            )
+
+        # Register the remote in the build-repo OSTree config so we can pull
+        # from it. --no-gpg-verify avoids needing to import remote GPG keys.
+        subprocess.run(
+            ['ostree', 'remote', 'add', '--if-not-exists', '--no-gpg-verify',
+             f'--repo={build_repo_path}', remote_name, remote_url],
+            capture_output=True, text=True
+        )
+        _log_external(ext, 'info', f"Remote '{remote_name}' configured in build-repo")
+
+        # Pull via ostree from the remote's OSTree URL.
+        # --mirror stores refs under refs/heads/ (not refs/remotes/) so that
+        # a subsequent ostree pull-local can find them by their plain ref name.
+        pull_result = subprocess.run(
+            ['ostree', 'pull', f'--repo={build_repo_path}', '--mirror', remote_name, ref],
+            capture_output=True, text=True, timeout=1800
+        )
+
+        if pull_result.returncode != 0:
+            raise RuntimeError(f"ostree pull failed: {pull_result.stderr.strip() or pull_result.stdout.strip()}")
+
+        _log_external(ext, 'info', f"ostree pull succeeded")
+
+        # Record commit hash - resolve from the remote-namespaced ref
+        rev_result = subprocess.run(
+            ['ostree', 'rev-parse', f'{remote_name}:{ref}', f'--repo={build_repo_path}'],
+            capture_output=True, text=True
+        )
+        commit = rev_result.stdout.strip() if rev_result.returncode == 0 else ''
+        if commit:
+            ext.commit_hash = commit
+
+        # The pull stores the ref under refs/remotes/<remote>/<ref> as
+        # "{remote_name}:{ref}".  Create (or force-update) a local
+        # refs/heads entry so that ostree pull-local can reference it by
+        # its plain ref name.  Delete first to make this idempotent on
+        # re-pulls (a stale local ref would otherwise point at the old commit).
+        subprocess.run(
+            ['ostree', 'refs', f'--repo={build_repo_path}', '--delete', ref],
+            capture_output=True, text=True  # OK if the ref doesn't exist yet
+        )
+        if commit:
+            create_result = subprocess.run(
+                ['ostree', 'refs', f'--repo={build_repo_path}', '--create', ref, commit],
+                capture_output=True, text=True
+            )
+            if create_result.returncode != 0:
+                _log_external(ext, 'warning', f"refs --create: {create_result.stderr.strip()}")
+        else:
+            _log_external(ext, 'warning', "Could not resolve commit hash — pull-local may fail")
+
+        # Regenerate the summary so pull-local can find the ref by name.
+        subprocess.run(
+            ['ostree', 'summary', '-u', f'--repo={build_repo_path}'],
+            capture_output=True, text=True
+        )
+
+        ext.status = 'pulled'
+        from django.utils import timezone as tz
+        ext.last_pulled_at = tz.now()
+        ext.save()
+
+        _log_external(ext, 'info', "Pull complete — publishing to repository")
+
+        # Immediately publish to target repo
+        publish_external_ref_task(external_ref_id)
+
+    except Exception as e:
+        logger.error(f"pull_external_ref_task failed for {external_ref_id}: {e}")
+        try:
+            ext.status = 'failed'
+            ext.error_message = str(e)
+            ext.save()
+            _log_external(ext, 'error', f"Pull failed: {e}")
+        except Exception:
+            pass
+
+
+@shared_task
+def publish_external_ref_task(external_ref_id):
+    """
+    Publish an already-pulled ExternalRef from build-repo into the target repository.
+    """
+    from apps.flatpak.models import ExternalRef
+    from apps.flatpak.utils.ostree import update_repo_metadata
+
+    try:
+        ext = ExternalRef.objects.select_related('repository').get(pk=external_ref_id)
+    except ExternalRef.DoesNotExist:
+        logger.error(f"ExternalRef {external_ref_id} not found")
+        return
+
+    try:
+        ext.status = 'publishing'
+        ext.save()
+
+        build_repo_path = os.path.join(settings.REPOS_BASE_PATH, 'build-repo')
+        target_repo_path = ext.repository.repo_path
+
+        if not os.path.exists(os.path.join(target_repo_path, 'config')):
+            raise FileNotFoundError(f"Target repository {ext.repository.name} not found at {target_repo_path}")
+
+        _log_external(ext, 'info', f"Publishing {ext.ref} to {ext.repository.name}")
+
+        pull_result = subprocess.run(
+            ['ostree', 'pull-local', build_repo_path, ext.ref, f'--repo={target_repo_path}'],
+            capture_output=True, text=True, timeout=600
+        )
+        if pull_result.returncode != 0:
+            raise RuntimeError(f"ostree pull-local failed: {pull_result.stderr.strip()}")
+
+        _log_external(ext, 'info', "Ref copied to repository — updating metadata")
+
+        gpg_key = ext.repository.gpg_key
+        meta_result = update_repo_metadata(target_repo_path, gpg_key)
+        if not meta_result['success']:
+            _log_external(ext, 'warning',
+                f"Metadata update issue: {meta_result.get('message', '')} {meta_result.get('detail', '')}")
+
+        ext.status = 'published'
+        ext.save()
+        _log_external(ext, 'info', "Published successfully")
+
+    except Exception as e:
+        logger.error(f"publish_external_ref_task failed for {external_ref_id}: {e}")
+        try:
+            ext.status = 'failed'
+            ext.error_message = str(e)
+            ext.save()
+            _log_external(ext, 'error', f"Publish failed: {e}")
+        except Exception:
+            pass
 
 
 def log_build(build, level, message):
@@ -2239,6 +2473,85 @@ def send_promotion_status_update(promotion):
             'completed_at': promotion.completed_at.strftime('%b %d, %H:%M') if promotion.completed_at else None,
         }
     )
+
+
+def send_external_ref_promotion_status_update(promotion):
+    """
+    Send external-ref promotion status via WebSocket to the notifications group.
+    Reuses the same event type so the existing page JS can refresh after changes.
+    """
+    channel_layer = get_channel_layer()
+    if channel_layer is None:
+        return
+    async_to_sync(channel_layer.group_send)(
+        'notifications',
+        {
+            'type': 'promotion_status_update',
+            'promotion_id': f'external-{promotion.id}',
+            'status': promotion.status,
+            'error_message': promotion.error_message,
+            'promoted_by': promotion.promoted_by.username if promotion.promoted_by else None,
+            'completed_at': promotion.completed_at.strftime('%b %d, %H:%M') if promotion.completed_at else None,
+        }
+    )
+
+
+@shared_task
+def promote_external_ref_task(external_promotion_id):
+    """
+    Promote a published ExternalRef from build-repo to a child repository.
+    """
+    from apps.flatpak.models import ExternalRefPromotion
+    from apps.flatpak.utils.ostree import update_repo_metadata
+
+    try:
+        promotion = ExternalRefPromotion.objects.select_related(
+            'external_ref', 'target_repo', 'target_repo__gpg_key'
+        ).get(id=external_promotion_id)
+
+        promotion.status = 'promoting'
+        promotion.save()
+        send_external_ref_promotion_status_update(promotion)
+
+        ext = promotion.external_ref
+        target_repo = promotion.target_repo
+        build_repo_path = os.path.join(settings.REPOS_BASE_PATH, 'build-repo')
+        target_repo_path = target_repo.repo_path
+
+        if not os.path.exists(os.path.join(target_repo_path, 'config')):
+            raise FileNotFoundError(f"Target repository '{target_repo.name}' not found on disk")
+
+        logger.info(f"Promoting external ref {ext.ref} from build-repo to {target_repo.name}")
+
+        pull_result = subprocess.run(
+            ['ostree', 'pull-local', build_repo_path, ext.ref, f'--repo={target_repo_path}'],
+            capture_output=True, text=True, timeout=600
+        )
+        if pull_result.returncode != 0:
+            raise RuntimeError(f"ostree pull-local failed: {pull_result.stderr.strip()}")
+
+        update_repo_metadata(target_repo_path, target_repo.gpg_key)
+
+        promotion.status = 'promoted'
+        promotion.completed_at = timezone.now()
+        promotion.save()
+        send_external_ref_promotion_status_update(promotion)
+        logger.info(f"External ref promotion {external_promotion_id} complete: {ext.ref} → {target_repo.name}")
+        sync_repo_state.delay()
+
+    except ExternalRefPromotion.DoesNotExist:
+        logger.error(f"ExternalRefPromotion {external_promotion_id} not found")
+    except Exception as e:
+        logger.error(f"ExternalRefPromotion {external_promotion_id} failed: {e}")
+        try:
+            p = ExternalRefPromotion.objects.get(id=external_promotion_id)
+            p.status = 'failed'
+            p.error_message = str(e)
+            p.completed_at = timezone.now()
+            p.save()
+            send_external_ref_promotion_status_update(p)
+        except Exception:
+            pass
 
 
 @shared_task

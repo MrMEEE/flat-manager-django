@@ -35,6 +35,12 @@ pytz>=2023.3
 Pillow>=10.0.0  # For ImageField support
 python-gnupg>=0.5.0  # For GPG key generation
 
+# VCS tools used by flatpak-builder source types
+# NOTE: breezy requires Rust (cargo) at pip install time. Ensure cargo is
+# available during RPM build (see BuildRequires: rust-packaging / cargo).
+breezy>=3.3.0  # provides the 'bzr' command for type:bzr manifest sources
+launchpadlib>=2.0.0  # required by brz for Launchpad source URLs
+
 # BuildStream for SDK/runtime builds
 BuildStream>=2.0
 bst-plugins-experimental>=1.100.1  # provides git_repo and other BST source plugins

@@ -78,6 +78,7 @@ Requires:       mariadb
 Requires:       flatpak
 Requires:       flatpak-builder
 Requires:       ostree
+Requires:       breezy
 Requires:       openssl
 Requires:       policycoreutils-python-utils
 
@@ -111,6 +112,7 @@ Summary:        Python virtualenv for flat-manager-django
 # ensurepip in %build instead.  On CS10, python3-pip is available normally.
 %if 0%{?rhel} != 9
 BuildRequires:  %{pypkg_prefix}-pip
+BuildRequires:  cargo
 %endif
 BuildRequires:  %{pypkg_prefix}-devel
 BuildRequires:  gcc

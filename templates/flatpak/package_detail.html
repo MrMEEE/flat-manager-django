@@ -55,7 +55,7 @@
 </div>
 
 <div class="row mb-4">
-    <div class="col-md-12">
+    <div class="col-md-8">
         <div class="card mb-4">
             <div class="card-header">
                 <h5 class="mb-0">Package Details</h5>
@@ -293,7 +293,58 @@
             </div>
         </div>
     </div>
-    
+
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-box-seam"></i> Produced Refs</h5>
+                {% if produced_refs %}
+                <span class="badge bg-secondary">{{ produced_refs|length }}</span>
+                {% endif %}
+            </div>
+            <div class="card-body p-0">
+                {% if produced_refs %}
+                    {% for bucket, refs in produced_refs_grouped.items %}
+                    <div class="px-3 pt-3 pb-1">
+                        <p class="text-muted small fw-semibold text-uppercase mb-1" style="letter-spacing:.05em">{{ bucket }}</p>
+                        <ul class="list-unstyled mb-0">
+                        {% for item in refs %}
+                            <li class="small py-1 border-bottom d-flex align-items-center justify-content-between gap-2">
+                                <span class="font-monospace text-truncate" style="font-size:.72rem;flex:1;min-width:0" title="{{ item.ref }}">
+                                    <i class="bi bi-box text-muted" style="font-size:.72rem"></i>
+                                    {{ item.ref }}
+                                </span>
+                                {% if item.coverage %}
+                                    {% if item.coverage.kind == 'bst' %}
+                                    <a href="{% url 'flatpak:bst_source_detail' item.coverage.pk %}"
+                                       class="badge bg-success text-decoration-none text-nowrap flex-shrink-0"
+                                       title="Managed by BST: {{ item.coverage.name|escapejs }}">
+                                        <i class="bi bi-layers"></i> BST
+                                    </a>
+                                    {% else %}
+                                    <a href="{% url 'flatpak:package_detail' item.coverage.pk %}"
+                                       class="badge bg-primary text-decoration-none text-nowrap flex-shrink-0"
+                                       title="Managed as Package: {{ item.coverage.name|escapejs }}">
+                                        <i class="bi bi-box"></i> Pkg
+                                    </a>
+                                    {% endif %}
+                                {% endif %}
+                            </li>
+                        {% endfor %}
+                        </ul>
+                    </div>
+                    {% endfor %}
+                    <p class="text-muted small px-3 py-2 mb-0">Captured from last successful build.</p>
+                {% else %}
+                    <div class="text-center text-muted py-4 px-3">
+                        <i class="bi bi-box-seam display-6 d-block mb-2 opacity-25"></i>
+                        <p class="small mb-0">No ref data yet.<br>Refs are captured after the next build completes.</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
 </div>
 
 <!-- Confirmation Modal -->

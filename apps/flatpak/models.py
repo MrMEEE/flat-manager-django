@@ -107,6 +107,10 @@ class Package(models.Model):
     # Build source - either git repo OR upload pre-built packages
     git_repo_url = models.URLField(blank=True, help_text="Git repository URL to build from")
     git_branch = models.CharField(max_length=100, blank=True, default='master', help_text="Git branch to build")
+    manifest_file = models.CharField(
+        max_length=500, blank=True, default='',
+        help_text="Relative path to manifest file inside the repo (e.g. subdir/org.example.App.json). Leave blank for auto-detection."
+    )
     
     # Build configuration
     version = models.CharField(max_length=255, blank=True, help_text="Version number (extracted from manifest if git-based)")
@@ -155,6 +159,7 @@ class Package(models.Model):
     # Build results
     source_commit = models.CharField(max_length=255, blank=True, help_text="Git commit hash that was built")
     commit_hash = models.CharField(max_length=255, blank=True, help_text="OSTree commit hash")
+    produced_refs = models.TextField(blank=True, default='', help_text="Newline-separated OSTree refs produced by the last successful build.")
     dependencies = models.JSONField(null=True, blank=True, help_text="Detected Flatpak dependencies")
     error_message = models.TextField(blank=True, help_text="Error message if build failed")
     
@@ -571,6 +576,111 @@ class FlatpakRemote(models.Model):
     def __str__(self):
         status = '' if self.is_active else ' (inactive)'
         return f"{self.name}{status}"
+
+
+class ExternalRef(models.Model):
+    """
+    An OSTree ref pulled from a configured flatpak remote and hosted in one of
+    our repositories.  Think of it as a "mirrored dependency" — the ref is
+    fetched via  ostree pull  from the upstream remote and then published into
+    a parent repository exactly like a built Package.
+    """
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('pulling', 'Pulling'),
+        ('pulled', 'Pulled'),
+        ('publishing', 'Publishing'),
+        ('published', 'Published'),
+        ('failed', 'Failed'),
+    ]
+
+    repository = models.ForeignKey(
+        'Repository', on_delete=models.CASCADE, related_name='external_refs',
+        help_text="Target parent repository to publish the ref into"
+    )
+    remote = models.ForeignKey(
+        'FlatpakRemote', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='external_refs',
+        help_text="The flatpak remote this ref originates from"
+    )
+    # The full OSTree ref string, e.g. runtime/org.kde.Platform/x86_64/5.15
+    ref = models.CharField(max_length=500, help_text="Full OSTree ref (e.g. runtime/org.kde.Platform/x86_64/5.15)")
+    # Friendly display name derived from the ref (e.g. org.kde.Platform)
+    display_name = models.CharField(max_length=255, blank=True)
+
+    commit_hash = models.CharField(max_length=64, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    error_message = models.TextField(blank=True)
+    log = models.TextField(blank=True, help_text="Pull/publish log output")
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+        related_name='external_refs'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    last_pulled_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        unique_together = [['repository', 'ref']]
+
+    def __str__(self):
+        return f"{self.display_name or self.ref} → {self.repository.name}"
+
+    def save(self, *args, **kwargs):
+        if not self.display_name:
+            # Derive friendly name from ref: runtime/org.kde.Platform/x86_64/5.15 → org.kde.Platform/5.15
+            parts = self.ref.split('/')
+            if len(parts) >= 4:
+                self.display_name = f"{parts[1]}/{parts[3]}"
+            else:
+                self.display_name = self.ref
+        super().save(*args, **kwargs)
+
+
+class ExternalRefPromotion(models.Model):
+    """
+    Tracks promotion of a published ExternalRef to a child repository.
+    Mirrors Promotion but uses ExternalRef instead of Build/Package.
+    """
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('promoting', 'Promoting'),
+        ('promoted', 'Promoted'),
+        ('failed', 'Failed'),
+    ]
+
+    external_ref = models.ForeignKey(
+        ExternalRef, on_delete=models.CASCADE, related_name='promotions'
+    )
+    target_repo = models.ForeignKey(
+        'Repository', on_delete=models.CASCADE, related_name='external_ref_promotions'
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    error_message = models.TextField(blank=True)
+    promoted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='external_ref_promotions',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'External Ref Promotion'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['external_ref', 'target_repo'],
+                name='unique_external_ref_target_repo',
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.external_ref.display_name or self.external_ref.ref} → {self.target_repo.name}"
 
 
 class Client(models.Model):

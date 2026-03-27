@@ -89,6 +89,9 @@
                     {% else %}
                     <span class="text-success small"><i class="bi bi-check-circle-fill"></i> Managed</span>
                     {% endif %}
+                    <a href="{{ dep.add_external_url }}" class="btn btn-sm btn-outline-secondary ms-1" title="Import from a remote as an External ref">
+                        <i class="bi bi-cloud-download"></i> Import
+                    </a>
                 </td>
             </tr>
             {% endfor %}
@@ -152,6 +155,9 @@
                         {% else %}
                         <span class="text-success small"><i class="bi bi-check-circle-fill"></i> Managed</span>
                         {% endif %}
+                        <a href="{{ dep.add_external_url }}" class="btn btn-sm btn-outline-secondary ms-1" title="Import from a remote as an External ref">
+                            <i class="bi bi-cloud-download"></i> Import
+                        </a>
                     </td>
                 </tr>
                 {% endfor %}
@@ -216,6 +222,9 @@
                         {% else %}
                         <span class="text-success small"><i class="bi bi-check-circle-fill"></i> Managed</span>
                         {% endif %}
+                        <a href="{{ dep.add_external_url }}" class="btn btn-sm btn-outline-secondary ms-1" title="Import from a remote as an External ref">
+                            <i class="bi bi-cloud-download"></i> Import
+                        </a>
                     </td>
                 </tr>
                 {% endfor %}
