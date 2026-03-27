@@ -1450,33 +1450,39 @@ def pull_external_ref_task(external_ref_id):
 
         _log_external(ext, 'info', f"ostree pull succeeded")
 
-        # Record commit hash - resolve from the remote-namespaced ref
-        rev_result = subprocess.run(
-            ['ostree', 'rev-parse', f'{remote_name}:{ref}', f'--repo={build_repo_path}'],
-            capture_output=True, text=True
-        )
-        commit = rev_result.stdout.strip() if rev_result.returncode == 0 else ''
-        if commit:
-            ext.commit_hash = commit
-
-        # The pull stores the ref under refs/remotes/<remote>/<ref> as
-        # "{remote_name}:{ref}".  Create (or force-update) a local
-        # refs/heads entry so that ostree pull-local can reference it by
-        # its plain ref name.  Delete first to make this idempotent on
-        # re-pulls (a stale local ref would otherwise point at the old commit).
-        subprocess.run(
-            ['ostree', 'refs', f'--repo={build_repo_path}', '--delete', ref],
-            capture_output=True, text=True  # OK if the ref doesn't exist yet
-        )
-        if commit:
-            create_result = subprocess.run(
-                ['ostree', 'refs', f'--repo={build_repo_path}', '--create', ref, commit],
+        # With --mirror, ostree stores the pulled branch directly under
+        # refs/heads/<ref>, which is exactly what pull-local expects.
+        # Resolve the commit from the plain ref first and preserve that ref.
+        # Older repos / edge cases may still expose the remote-namespaced form,
+        # so keep that as a fallback.
+        commit = ''
+        resolved_ref_name = None
+        for candidate_ref in (ref, f'{remote_name}:{ref}'):
+            rev_result = subprocess.run(
+                ['ostree', 'rev-parse', candidate_ref, f'--repo={build_repo_path}'],
                 capture_output=True, text=True
             )
-            if create_result.returncode != 0:
-                _log_external(ext, 'warning', f"refs --create: {create_result.stderr.strip()}")
+            if rev_result.returncode == 0:
+                commit = rev_result.stdout.strip()
+                resolved_ref_name = candidate_ref
+                break
+
+        if commit:
+            ext.commit_hash = commit
+            _log_external(ext, 'info',
+                          f"Resolved commit {commit[:12]} from {resolved_ref_name}")
         else:
-            _log_external(ext, 'warning', "Could not resolve commit hash — pull-local may fail")
+            refs_result = subprocess.run(
+                ['ostree', 'refs', f'--repo={build_repo_path}'],
+                capture_output=True, text=True
+            )
+            visible_refs = [r.strip() for r in refs_result.stdout.splitlines() if r.strip()]
+            _log_external(
+                ext,
+                'warning',
+                "Could not resolve commit hash after mirror pull. "
+                f"Visible refs: {', '.join(visible_refs[:20]) or '(none)'}"
+            )
 
         # Regenerate the summary so pull-local can find the ref by name.
         subprocess.run(
