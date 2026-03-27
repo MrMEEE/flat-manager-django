@@ -523,6 +523,9 @@ fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 %changelog
+* Fri Mar 27 2026 Release Bot <noreply@example.com> - 0.1.96-1
+- Release 0.1.96
+
 * Fri Mar 27 2026 Release Bot <noreply@example.com> - 0.1.95-1
 - Release 0.1.95
 
