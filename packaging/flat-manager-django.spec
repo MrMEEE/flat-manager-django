@@ -108,12 +108,6 @@ independently of the application code.
 Summary:        Python virtualenv for flat-manager-django
 # NOT noarch: compiled C extensions (mysqlclient, Pillow, hiredis, …)
 
-# python3.11-pip does not exist as an RPM on CS9 — pip is bootstrapped via
-# ensurepip in %build instead.  On CS10, python3-pip is available normally.
-%if 0%{?rhel} != 9
-BuildRequires:  %{pypkg_prefix}-pip
-BuildRequires:  cargo
-%endif
 BuildRequires:  %{pypkg_prefix}-devel
 BuildRequires:  gcc
 BuildRequires:  mariadb-connector-c-devel
@@ -155,16 +149,15 @@ Configuration: /etc/flat-manager-django-client/config
 %autosetup -n %{name}-%{version}
 
 %build
-# ── Bootstrap pip on RHEL9 where python3.11-pip is not an RPM ────────────────
-%if 0%{?rhel} == 9
-%{pybin} -m ensurepip --upgrade 2>/dev/null || \
-    curl -sS https://bootstrap.pypa.io/get-pip.py | %{pybin}
-%endif
 
 # ── Build virtualenv with all Python dependencies ─────────────────────────────
 %{pybin} -m venv %{_builddir}/fmvenv
 %{_builddir}/fmvenv/bin/pip install --upgrade pip --quiet
 %{_builddir}/fmvenv/bin/pip install -r requirements.txt --quiet
+
+%if 0%{?rhel} != 9
+%global bst1pybin    python3
+%endif
 
 # ── Build separate virtualenv for BuildStream 1 ───────────────────────────────
 # BST 1 and BST 2 use incompatible project.conf formats; each needs its own
@@ -174,7 +167,11 @@ Configuration: /etc/flat-manager-django-client/config
 %{bst1pybin} -m venv %{_builddir}/bst1venv
 %{_builddir}/bst1venv/bin/python -m ensurepip --upgrade 2>/dev/null || true
 %{_builddir}/bst1venv/bin/pip install --upgrade pip --quiet
+
+# Only for RHEL 9 for now
+%if 0%{?rhel} == 9
 %{_builddir}/bst1venv/bin/pip install 'BuildStream>=1.0,<1.7' --quiet
+%endif
 
 # ── Collect static files (needs venv + Django importable) ────────────────────
 mkdir -p %{_builddir}/tmp-static \
