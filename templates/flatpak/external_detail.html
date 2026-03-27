@@ -1,0 +1,282 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ ext.display_name|default:ext.ref }} - External Ref - Flat Manager{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-cloud-download"></i> {{ ext.display_name|default:ext.ref }}</h2>
+    <div class="d-flex gap-2" id="action-buttons">
+        <button type="button" class="btn btn-primary" id="btn-pull"
+                {% if ext.status == 'pulling' or ext.status == 'publishing' %}disabled{% endif %}
+                onclick="doPull()">
+            <i class="bi bi-arrow-clockwise"></i> Pull &amp; Publish
+        </button>
+        {% if ext.status == 'pulled' %}
+        <button type="button" class="btn btn-outline-success" id="btn-publish"
+                onclick="doPublish()">
+            <i class="bi bi-cloud-upload"></i> Publish Only
+        </button>
+        {% endif %}
+        <button type="button" class="btn btn-outline-danger"
+                onclick="showDeleteConfirm(
+                    'Delete External Ref',
+                    'Delete <strong>{{ ext.display_name|default:ext.ref|escapejs }}</strong>? This only removes the record — the ref remains in the repository if already published.',
+                    'Delete',
+                    function() { document.getElementById('form-delete').submit(); }
+                )">
+            <i class="bi bi-trash"></i> Delete
+        </button>
+        <form id="form-delete" method="post" action="{% url 'flatpak:external_delete' ext.pk %}" class="d-none">
+            {% csrf_token %}
+        </form>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        {# Details card #}
+        <div class="card mb-4">
+            <div class="card-header"><h5 class="mb-0">Details</h5></div>
+            <div class="card-body">
+                <dl class="row mb-0">
+                    <dt class="col-sm-4">OSTree Ref:</dt>
+                    <dd class="col-sm-8"><code>{{ ext.ref }}</code></dd>
+
+                    <dt class="col-sm-4">Remote:</dt>
+                    <dd class="col-sm-8">{{ ext.remote.name|default:"—" }}
+                        {% if ext.remote.url %}
+                            <small class="text-muted">({{ ext.remote.url }})</small>
+                        {% endif %}
+                    </dd>
+
+                    <dt class="col-sm-4">Repository:</dt>
+                    <dd class="col-sm-8">
+                        <a href="{% url 'flatpak:repo_detail' ext.repository.pk %}">{{ ext.repository.name }}</a>
+                    </dd>
+
+                    <dt class="col-sm-4">Status:</dt>
+                    <dd class="col-sm-8" id="ext-status">
+                        {% include 'flatpak/_external_status_badge.html' with status=ext.status %}
+                    </dd>
+
+                    {% if ext.commit_hash %}
+                    <dt class="col-sm-4">Commit:</dt>
+                    <dd class="col-sm-8" id="ext-commit"><code>{{ ext.commit_hash|slice:":16" }}</code></dd>
+                    {% else %}
+                    <dt class="col-sm-4" id="ext-commit-label" style="display:none">Commit:</dt>
+                    <dd class="col-sm-8" id="ext-commit" style="display:none"></dd>
+                    {% endif %}
+
+                    {% if ext.last_pulled_at %}
+                    <dt class="col-sm-4">Last Pulled:</dt>
+                    <dd class="col-sm-8">{{ ext.last_pulled_at|date:"Y-m-d H:i" }}</dd>
+                    {% endif %}
+
+                    <dt class="col-sm-4">Added by:</dt>
+                    <dd class="col-sm-8">{{ ext.created_by.get_full_name|default:ext.created_by.username }}
+                        &mdash; {{ ext.created_at|date:"Y-m-d" }}</dd>
+
+                    {% if ext.error_message %}
+                    <dt class="col-sm-4">Error:</dt>
+                    <dd class="col-sm-8">
+                        <pre class="bg-danger-subtle p-2 rounded small mb-0" id="ext-error">{{ ext.error_message }}</pre>
+                    </dd>
+                    {% else %}
+                    <dt class="col-sm-4" id="ext-error-label" style="display:none">Error:</dt>
+                    <dd class="col-sm-8" id="ext-error-wrap" style="display:none">
+                        <pre class="bg-danger-subtle p-2 rounded small mb-0" id="ext-error"></pre>
+                    </dd>
+                    {% endif %}
+                </dl>
+            </div>
+        </div>
+
+        {# Log card #}
+        <div class="card">
+            <div class="card-header"><h5 class="mb-0">Log</h5></div>
+            <div class="card-body p-0">
+                <textarea id="ext-log" class="form-control font-monospace border-0 rounded-0" rows="18"
+                          style="resize: vertical; background:#1e2023; color:#c9d1d9;"
+                          readonly>{{ ext.log }}</textarea>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header"><h5 class="mb-0">Quick Actions</h5></div>
+            <div class="card-body d-grid gap-2">
+                <button class="btn btn-primary" onclick="doPull()" id="btn-pull-sidebar"
+                        {% if ext.status == 'pulling' or ext.status == 'publishing' %}disabled{% endif %}>
+                    <i class="bi bi-arrow-repeat"></i> Re-pull &amp; Publish
+                </button>
+                {% if ext.status == 'pulled' %}
+                <button class="btn btn-outline-success" onclick="doPublish()" id="btn-publish-sidebar">
+                    <i class="bi bi-cloud-upload"></i> Publish Only
+                </button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+{# Confirm modal (required by copilot-instructions pattern) #}
+<div class="modal fade" id="confirmModal" tabindex="-1" aria-labelledby="confirmModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="confirmModalLabel">Confirm</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="confirmModalBody"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="confirmModalOkBtn">Confirm</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# Error modal #}
+<div class="modal fade" id="errorModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title" id="errorModalLabel">Error</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="errorModalBody"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const PULL_URL    = "{% url 'flatpak:external_pull' ext.pk %}";
+const PUBLISH_URL = "{% url 'flatpak:external_publish' ext.pk %}";
+const STATUS_URL  = "{% url 'flatpak:external_status' ext.pk %}";
+const CSRF_TOKEN  = "{{ csrf_token }}";
+
+function showDeleteConfirm(title, body, okLabel, onOk) {
+    document.getElementById('confirmModalLabel').textContent = title;
+    document.getElementById('confirmModalBody').innerHTML = body;
+    const okBtn = document.getElementById('confirmModalOkBtn');
+    okBtn.textContent = okLabel;
+    okBtn.onclick = function() {
+        bootstrap.Modal.getInstance(document.getElementById('confirmModal')).hide();
+        onOk();
+    };
+    new bootstrap.Modal(document.getElementById('confirmModal')).show();
+}
+
+function showErrorModal(title, message) {
+    document.getElementById('errorModalLabel').textContent = title;
+    document.getElementById('errorModalBody').textContent = message;
+    new bootstrap.Modal(document.getElementById('errorModal')).show();
+}
+
+function setButtonsBusy(busy) {
+    ['btn-pull', 'btn-publish', 'btn-pull-sidebar', 'btn-publish-sidebar'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = busy;
+    });
+}
+
+function postAction(url, onSuccess) {
+    setButtonsBusy(true);
+    fetch(url, {
+        method: 'POST',
+        headers: {'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json'},
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) {
+            showErrorModal('Error', data.error);
+            setButtonsBusy(false);
+        } else {
+            startPolling();
+        }
+    })
+    .catch(err => {
+        showErrorModal('Error', String(err));
+        setButtonsBusy(false);
+    });
+}
+
+function doPull()    { postAction(PULL_URL); }
+function doPublish() { postAction(PUBLISH_URL); }
+
+let _pollInterval = null;
+
+function startPolling() {
+    if (_pollInterval) return;
+    _pollInterval = setInterval(pollStatus, 2000);
+}
+
+function stopPolling() {
+    if (_pollInterval) { clearInterval(_pollInterval); _pollInterval = null; }
+}
+
+function pollStatus() {
+    fetch(STATUS_URL)
+    .then(r => r.json())
+    .then(data => {
+        // Update log
+        const logEl = document.getElementById('ext-log');
+        if (logEl && data.log !== undefined) {
+            logEl.value = data.log;
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+        // Update status badge
+        const statusEl = document.getElementById('ext-status');
+        if (statusEl) { statusEl.innerHTML = statusBadgeHTML(data.status); }
+        // Update commit
+        if (data.commit_hash) {
+            const commitEl = document.getElementById('ext-commit');
+            const commitLabel = document.getElementById('ext-commit-label');
+            if (commitEl) {
+                commitEl.innerHTML = '<code>' + data.commit_hash.slice(0, 16) + '</code>';
+                commitEl.style.display = '';
+            }
+            if (commitLabel) commitLabel.style.display = '';
+        }
+        // Update error
+        const errorEl = document.getElementById('ext-error');
+        const errorWrap = document.getElementById('ext-error-wrap');
+        if (data.error_message) {
+            if (errorEl) errorEl.textContent = data.error_message;
+            if (errorWrap) errorWrap.style.display = '';
+        }
+        // Stop polling when done
+        if (!['pulling', 'publishing', 'pending'].includes(data.status)) {
+            stopPolling();
+            setButtonsBusy(false);
+        }
+    })
+    .catch(() => { /* network hiccup, keep polling */ });
+}
+
+function statusBadgeHTML(status) {
+    const map = {
+        'pulling':    '<span class="badge bg-warning text-dark"><span class="spinner-border spinner-border-sm me-1"></span>Pulling</span>',
+        'publishing': '<span class="badge bg-warning text-dark"><span class="spinner-border spinner-border-sm me-1"></span>Publishing</span>',
+        'pending':    '<span class="badge bg-secondary">Pending</span>',
+        'pulled':     '<span class="badge bg-success">Pulled</span>',
+        'published':  '<span class="badge bg-primary">Published</span>',
+        'failed':     '<span class="badge bg-danger">Failed</span>',
+    };
+    return map[status] || '<span class="badge bg-secondary">' + status + '</span>';
+}
+
+// Auto-start polling if the page loads with an in-progress status
+{% if ext.status == 'pulling' or ext.status == 'publishing' %}
+startPolling();
+setButtonsBusy(true);
+{% endif %}
+</script>
+{% endblock %}

@@ -1,0 +1,14 @@
+{% if status == 'pulling' or status == 'publishing' %}
+    <span class="badge bg-warning text-dark">
+        <span class="spinner-border spinner-border-sm me-1"></span>
+        {{ status|capfirst }}
+    </span>
+{% elif status == 'published' %}
+    <span class="badge bg-primary">Published</span>
+{% elif status == 'pulled' %}
+    <span class="badge bg-success">Pulled</span>
+{% elif status == 'failed' %}
+    <span class="badge bg-danger">Failed</span>
+{% else %}
+    <span class="badge bg-secondary">{{ status|capfirst }}</span>
+{% endif %}
