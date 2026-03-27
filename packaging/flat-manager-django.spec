@@ -153,6 +153,111 @@ Configuration: /etc/flat-manager-django-client/config
 %{pybin} -m venv %{_builddir}/fmvenv
 %{_builddir}/fmvenv/bin/pip install --upgrade pip --quiet
 %{_builddir}/fmvenv/bin/pip install -r requirements.txt --quiet
+# EL9 does not provide an lzip RPM. Install the PyPI module and expose a small
+# compatibility CLI for BuildStream tar sources that need an external `lzip`.
+%{_builddir}/fmvenv/bin/pip install 'lzip>=1.2.0' --quiet
+cat > %{_builddir}/fmvenv/bin/lzip <<'EOF'
+#!%{_builddir}/fmvenv/bin/python
+import os
+import sys
+
+import lzip
+
+
+def _fail(message):
+    print(f"lzip wrapper: {message}", file=sys.stderr)
+    return 2
+
+
+def main():
+    decompress = False
+    to_stdout = False
+    keep_input = False
+    force = False
+    test_only = False
+    files = []
+
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == '--':
+            files.extend(args[i + 1:])
+            break
+        if arg.startswith('--'):
+            if arg == '--decompress':
+                decompress = True
+            elif arg == '--stdout':
+                to_stdout = True
+            elif arg == '--keep':
+                keep_input = True
+            elif arg == '--force':
+                force = True
+            elif arg == '--test':
+                test_only = True
+            elif arg == '--quiet':
+                pass
+            else:
+                return _fail(f"unsupported option {arg}")
+        elif arg.startswith('-') and arg != '-':
+            for ch in arg[1:]:
+                if ch == 'd':
+                    decompress = True
+                elif ch == 'c':
+                    to_stdout = True
+                elif ch == 'k':
+                    keep_input = True
+                elif ch == 'f':
+                    force = True
+                elif ch == 't':
+                    test_only = True
+                elif ch == 'q':
+                    pass
+                else:
+                    return _fail(f"unsupported option -{ch}")
+        else:
+            files.append(arg)
+        i += 1
+
+    if not files:
+        return _fail('stdin mode is not supported')
+
+    # This wrapper implements decompression only, which is what BuildStream
+    # needs for .tar.lz sources.
+    if not (decompress or test_only or to_stdout):
+        decompress = True
+
+    exit_code = 0
+    for path in files:
+        try:
+            data = lzip.decompress_file(path)
+            if test_only:
+                continue
+            if to_stdout:
+                sys.stdout.buffer.write(data)
+                continue
+
+            out_path = path[:-3] if path.endswith('.lz') else f"{path}.out"
+            if os.path.exists(out_path) and not force:
+                return _fail(f"output exists: {out_path}")
+            with open(out_path, 'wb') as fh:
+                fh.write(data)
+            if not keep_input:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+        except Exception as exc:
+            print(f"lzip wrapper: failed to decompress {path}: {exc}", file=sys.stderr)
+            exit_code = 1
+
+    return exit_code
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
+EOF
+chmod 0755 %{_builddir}/fmvenv/bin/lzip
 
 %if 0%{?rhel} != 9
 %global bst1pybin    python3
@@ -166,6 +271,107 @@ Configuration: /etc/flat-manager-django-client/config
 %{bst1pybin} -m venv %{_builddir}/bst1venv
 %{_builddir}/bst1venv/bin/python -m ensurepip --upgrade 2>/dev/null || true
 %{_builddir}/bst1venv/bin/pip install --upgrade pip --quiet
+%{_builddir}/bst1venv/bin/pip install 'lzip>=1.2.0' --quiet
+cat > %{_builddir}/bst1venv/bin/lzip <<'EOF'
+#!%{_builddir}/bst1venv/bin/python
+import os
+import sys
+
+import lzip
+
+
+def _fail(message):
+    print(f"lzip wrapper: {message}", file=sys.stderr)
+    return 2
+
+
+def main():
+    decompress = False
+    to_stdout = False
+    keep_input = False
+    force = False
+    test_only = False
+    files = []
+
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == '--':
+            files.extend(args[i + 1:])
+            break
+        if arg.startswith('--'):
+            if arg == '--decompress':
+                decompress = True
+            elif arg == '--stdout':
+                to_stdout = True
+            elif arg == '--keep':
+                keep_input = True
+            elif arg == '--force':
+                force = True
+            elif arg == '--test':
+                test_only = True
+            elif arg == '--quiet':
+                pass
+            else:
+                return _fail(f"unsupported option {arg}")
+        elif arg.startswith('-') and arg != '-':
+            for ch in arg[1:]:
+                if ch == 'd':
+                    decompress = True
+                elif ch == 'c':
+                    to_stdout = True
+                elif ch == 'k':
+                    keep_input = True
+                elif ch == 'f':
+                    force = True
+                elif ch == 't':
+                    test_only = True
+                elif ch == 'q':
+                    pass
+                else:
+                    return _fail(f"unsupported option -{ch}")
+        else:
+            files.append(arg)
+        i += 1
+
+    if not files:
+        return _fail('stdin mode is not supported')
+
+    if not (decompress or test_only or to_stdout):
+        decompress = True
+
+    exit_code = 0
+    for path in files:
+        try:
+            data = lzip.decompress_file(path)
+            if test_only:
+                continue
+            if to_stdout:
+                sys.stdout.buffer.write(data)
+                continue
+
+            out_path = path[:-3] if path.endswith('.lz') else f"{path}.out"
+            if os.path.exists(out_path) and not force:
+                return _fail(f"output exists: {out_path}")
+            with open(out_path, 'wb') as fh:
+                fh.write(data)
+            if not keep_input:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+        except Exception as exc:
+            print(f"lzip wrapper: failed to decompress {path}: {exc}", file=sys.stderr)
+            exit_code = 1
+
+    return exit_code
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
+EOF
+chmod 0755 %{_builddir}/bst1venv/bin/lzip
 
 # Only for RHEL 9 for now
 %if 0%{?rhel} == 9
