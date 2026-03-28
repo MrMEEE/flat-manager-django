@@ -1282,9 +1282,9 @@ def publish_package_task(package_id):
         # Pull the app commit from build-repo to target repo
         pull_cmd = [
             'ostree', 'pull-local',
+            f'--repo={target_repo_path}',
             build_repo_path,
             ref_name,
-            f'--repo={target_repo_path}'
         ]
         
         pull_result = subprocess.run(
@@ -1307,7 +1307,7 @@ def publish_package_task(package_id):
         )
         if locale_ref in (locale_refs_result.stdout or ''):
             locale_pull = subprocess.run(
-                ['ostree', 'pull-local', build_repo_path, locale_ref, f'--repo={target_repo_path}'],
+                ['ostree', 'pull-local', f'--repo={target_repo_path}', build_repo_path, locale_ref],
                 capture_output=True, text=True, timeout=300
             )
             if locale_pull.returncode == 0:
@@ -1599,7 +1599,7 @@ def publish_external_ref_task(external_ref_id):
         pull_errors = []
         for source in source_candidates:
             pull_result = subprocess.run(
-                ['ostree', 'pull-local', build_repo_path, source, f'--repo={target_repo_path}'],
+                ['ostree', 'pull-local', f'--repo={target_repo_path}', build_repo_path, source],
                 capture_output=True, text=True, timeout=600
             )
             if pull_result.returncode == 0:
@@ -2598,7 +2598,7 @@ def promote_build_task(promotion_id):
         logger.info(f"Promoting {ref_name} from build-repo to {target_repo.name}")
 
         pull_result = subprocess.run(
-            ['ostree', 'pull-local', build_repo_path, ref_name, f'--repo={target_repo_path}'],
+            ['ostree', 'pull-local', f'--repo={target_repo_path}', build_repo_path, ref_name],
             capture_output=True, text=True, timeout=300
         )
         if pull_result.returncode != 0:
@@ -2699,7 +2699,7 @@ def promote_external_ref_task(external_promotion_id):
         logger.info(f"Promoting external ref {ext.ref} from build-repo to {target_repo.name}")
 
         pull_result = subprocess.run(
-            ['ostree', 'pull-local', build_repo_path, ext.ref, f'--repo={target_repo_path}'],
+            ['ostree', 'pull-local', f'--repo={target_repo_path}', build_repo_path, ext.ref],
             capture_output=True, text=True, timeout=600
         )
         if pull_result.returncode != 0:
