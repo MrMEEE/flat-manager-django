@@ -1401,18 +1401,23 @@ def _fixup_upstream_appstream(build_repo_path, target_repo_path, gpg_key, log_fn
     copied = []
 
     for ref in appstream_refs:
-        # Check the ref exists in build-repo before attempting pull-local.
+        # Resolve ref → commit hash.  ostree pull-local <ref> looks the ref up
+        # in the source repo's *summary*, but the appstream refs we pulled from
+        # a network remote may only be indexed under the remote namespace
+        # (e.g. flathub:appstream/x86_64) and therefore absent from the plain
+        # summary.  Pulling by commit hash bypasses the summary entirely.
         check = subprocess.run(
             ['ostree', 'rev-parse', f'--repo={build_repo_path}', ref],
             capture_output=True, text=True,
         )
-        if check.returncode != 0:
+        if check.returncode != 0 or not check.stdout.strip():
             if log_fn:
                 log_fn('warning', f"appstream fixup: {ref} not in build-repo, skipping")
             continue
+        commit = check.stdout.strip()
 
         pull = subprocess.run(
-            ['ostree', 'pull-local', f'--repo={target_repo_path}', build_repo_path, ref],
+            ['ostree', 'pull-local', f'--repo={target_repo_path}', build_repo_path, commit],
             capture_output=True, text=True, timeout=120,
         )
         if pull.returncode != 0:
@@ -1421,6 +1426,14 @@ def _fixup_upstream_appstream(build_repo_path, target_repo_path, gpg_key, log_fn
                        f"appstream fixup: pull-local {ref} failed: "
                        f"{pull.stderr.strip() or pull.stdout.strip()}")
             continue
+
+        # Create (or update) the named ref in the target repo so flatpak can
+        # find it by name when serving the appstream data to clients.
+        subprocess.run(
+            ['ostree', 'refs', f'--repo={target_repo_path}',
+             '--force', f'--create={ref}', commit],
+            capture_output=True, text=True,
+        )
 
         copied.append(ref)
         if log_fn:
