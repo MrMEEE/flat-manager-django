@@ -212,26 +212,35 @@ def update_repo_metadata(repo_path, gpg_key=None, generate_deltas=True):
             }
 
         # Step 3: Sign every individual commit so non-delta pulls verify OK.
+        # Use a single temp GPG homedir for the whole loop; creating+importing
+        # the key per-commit was wasteful and caused silent failures on some
+        # commits when import raced with cleanup.
         if gpg_key:
             refs_result = subprocess.run(
                 ['ostree', '--repo=' + repo_path, 'refs', '--list'],
                 capture_output=True, text=True
             )
-            for ref in refs_result.stdout.splitlines():
-                ref = ref.strip()
-                if not ref:
-                    continue
-                rev_result = subprocess.run(
-                    ['ostree', '--repo=' + repo_path, 'rev-parse', ref],
-                    capture_output=True, text=True
-                )
-                commit = rev_result.stdout.strip()
-                if commit:
-                    with temp_gpg_homedir(gpg_key) as homedir:
-                        subprocess.run(
-                            ['ostree', '--repo=' + repo_path, 'gpg-sign',
-                             f'--gpg-homedir={homedir}', commit, gpg_key.key_id],
-                            capture_output=True, text=True
+            with temp_gpg_homedir(gpg_key) as homedir:
+                for ref in refs_result.stdout.splitlines():
+                    ref = ref.strip()
+                    if not ref:
+                        continue
+                    rev_result = subprocess.run(
+                        ['ostree', '--repo=' + repo_path, 'rev-parse', ref],
+                        capture_output=True, text=True
+                    )
+                    commit = rev_result.stdout.strip()
+                    if not commit:
+                        continue
+                    sign_result = subprocess.run(
+                        ['ostree', '--repo=' + repo_path, 'gpg-sign',
+                         f'--gpg-homedir={homedir}', commit, gpg_key.key_id],
+                        capture_output=True, text=True
+                    )
+                    if sign_result.returncode != 0:
+                        logger.warning(
+                            "ostree gpg-sign failed for commit %s (ref %s): %s",
+                            commit, ref, sign_result.stderr.strip()
                         )
 
         return {
