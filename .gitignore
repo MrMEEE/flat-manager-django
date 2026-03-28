@@ -54,3 +54,4 @@ build/
 
 # Service PIDs
 *.pid
+logfile
