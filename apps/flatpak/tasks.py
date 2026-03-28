@@ -201,6 +201,18 @@ def ensure_appstream_compose_shims(build=None):
         '        *)            : ;;  # Drop old positional SRCDIR (app ID); replaced by PREFIX\n'
         '    esac\n'
         'done\n'
+        '# appstreamcli 1.0.x (RHEL9+) dropped support for the legacy share/appdata/\n'
+        '# path and only scans share/metainfo/.  Many apps (e.g. Inkscape) still\n'
+        '# ship their metainfo XML under share/appdata/.  Copy any such files into\n'
+        '# share/metainfo/ so appstreamcli compose can find them.\n'
+        'if [ -d "${PREFIX}/share/appdata" ]; then\n'
+        '    mkdir -p "${PREFIX}/share/metainfo"\n'
+        '    for _f in "${PREFIX}/share/appdata/"*.xml; do\n'
+        '        [ -f "$_f" ] || continue\n'
+        '        _dest="${PREFIX}/share/metainfo/$(basename "$_f")"\n'
+        '        [ -e "$_dest" ] || cp "$_f" "$_dest"\n'
+        '    done\n'
+        'fi\n'
         '# shellcheck disable=SC2086\n'
         'appstreamcli compose \\\n'
         '    --prefix=/ \\\n'
@@ -1371,6 +1383,85 @@ def _log_external(ext_ref, level, message):
     ext_ref.save(update_fields=['log', 'updated_at'])
 
 
+def _fixup_upstream_appstream(build_repo_path, target_repo_path, gpg_key, log_fn=None):
+    """
+    Copy appstream/x86_64 and appstream2/x86_64 from build-repo into
+    target_repo_path, then re-sign every copied commit and regenerate the
+    summary so 'flatpak list' can show version numbers.
+
+    Must be called AFTER update_repo_metadata() because flatpak
+    build-update-repo regenerates (and empties) appstream/x86_64 from the
+    stub XMLs embedded in individual Flathub app commits.
+
+    Non-fatal: any failure is logged as a warning, not raised.
+    """
+    from apps.flatpak.utils.ostree import temp_gpg_homedir
+
+    appstream_refs = ('appstream/x86_64', 'appstream2/x86_64')
+    copied = []
+
+    for ref in appstream_refs:
+        # Check the ref exists in build-repo before attempting pull-local.
+        check = subprocess.run(
+            ['ostree', 'rev-parse', f'--repo={build_repo_path}', ref],
+            capture_output=True, text=True,
+        )
+        if check.returncode != 0:
+            if log_fn:
+                log_fn('warning', f"appstream fixup: {ref} not in build-repo, skipping")
+            continue
+
+        pull = subprocess.run(
+            ['ostree', 'pull-local', f'--repo={target_repo_path}', build_repo_path, ref],
+            capture_output=True, text=True, timeout=120,
+        )
+        if pull.returncode != 0:
+            if log_fn:
+                log_fn('warning',
+                       f"appstream fixup: pull-local {ref} failed: "
+                       f"{pull.stderr.strip() or pull.stdout.strip()}")
+            continue
+
+        copied.append(ref)
+        if log_fn:
+            log_fn('info', f"appstream fixup: copied {ref} from build-repo")
+
+    if not copied:
+        return
+
+    # Sign every copied appstream commit with the repo GPG key.
+    if gpg_key:
+        with temp_gpg_homedir(gpg_key) as homedir:
+            for ref in copied:
+                rev = subprocess.run(
+                    ['ostree', 'rev-parse', f'--repo={target_repo_path}', ref],
+                    capture_output=True, text=True,
+                )
+                if rev.returncode != 0 or not rev.stdout.strip():
+                    continue
+                sign = subprocess.run(
+                    ['ostree', f'--repo={target_repo_path}', 'gpg-sign',
+                     f'--gpg-homedir={homedir}', rev.stdout.strip(), gpg_key.key_id],
+                    capture_output=True, text=True,
+                )
+                if sign.returncode != 0 and log_fn:
+                    log_fn('warning',
+                           f"appstream fixup: gpg-sign {ref} failed: "
+                           f"{sign.stderr.strip()}")
+
+            # Re-generate + sign the summary to include the new appstream commits.
+            subprocess.run(
+                ['ostree', 'summary', f'--repo={target_repo_path}', '-u',
+                 '--gpg-sign', gpg_key.key_id, '--gpg-homedir', homedir],
+                capture_output=True, text=True,
+            )
+    else:
+        subprocess.run(
+            ['ostree', 'summary', f'--repo={target_repo_path}', '-u'],
+            capture_output=True, text=True,
+        )
+
+
 def _get_flatpak_remote_commit(remote_name, ref):
     """Resolve the current commit hash for a Flatpak remote ref.
 
@@ -1536,6 +1627,24 @@ def pull_external_ref_task(external_ref_id):
                 f"Visible refs: {', '.join(visible_refs[:20]) or '(none)'}"
             )
 
+        # Also pull the upstream appstream refs so version metadata (shown by
+        # 'flatpak list') is available in the target repo. Flathub and similar
+        # remotes do NOT embed AppStream in individual app commits; the data
+        # lives exclusively in the appstream/x86_64 (and appstream2/x86_64)
+        # refs. We pull them now into build-repo so publish/promote can copy
+        # them to the target after flatpak build-update-repo runs.
+        for appstream_ref in ('appstream/x86_64', 'appstream2/x86_64'):
+            as_pull = subprocess.run(
+                ['ostree', 'pull', f'--repo={build_repo_path}', remote_name, appstream_ref],
+                capture_output=True, text=True, timeout=300,
+            )
+            if as_pull.returncode == 0:
+                _log_external(ext, 'info', f"Pulled {appstream_ref} from remote")
+            else:
+                _log_external(ext, 'warning',
+                              f"Could not pull {appstream_ref} (non-fatal): "
+                              f"{as_pull.stderr.strip() or as_pull.stdout.strip()}")
+
         # Regenerate the summary so pull-local can find the ref by name.
         subprocess.run(
             ['ostree', 'summary', f'--repo={build_repo_path}', '-u'],
@@ -1684,6 +1793,13 @@ def publish_external_ref_task(external_ref_id):
                 f"Metadata update failed: {meta_result.get('message', '')} "
                 f"{meta_result.get('detail', '') or meta_result.get('error', '')}"
             )
+
+        # flatpak build-update-repo regenerates appstream/x86_64 from each app
+        # commit's embedded stub — which is empty for Flathub-sourced apps.
+        # Overwrite with the upstream appstream refs we pulled into build-repo
+        # so 'flatpak list' can show version numbers.  Re-sign & re-summarise.
+        _fixup_upstream_appstream(build_repo_path, target_repo_path, gpg_key,
+                                  log_fn=lambda lvl, msg: _log_external(ext, lvl, msg))
 
         ext.status = 'published'
         ext.save()
@@ -2717,6 +2833,10 @@ def promote_external_ref_task(external_promotion_id):
             raise RuntimeError(f"ostree pull-local failed: {pull_result.stderr.strip()}")
 
         update_repo_metadata(target_repo_path, target_repo.gpg_key, generate_deltas=False)
+
+        # Restore upstream appstream refs after flatpak build-update-repo
+        # regenerated them from empty Flathub app-commit stubs.
+        _fixup_upstream_appstream(build_repo_path, target_repo_path, target_repo.gpg_key)
 
         promotion.status = 'promoted'
         promotion.completed_at = timezone.now()
