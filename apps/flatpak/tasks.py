@@ -1513,7 +1513,7 @@ def pull_external_ref_task(external_ref_id):
             visible_refs = [r.strip() for r in refs_result.stdout.splitlines() if r.strip()]
             if ref not in visible_refs:
                 create_ref = subprocess.run(
-                    ['ostree', 'refs', f'--repo={build_repo_path}', '--force', commit, f'--create={ref}'],
+                    ['ostree', 'refs', f'--repo={build_repo_path}', '--force', f'--create={ref}', commit],
                     capture_output=True, text=True
                 )
                 if create_ref.returncode == 0:
@@ -1617,9 +1617,7 @@ def publish_external_ref_task(external_ref_id):
                 capture_output=True, text=True
             )
             if create_target_ref.returncode != 0:
-                _log_external(
-                    ext,
-                    'warning',
+                raise RuntimeError(
                     f"Copied via {used_source}, but could not create target ref {ext.ref}: "
                     f"{create_target_ref.stderr.strip() or create_target_ref.stdout.strip()}"
                 )
@@ -1666,13 +1664,26 @@ def publish_external_ref_task(external_ref_id):
                 "Imported ref copied, but could not resolve target commit for GPG signing"
             )
 
+        # Hard verification: published ref must be resolvable by name in target repo.
+        verify_ref = subprocess.run(
+            ['ostree', 'rev-parse', f'--repo={target_repo_path}', ext.ref],
+            capture_output=True, text=True
+        )
+        if verify_ref.returncode != 0 or not (verify_ref.stdout or '').strip():
+            raise RuntimeError(
+                f"Published ref missing from target repo after copy: {ext.ref} — "
+                f"{verify_ref.stderr.strip() or verify_ref.stdout.strip()}"
+            )
+
         # External dependency pulls can happen frequently; regenerating static
         # deltas on every import is expensive and not required for correctness.
         # Keep the repo metadata + signatures fresh, but skip delta rebuilds.
         meta_result = update_repo_metadata(target_repo_path, gpg_key, generate_deltas=False)
         if not meta_result['success']:
-            _log_external(ext, 'warning',
-                f"Metadata update issue: {meta_result.get('message', '')} {meta_result.get('detail', '')}")
+            raise RuntimeError(
+                f"Metadata update failed: {meta_result.get('message', '')} "
+                f"{meta_result.get('detail', '') or meta_result.get('error', '')}"
+            )
 
         ext.status = 'published'
         ext.save()
