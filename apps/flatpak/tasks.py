@@ -1289,29 +1289,43 @@ def publish_package_task(package_id, generate_deltas=False):
         
         # Determine the ref name
         ref_name = f'app/{package.package_id}/{package.arch}/{package.branch}'
-        
-        log_build(build, 'info', f"Pulling {ref_name} from build-repo to {package.repository.name}")
-        
-        # Pull the app commit from build-repo to target repo
-        pull_cmd = [
-            'ostree', 'pull-local',
-            f'--repo={target_repo_path}',
-            build_repo_path,
-            ref_name,
-        ]
-        
-        pull_result = subprocess.run(
-            pull_cmd,
-            capture_output=True,
-            text=True,
-            timeout=300
+
+        # Check whether the ref already exists in the target repo (e.g. on republish after a
+        # previously-successful publish).  If it does, skip the pull-local step entirely — the
+        # objects are already present and we only need to refresh the metadata.
+        target_refs_result = subprocess.run(
+            ['ostree', 'refs', f'--repo={target_repo_path}'],
+            capture_output=True, text=True,
         )
-        
-        if pull_result.returncode != 0:
-            raise RuntimeError(f"Failed to pull commit: {pull_result.stderr}")
-        
-        log_build(build, 'info', f"Successfully pulled {ref_name}")
-        
+        ref_in_target = ref_name in (target_refs_result.stdout or '')
+
+        if ref_in_target:
+            log_build(build, 'info',
+                      f"{ref_name} already present in {package.repository.name} — skipping pull")
+        else:
+            log_build(build, 'info', f"Pulling {ref_name} from build-repo to {package.repository.name}")
+
+            # Ensure build-repo summary is up-to-date so ostree pull-local can resolve the ref.
+            subprocess.run(
+                ['ostree', 'summary', '--update', f'--repo={build_repo_path}'],
+                capture_output=True, text=True,
+            )
+
+            pull_result = subprocess.run(
+                ['ostree', 'pull-local',
+                 f'--repo={target_repo_path}',
+                 build_repo_path,
+                 ref_name],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+
+            if pull_result.returncode != 0:
+                raise RuntimeError(f"Failed to pull commit: {pull_result.stderr}")
+
+            log_build(build, 'info', f"Successfully pulled {ref_name}")
+
         # Also pull the .Locale ref if it exists in build-repo (contains locale files)
         locale_ref = f'runtime/{package.package_id}.Locale/{package.arch}/{package.branch}'
         locale_refs_result = subprocess.run(
