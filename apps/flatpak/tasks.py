@@ -2743,7 +2743,74 @@ def remove_external_ref_from_repos(ext):
 
 
 @shared_task
-def sync_repo_state():
+def prune_orphaned_refs_task(task_id, items):
+    """
+    Delete one or more orphaned OSTree refs in the background (Celery task).
+
+    items: [{'repo': repo_name, 'ref': ref_name}, ...]
+
+    On completion sends a 'task_update' message to the 'notifications' channel
+    group so the browser can update without polling.
+    """
+    from collections import defaultdict
+    from apps.flatpak.models import Repository
+    from apps.flatpak.utils.ostree import update_repo_metadata as _update_repo_metadata
+    from channels.layers import get_channel_layer
+    from asgiref.sync import async_to_sync
+
+    def _notify(status, message, deleted=None):
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)('notifications', {
+            'type': 'task_update',
+            'task_id': task_id,
+            'status': status,
+            'message': message,
+            'deleted': deleted or [],
+        })
+
+    by_repo = defaultdict(list)
+    for item in items:
+        by_repo[item['repo']].append(item['ref'])
+
+    deleted = []
+    errors = []
+
+    for repo_name, refs in by_repo.items():
+        try:
+            repo = Repository.objects.get(name=repo_name)
+        except Repository.DoesNotExist:
+            errors.append(f'{repo_name}: repository not found')
+            continue
+
+        repo_path = repo.repo_path
+        if not os.path.exists(os.path.join(repo_path, 'config')):
+            errors.append(f'{repo_name}: not found on disk')
+            continue
+
+        for ref in refs:
+            del_result = subprocess.run(
+                ['ostree', 'refs', f'--repo={repo_path}', '--delete', ref],
+                capture_output=True, text=True,
+            )
+            if del_result.returncode == 0:
+                deleted.append({'repo': repo_name, 'ref': ref})
+                logger.info("Pruned orphaned ref %s from %s (task %s)", ref, repo_name, task_id)
+            else:
+                errors.append(
+                    f'{repo_name}/{ref}: {del_result.stderr.strip() or del_result.stdout.strip()}'
+                )
+
+        # Regenerate summary once per repo (only if at least one deletion succeeded).
+        if any(d['repo'] == repo_name for d in deleted):
+            _update_repo_metadata(repo_path, repo.gpg_key, generate_deltas=False)
+
+    if errors:
+        _notify('error', '; '.join(errors), deleted=deleted)
+    else:
+        _notify('ok', f'Deleted {len(deleted)} ref(s)', deleted=deleted)
+
+
+
     """Periodic + post-mutation task: reconcile Build/Promotion DB records against
     the actual OSTree refs present on disk in all active repositories."""
     from apps.flatpak.utils.sync import run_repo_sync

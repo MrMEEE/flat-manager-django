@@ -1866,11 +1866,12 @@ class ScanOrphanedRefsView(LoginRequiredMixin, View):
 
 
 class PruneOrphanedRefsView(LoginRequiredMixin, View):
-    """Delete a specific orphaned ref from a named repository."""
+    """Dispatch a background task to delete a specific orphaned ref."""
 
     def post(self, request):
         import json
-        from .models import Repository
+        import uuid
+        from .tasks import prune_orphaned_refs_task
         try:
             body = json.loads(request.body)
             repo_name = body.get('repo')
@@ -1881,31 +1882,18 @@ class PruneOrphanedRefsView(LoginRequiredMixin, View):
         if not repo_name or not ref:
             return JsonResponse({'error': 'repo and ref are required'}, status=400)
 
-        repo = get_object_or_404(Repository, name=repo_name)
-        repo_path = repo.repo_path
-        if not os.path.exists(os.path.join(repo_path, 'config')):
-            return JsonResponse({'error': f'Repository {repo_name} not found on disk'}, status=404)
-
-        del_result = subprocess.run(
-            ['ostree', 'refs', f'--repo={repo_path}', '--delete', ref],
-            capture_output=True, text=True,
-        )
-        if del_result.returncode != 0:
-            return JsonResponse({'error': del_result.stderr.strip() or del_result.stdout.strip()}, status=500)
-
-        # Regenerate summary so the ref disappears from flatpak remote-ls.
-        update_repo_metadata(repo_path, repo.gpg_key, generate_deltas=False)
-
-        logger.info("Pruned orphaned ref %s from %s (user: %s)", ref, repo_name, request.user)
-        return JsonResponse({'status': 'ok', 'message': f'Deleted {ref} from {repo_name}'})
+        task_id = str(uuid.uuid4())
+        prune_orphaned_refs_task.delay(task_id, [{'repo': repo_name, 'ref': ref}])
+        return JsonResponse({'status': 'pending', 'task_id': task_id})
 
 
 class BulkPruneOrphanedRefsView(LoginRequiredMixin, View):
-    """Delete multiple orphaned refs in one request, one summary update per repo."""
+    """Dispatch a background task to delete multiple orphaned refs at once."""
 
     def post(self, request):
         import json
-        from .models import Repository
+        import uuid
+        from .tasks import prune_orphaned_refs_task
         try:
             body = json.loads(request.body)
             items = body.get('items')  # [{repo, ref}, ...]
@@ -1915,45 +1903,13 @@ class BulkPruneOrphanedRefsView(LoginRequiredMixin, View):
         if not items or not isinstance(items, list):
             return JsonResponse({'error': 'items must be a non-empty list'}, status=400)
 
-        # Group by repo so we only regenerate the summary once per repo.
-        from collections import defaultdict
-        by_repo = defaultdict(list)
-        for item in items:
-            r, ref = item.get('repo'), item.get('ref')
-            if r and ref:
-                by_repo[r].append(ref)
+        valid = [i for i in items if i.get('repo') and i.get('ref')]
+        if not valid:
+            return JsonResponse({'error': 'No valid items provided'}, status=400)
 
-        deleted = []
-        errors = []
-        for repo_name, refs in by_repo.items():
-            try:
-                repo = Repository.objects.get(name=repo_name)
-            except Repository.DoesNotExist:
-                errors.append(f'{repo_name}: repository not found')
-                continue
-            repo_path = repo.repo_path
-            if not os.path.exists(os.path.join(repo_path, 'config')):
-                errors.append(f'{repo_name}: not found on disk')
-                continue
-            for ref in refs:
-                del_result = subprocess.run(
-                    ['ostree', 'refs', f'--repo={repo_path}', '--delete', ref],
-                    capture_output=True, text=True,
-                )
-                if del_result.returncode == 0:
-                    deleted.append({'repo': repo_name, 'ref': ref})
-                    logger.info("Bulk-pruned orphaned ref %s from %s (user: %s)", ref, repo_name, request.user)
-                else:
-                    errors.append(f'{repo_name}/{ref}: {del_result.stderr.strip() or del_result.stdout.strip()}')
-            # Regenerate summary once for this repo.
-            update_repo_metadata(repo_path, repo.gpg_key, generate_deltas=False)
-
-        return JsonResponse({
-            'status': 'ok',
-            'deleted': len(deleted),
-            'errors': errors,
-            'message': f'Deleted {len(deleted)} ref(s)' + (f', {len(errors)} error(s)' if errors else ''),
-        })
+        task_id = str(uuid.uuid4())
+        prune_orphaned_refs_task.delay(task_id, valid)
+        return JsonResponse({'status': 'pending', 'task_id': task_id})
 
 
 @login_required

@@ -140,6 +140,16 @@ class NotificationsConsumer(AsyncWebsocketConsumer):
     async def bst_promotion_status_update(self, event):
         await self.promotion_status_update(event)
 
+    async def task_update(self, event):
+        """Forward background task completion to the WebSocket client."""
+        await self.send(text_data=json.dumps({
+            'type': 'task_update',
+            'task_id': event.get('task_id'),
+            'status': event.get('status'),
+            'message': event.get('message', ''),
+            'deleted': event.get('deleted', []),
+        }))
+
 
 class RepoStatusConsumer(AsyncWebsocketConsumer):
     """

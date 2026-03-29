@@ -328,7 +328,7 @@ sudo ./setup-bst1-venv.sh /opt/flat-manager/bst1-venv</pre>
         <div class="card">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <h5 class="mb-0"><i class="bi bi-hdd-stack"></i> Orphaned Repository Refs</h5>
-                <button id="btn-scan-orphans" class="btn btn-sm btn-outline-secondary" onclick="scanOrphans()">
+                <button type="button" id="btn-scan-orphans" class="btn btn-sm btn-outline-secondary" onclick="scanOrphans()">
                     <i class="bi bi-search"></i> Scan Repos
                 </button>
             </div>
@@ -431,7 +431,7 @@ async function scanOrphans() {
             const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
             let html = `<div class="d-flex align-items-center justify-content-between mb-2">` +
                 `<span class="alert alert-warning mb-0 py-1 px-2"><i class="bi bi-exclamation-triangle"></i> Found <strong>${data.total}</strong> orphaned ref(s).</span>` +
-                `<button class="btn btn-sm btn-danger" id="btn-remove-all-orphans" onclick="removeAllOrphans(this)">` +
+                `<button type="button" class="btn btn-sm btn-danger" id="btn-remove-all-orphans" onclick="removeAllOrphans(this)">` +
                 `<i class="bi bi-trash"></i> Remove All (${data.total})</button></div>`;
             html += '<div id="orphan-error-area"></div>';
             html += '<div class="table-responsive"><table class="table table-sm table-hover" id="orphan-table">';
@@ -441,7 +441,7 @@ async function scanOrphans() {
                     html += `<tr data-repo="${esc(repo)}" data-ref="${esc(ref)}">` +
                         `<td><code>${esc(repo)}</code></td>` +
                         `<td><code>${esc(ref)}</code></td>` +
-                        `<td><button class="btn btn-sm btn-outline-danger orphan-remove-btn" onclick="pruneOrphan(this)">` +
+                        `<td><button type="button" class="btn btn-sm btn-outline-danger orphan-remove-btn" onclick="pruneOrphan(this)">` +
                         `<i class="bi bi-trash"></i> Remove</button></td></tr>`;
                 }
             }
@@ -459,6 +459,48 @@ async function scanOrphans() {
 function _orphanShowError(msg) {
     const area = document.getElementById('orphan-error-area');
     if (area) area.innerHTML = `<div class="alert alert-danger alert-dismissible"><i class="bi bi-exclamation-circle"></i> ${msg}<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`;
+}
+
+// task_id → [{row, btn}, ...]  — filled by pruneOrphan / removeAllOrphans on dispatch
+const _orphanPendingTasks = {};
+
+function _handleOrphanTaskUpdate(data) {
+    const taskRows = _orphanPendingTasks[data.task_id];
+    if (!taskRows) return;
+    delete _orphanPendingTasks[data.task_id];
+
+    if (data.status === 'ok') {
+        for (const {row} of taskRows) {
+            if (row && row.parentNode) row.remove();
+        }
+        const remaining = document.querySelectorAll('#orphan-table tbody tr').length;
+        const removeAllBtn = document.getElementById('btn-remove-all-orphans');
+        if (remaining === 0) {
+            document.getElementById('orphan-results').innerHTML =
+                '<div class="alert alert-success mb-0"><i class="bi bi-check-circle"></i> All orphaned refs removed.</div>';
+        } else if (removeAllBtn) {
+            removeAllBtn.innerHTML = `<i class="bi bi-trash"></i> Remove All (${remaining})`;
+        }
+    } else {
+        // Restore all pending rows / buttons on error
+        for (const {btn} of taskRows) {
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-trash"></i> Remove'; }
+        }
+        const removeAllBtn = document.getElementById('btn-remove-all-orphans');
+        if (removeAllBtn && removeAllBtn.disabled) {
+            const count = document.querySelectorAll('#orphan-table tbody tr').length;
+            removeAllBtn.disabled = false;
+            removeAllBtn.innerHTML = `<i class="bi bi-trash"></i> Remove All (${count})`;
+        }
+        _orphanShowError(data.message || 'Failed to delete ref(s)');
+    }
+}
+
+// Hook into global WebSocket handler from base.html
+function onWebSocketMessage(data) {
+    if (data.type === 'task_update') {
+        _handleOrphanTaskUpdate(data);
+    }
 }
 
 async function pruneOrphan(btn) {
@@ -486,15 +528,8 @@ async function pruneOrphan(btn) {
             });
             const data = await r.json();
             if (!r.ok) throw new Error(data.error || r.statusText);
-            row.remove();
-            const remaining = document.querySelectorAll('#orphan-table tbody tr').length;
-            const removeAllBtn = document.getElementById('btn-remove-all-orphans');
-            if (remaining === 0) {
-                document.getElementById('orphan-results').innerHTML =
-                    '<div class="alert alert-success mb-0"><i class="bi bi-check-circle"></i> No orphaned refs found.</div>';
-            } else if (removeAllBtn) {
-                removeAllBtn.innerHTML = `<i class="bi bi-trash"></i> Remove All (${remaining})`;
-            }
+            // Register task — WS message will remove the row when done
+            _orphanPendingTasks[data.task_id] = [{row, btn}];
         } catch (e) {
             btn.disabled = false;
             btn.innerHTML = '<i class="bi bi-trash"></i> Remove';
@@ -530,11 +565,11 @@ async function removeAllOrphans(btn) {
             });
             const data = await r.json();
             if (!r.ok) throw new Error(data.error || r.statusText);
-            let msg = `<div class="alert alert-success mb-0"><i class="bi bi-check-circle"></i> ${data.message}</div>`;
-            if (data.errors && data.errors.length) {
-                msg += `<div class="alert alert-warning mt-2"><strong>Errors:</strong><ul class="mb-0">${data.errors.map(e=>'<li>'+esc(e)+'</li>').join('')}</ul></div>`;
-            }
-            document.getElementById('orphan-results').innerHTML = msg;
+            // Register all rows with this task_id — WS will remove them when done
+            _orphanPendingTasks[data.task_id] = Array.from(rows).map(r => ({
+                row: r,
+                btn: r.querySelector('.orphan-remove-btn'),
+            }));
         } catch (e) {
             btn.disabled = false;
             btn.innerHTML = `<i class="bi bi-trash"></i> Remove All (${items.length})`;
