@@ -1241,11 +1241,11 @@ def commit_package_task(package_id):
 
 
 @shared_task
-def publish_package_task(package_id, generate_deltas=True):
+def publish_package_task(package_id, generate_deltas=False):
     """
     Publish a committed build to the target repository.
     This pulls the commit from build-repo and pushes it to the main repository.
-    Pass generate_deltas=False (e.g. on republish) to skip regenerating static deltas.
+    Pass generate_deltas=True to regenerate static deltas (expensive; off by default).
     """
     from apps.flatpak.models import Package, Build, BuildLog
     from apps.flatpak.utils.ostree import sign_repo_summary, temp_gpg_homedir, update_repo_metadata
