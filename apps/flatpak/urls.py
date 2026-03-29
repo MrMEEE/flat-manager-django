@@ -50,6 +50,7 @@ urlpatterns = [
     path('config/scan-upstream-versions/', views.RunUpstreamVersionScanView.as_view(), name='scan_upstream_versions'),
     path('config/scan-orphaned-refs/', views.ScanOrphanedRefsView.as_view(), name='scan_orphaned_refs'),
     path('config/prune-orphaned-ref/', views.PruneOrphanedRefsView.as_view(), name='prune_orphaned_ref'),
+    path('config/prune-orphaned-refs/bulk/', views.BulkPruneOrphanedRefsView.as_view(), name='bulk_prune_orphaned_refs'),
     path('config/remotes/add/', views.FlatpakRemoteCreateView.as_view(), name='remote_add'),
     path('config/remotes/<int:pk>/delete/', views.FlatpakRemoteDeleteView.as_view(), name='remote_delete'),
     path('config/remotes/<int:pk>/toggle/', views.FlatpakRemoteToggleView.as_view(), name='remote_toggle'),

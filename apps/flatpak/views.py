@@ -1899,6 +1899,62 @@ class PruneOrphanedRefsView(LoginRequiredMixin, View):
         return JsonResponse({'status': 'ok', 'message': f'Deleted {ref} from {repo_name}'})
 
 
+class BulkPruneOrphanedRefsView(LoginRequiredMixin, View):
+    """Delete multiple orphaned refs in one request, one summary update per repo."""
+
+    def post(self, request):
+        import json
+        from .models import Repository
+        try:
+            body = json.loads(request.body)
+            items = body.get('items')  # [{repo, ref}, ...]
+        except (ValueError, AttributeError):
+            return JsonResponse({'error': 'Invalid JSON body'}, status=400)
+
+        if not items or not isinstance(items, list):
+            return JsonResponse({'error': 'items must be a non-empty list'}, status=400)
+
+        # Group by repo so we only regenerate the summary once per repo.
+        from collections import defaultdict
+        by_repo = defaultdict(list)
+        for item in items:
+            r, ref = item.get('repo'), item.get('ref')
+            if r and ref:
+                by_repo[r].append(ref)
+
+        deleted = []
+        errors = []
+        for repo_name, refs in by_repo.items():
+            try:
+                repo = Repository.objects.get(name=repo_name)
+            except Repository.DoesNotExist:
+                errors.append(f'{repo_name}: repository not found')
+                continue
+            repo_path = repo.repo_path
+            if not os.path.exists(os.path.join(repo_path, 'config')):
+                errors.append(f'{repo_name}: not found on disk')
+                continue
+            for ref in refs:
+                del_result = subprocess.run(
+                    ['ostree', 'refs', f'--repo={repo_path}', '--delete', ref],
+                    capture_output=True, text=True,
+                )
+                if del_result.returncode == 0:
+                    deleted.append({'repo': repo_name, 'ref': ref})
+                    logger.info("Bulk-pruned orphaned ref %s from %s (user: %s)", ref, repo_name, request.user)
+                else:
+                    errors.append(f'{repo_name}/{ref}: {del_result.stderr.strip() or del_result.stdout.strip()}')
+            # Regenerate summary once for this repo.
+            update_repo_metadata(repo_path, repo.gpg_key, generate_deltas=False)
+
+        return JsonResponse({
+            'status': 'ok',
+            'deleted': len(deleted),
+            'errors': errors,
+            'message': f'Deleted {len(deleted)} ref(s)' + (f', {len(errors)} error(s)' if errors else ''),
+        })
+
+
 @login_required
 def dependencies_list(request):
     """List known common Flatpak dependencies and installed Flatpak runtimes/SDKs/extensions."""
