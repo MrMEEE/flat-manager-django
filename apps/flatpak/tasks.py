@@ -2744,8 +2744,10 @@ def promote_build_task(promotion_id):
         if pull_result.returncode != 0:
             raise RuntimeError(f"ostree pull-local failed: {pull_result.stderr.strip()}")
 
-        # Update repository metadata (appstream, signed deltas, commit signatures)
-        update_repo_metadata(target_repo_path, target_repo.gpg_key)
+        # Update repository metadata. Skip delta generation: existing deltas for
+        # other refs in the repo are still valid, and regenerating all deltas on
+        # every promotion (especially for large runtimes) wastes significant CPU.
+        update_repo_metadata(target_repo_path, target_repo.gpg_key, generate_deltas=False)
 
         promotion.status = 'promoted'
         promotion.completed_at = timezone.now()
