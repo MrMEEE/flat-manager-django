@@ -187,7 +187,9 @@ def ensure_appstream_compose_shims(build=None):
         '# New call: appstreamcli compose --prefix=PREFIX --origin=ID\n'
         '#             --result-root=PREFIX\n'
         '#             --data-dir=PREFIX/share/app-info/xmls\n'
-        '#             --icons-dir=PREFIX/share/app-info/icons/flatpak PREFIX\n'
+        '#             --icons-dir=PREFIX/share/app-info/icons/flatpak /\n'
+        '# SOURCE_DIR is / (sandbox root); --prefix tells appstreamcli where within\n'
+        '# that root the app data lives.  Passing PREFIX here causes /PREFIX/PREFIX/share.\n'
         '# --origin is set to the --basename value so the output file is named\n'
         '# <app-id>.xml.gz, which is what flatpak build-update-repo expects.\n'
         'PREFIX=/app\n'
@@ -225,7 +227,7 @@ def ensure_appstream_compose_shims(build=None):
         '    --icons-dir="${PREFIX}/share/app-info/icons/flatpak" \\\n'
         '    --no-net \\\n'
         '    ${OTHER_ARGS} \\\n'
-        '    "${PREFIX}" || true\n'
+        '    / || true\n'
     )
     patched = []
 
