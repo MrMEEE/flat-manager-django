@@ -167,40 +167,43 @@ def ensure_appstream_compose_shims(build=None):
     # Translate appstream-compose args to appstreamcli compose args.
     # flatpak-builder 1.2.3 calls (from inside bwrap via flatpak build):
     #   appstream-compose --prefix=PREFIX --origin=O --basename=ID ID
-    # where ID (the app/runtime ID) is passed as the positional SRCDIR.
-    # Inside bwrap that relative path doesn't exist.  appstreamcli compose
-    # uses a completely different invocation style:
-    #   appstreamcli compose --prefix=/ --origin=O --components=ID,ID.desktop \
-    #     --result-root=PREFIX --data-dir=PREFIX/share/app-info/xmls \
-    #     --icons-dir=PREFIX/share/app-info/icons/flatpak  PREFIX
-    # Key insight: use old PREFIX (/app for apps, /usr for runtimes) as the
-    # new SRCDIR (it holds the app data), change --prefix to /, and add the
-    # required --result-root / --data-dir / --icons-dir flags.
+    # where PREFIX is /app (apps) or /usr (runtimes), ID is the component ID.
+    #
+    # Two key bugs in the old translation:
+    # 1. --prefix=/ is WRONG: appstreamcli looks for .desktop files at
+    #    ${prefix}/share/applications/, so using / instead of /app means it
+    #    looks at /share/applications/ (doesn't exist) → file-read-error.
+    # 2. --basename was dropped and --origin kept as "flatpak", so the output
+    #    file was named "flatpak.xml.gz" instead of "<app-id>.xml.gz".
+    #    flatpak build-update-repo looks for "<app-id>.xml.gz" specifically.
+    #
+    # Fix: pass --prefix=${PREFIX} and use --basename value as --origin.
     shim_content = (
         '#!/bin/sh\n'
         '# appstream-compose shim installed by flat-manager-django\n'
         '# Translates flatpak-builder 1.2.3 appstream-compose call to appstreamcli compose.\n'
         '#\n'
         '# Old call: appstream-compose --prefix=PREFIX --origin=O --basename=ID ID\n'
-        '# New call: appstreamcli compose --prefix=/ --origin=O\n'
+        '# New call: appstreamcli compose --prefix=PREFIX --origin=ID\n'
         '#             --result-root=PREFIX\n'
         '#             --data-dir=PREFIX/share/app-info/xmls\n'
         '#             --icons-dir=PREFIX/share/app-info/icons/flatpak PREFIX\n'
-        '# Note: --basename (old output-file hint) and --components (filter) are\n'
-        '# intentionally omitted — PREFIX contains only one app, no filter needed,\n'
-        '# and appstreamcli 1.0.6 on RHEL9 raises filters-but-no-output otherwise.\n'
+        '# --origin is set to the --basename value so the output file is named\n'
+        '# <app-id>.xml.gz, which is what flatpak build-update-repo expects.\n'
         'PREFIX=/app\n'
-        'ORIGIN=flatpak\n'
+        'BASENAME=\n'
         'OTHER_ARGS=\n'
         'for arg; do\n'
         '    case "$arg" in\n'
         '        --prefix=*)   PREFIX="${arg#--prefix=}" ;;\n'
-        '        --origin=*)   ORIGIN="${arg#--origin=}" ;;\n'
-        '        --basename=*) : ;;  # Drop — output filename set by --result-root\n'
+        '        --origin=*)   : ;;  # Dropped — we derive origin from --basename\n'
+        '        --basename=*) BASENAME="${arg#--basename=}" ;;\n'
         '        --*)          OTHER_ARGS="${OTHER_ARGS} ${arg}" ;;\n'
         '        *)            : ;;  # Drop old positional SRCDIR (app ID); replaced by PREFIX\n'
         '    esac\n'
         'done\n'
+        '# Use --basename as --origin so the output XML is named <app-id>.xml.gz\n'
+        'ORIGIN="${BASENAME:-flatpak}"\n'
         '# appstreamcli 1.0.x (RHEL9+) dropped support for the legacy share/appdata/\n'
         '# path and only scans share/metainfo/.  Many apps (e.g. Inkscape) still\n'
         '# ship their metainfo XML under share/appdata/.  Copy any such files into\n'
@@ -215,7 +218,7 @@ def ensure_appstream_compose_shims(build=None):
         'fi\n'
         '# shellcheck disable=SC2086\n'
         'appstreamcli compose \\\n'
-        '    --prefix=/ \\\n'
+        '    --prefix="${PREFIX}" \\\n'
         '    --origin="${ORIGIN}" \\\n'
         '    --result-root="${PREFIX}" \\\n'
         '    --data-dir="${PREFIX}/share/app-info/xmls" \\\n'
