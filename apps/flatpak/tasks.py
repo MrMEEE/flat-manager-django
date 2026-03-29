@@ -227,12 +227,20 @@ def ensure_appstream_compose_shims(build=None):
     patched = []
 
     for root in search_roots:
-        # Match all SDK runtimes (org.freedesktop.Sdk, org.kde.Sdk, org.gnome.Sdk, …)
+        # Match all SDK runtimes (org.freedesktop.Sdk, org.kde.Sdk, org.gnome.Sdk, …).
+        # Flatpak may store deploys as 'active' symlinks OR raw commit-hash directories;
+        # use a wildcard for the 5th component to cover both cases.  Deduplicate by
+        # realpath so that if 'active' IS a symlink we don't write the shim twice.
         pattern = os.path.join(
             root, 'runtime', '*.Sdk',
-            '*', '*', 'active', 'files', 'bin'
+            '*', '*', '*', 'files', 'bin'
         )
+        _seen_real_bin_dirs = set()
         for bin_dir in _glob.glob(pattern):
+            real_bin = os.path.realpath(bin_dir)
+            if real_bin in _seen_real_bin_dirs:
+                continue
+            _seen_real_bin_dirs.add(real_bin)
             compose_path = os.path.join(bin_dir, 'appstream-compose')
             appstreamcli_path = os.path.join(bin_dir, 'appstreamcli')
             # Write shim if missing or outdated (idempotent)
