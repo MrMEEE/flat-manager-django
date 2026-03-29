@@ -1690,11 +1690,12 @@ class PackageRepublishView(LoginRequiredMixin, View):
             )
 
         # Reset to committed so publish_package_task's guard passes.
+        # Skip delta regeneration — the content hasn't changed on republish.
         package.status = 'committed'
         package.error_message = ''
         package.save(update_fields=['status', 'error_message', 'updated_at'])
 
-        publish_package_task.delay(package.id)
+        publish_package_task.delay(package.id, generate_deltas=False)
 
         return JsonResponse({
             'status': 'success',

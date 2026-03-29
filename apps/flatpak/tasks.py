@@ -1241,10 +1241,11 @@ def commit_package_task(package_id):
 
 
 @shared_task
-def publish_package_task(package_id):
+def publish_package_task(package_id, generate_deltas=True):
     """
     Publish a committed build to the target repository.
     This pulls the commit from build-repo and pushes it to the main repository.
+    Pass generate_deltas=False (e.g. on republish) to skip regenerating static deltas.
     """
     from apps.flatpak.models import Package, Build, BuildLog
     from apps.flatpak.utils.ostree import sign_repo_summary, temp_gpg_homedir, update_repo_metadata
@@ -1334,7 +1335,7 @@ def publish_package_task(package_id):
         gpg_key = package.repository.gpg_key
         if gpg_key:
             log_build(build, 'info', f"Signing with GPG key {gpg_key.key_id}")
-        meta_result = update_repo_metadata(target_repo_path, gpg_key)
+        meta_result = update_repo_metadata(target_repo_path, gpg_key, generate_deltas=generate_deltas)
         if meta_result['success']:
             log_build(build, 'info', "Repository metadata updated and signed successfully")
         else:
