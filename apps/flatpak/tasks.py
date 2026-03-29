@@ -1319,18 +1319,25 @@ def publish_package_task(package_id, generate_deltas=False):
         # Determine the ref name
         ref_name = f'app/{package.package_id}/{package.arch}/{package.branch}'
 
-        # Check whether the ref already exists in the target repo (e.g. on republish after a
-        # previously-successful publish).  If it does, skip the pull-local step entirely — the
-        # objects are already present and we only need to refresh the metadata.
-        target_refs_result = subprocess.run(
-            ['ostree', 'refs', f'--repo={target_repo_path}'],
-            capture_output=True, text=True,
-        )
-        ref_in_target = ref_name in (target_refs_result.stdout or '')
+        # Check whether the *same* commit is already in the target repo.
+        # We must compare hashes, not just ref names — a new build for the same
+        # package+branch produces a different commit that must replace the old one.
+        def _resolve_ref(repo_path, ref):
+            r = subprocess.run(
+                ['ostree', 'rev-parse', f'--repo={repo_path}', ref],
+                capture_output=True, text=True,
+            )
+            return r.stdout.strip() if r.returncode == 0 else None
 
-        if ref_in_target:
+        build_repo_commit = _resolve_ref(build_repo_path, ref_name)
+        target_commit = _resolve_ref(target_repo_path, ref_name)
+        already_current = (build_repo_commit and target_commit and
+                           build_repo_commit == target_commit)
+
+        if already_current:
             log_build(build, 'info',
-                      f"{ref_name} already present in {package.repository.name} — skipping pull")
+                      f"{ref_name} already at commit {build_repo_commit[:12]} in "
+                      f"{package.repository.name} — skipping pull")
         else:
             log_build(build, 'info', f"Pulling {ref_name} from build-repo to {package.repository.name}")
 
