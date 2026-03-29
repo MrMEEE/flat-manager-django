@@ -2696,6 +2696,51 @@ def cleanup_failed_builds():
     return f"Cleaned up {total_deleted} old failed build(s)"
 
 
+def remove_external_ref_from_repos(ext):
+    """
+    Delete the OSTree ref for an ExternalRef from build-repo and the target
+    repository, then regenerate the repository summary.
+
+    Called before the DB record is removed so the repo stays consistent.
+    Non-fatal: logs warnings but does not raise so the delete can still proceed.
+    """
+    from apps.flatpak.utils.ostree import update_repo_metadata
+
+    build_repo_path = os.path.join(settings.REPOS_BASE_PATH, 'build-repo')
+    target_repo_path = ext.repository.repo_path
+    ref = ext.ref
+
+    for label, repo_path in (('build-repo', build_repo_path), (ext.repository.name, target_repo_path)):
+        if not os.path.exists(os.path.join(repo_path, 'config')):
+            continue
+        # Check whether the ref actually exists before attempting deletion.
+        check = subprocess.run(
+            ['ostree', 'refs', f'--repo={repo_path}'],
+            capture_output=True, text=True,
+        )
+        if check.returncode != 0 or ref not in check.stdout.splitlines():
+            logger.info("remove_external_ref_from_repos: %s not in %s, skipping", ref, label)
+            continue
+        del_result = subprocess.run(
+            ['ostree', 'refs', f'--repo={repo_path}', '--delete', ref],
+            capture_output=True, text=True,
+        )
+        if del_result.returncode == 0:
+            logger.info("remove_external_ref_from_repos: deleted %s from %s", ref, label)
+        else:
+            logger.warning(
+                "remove_external_ref_from_repos: could not delete %s from %s: %s",
+                ref, label, del_result.stderr.strip(),
+            )
+
+    # Regenerate summary + signatures for the target repo.
+    if os.path.exists(os.path.join(target_repo_path, 'config')):
+        try:
+            update_repo_metadata(target_repo_path, ext.repository.gpg_key, generate_deltas=False)
+        except Exception as exc:
+            logger.warning("remove_external_ref_from_repos: summary update failed: %s", exc)
+
+
 @shared_task
 def sync_repo_state():
     """Periodic + post-mutation task: reconcile Build/Promotion DB records against

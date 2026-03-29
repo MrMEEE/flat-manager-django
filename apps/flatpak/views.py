@@ -1664,6 +1664,44 @@ class PackagePublishView(LoginRequiredMixin, View):
         })
 
 
+class PackageRepublishView(LoginRequiredMixin, View):
+    """Re-run publish on a package that failed during the publish/commit stage.
+
+    The build artifacts are still in build-repo — there's no need to rebuild from
+    source.  We just reset the status to 'committed' and re-queue publish.
+    """
+
+    def post(self, request, pk):
+        from apps.flatpak.tasks import publish_package_task
+
+        package = get_object_or_404(Package, pk=pk)
+
+        # Only allow re-publish when the failure happened at publish/commit stage.
+        # The build itself must have succeeded (produced_refs populated).
+        if package.status not in ('failed', 'committed', 'publishing'):
+            return JsonResponse(
+                {'error': f'Re-publish is only valid for packages in failed/committed/publishing status (current: {package.status})'},
+                status=400,
+            )
+        if not package.produced_refs:
+            return JsonResponse(
+                {'error': 'No produced refs found — the build may not have completed. Use Retry to rebuild.'},
+                status=400,
+            )
+
+        # Reset to committed so publish_package_task's guard passes.
+        package.status = 'committed'
+        package.error_message = ''
+        package.save(update_fields=['status', 'error_message', 'updated_at'])
+
+        publish_package_task.delay(package.id)
+
+        return JsonResponse({
+            'status': 'success',
+            'message': f'Re-publishing {package.package_name} (build #{package.build_number})',
+        })
+
+
 class ConfigView(LoginRequiredMixin, View):
     """Display and update site-wide configuration."""
 
@@ -1768,6 +1806,97 @@ class RunUpstreamVersionScanView(LoginRequiredMixin, View):
         for p in all_packages:
             check_upstream_version_task.delay(p.id)
         return JsonResponse({'status': 'ok', 'message': f"Queued {count} upstream version check(s)"})
+
+
+class ScanOrphanedRefsView(LoginRequiredMixin, View):
+    """Return refs present in any repo that are not tracked by a Package, ExternalRef, or BST source."""
+
+    def post(self, request):
+        from .models import Repository, Package, ExternalRef, BuildStreamSource
+        import subprocess
+
+        # Build the set of all known refs across all DB objects.
+        known_refs = set()
+        for pkg in Package.objects.all():
+            known_refs.add(f'app/{pkg.package_id}/{pkg.arch}/{pkg.branch}')
+            known_refs.add(f'runtime/{pkg.package_id}.Locale/{pkg.arch}/{pkg.branch}')
+            known_refs.add(f'runtime/{pkg.package_id}.Debug/{pkg.arch}/{pkg.branch}')
+        for ext in ExternalRef.objects.all():
+            known_refs.add(ext.ref)
+        for bst in BuildStreamSource.objects.all():
+            for ref in bst.produced_refs.splitlines():
+                ref = ref.strip()
+                if ref:
+                    known_refs.add(ref)
+
+        # Internal refs we always keep regardless of any DB record.
+        ALWAYS_KEEP = {'ostree-metadata', 'appstream/x86_64', 'appstream2/x86_64'}
+
+        orphans_by_repo = {}
+        for repo in Repository.objects.filter(is_active=True):
+            repo_path = repo.repo_path
+            if not os.path.exists(os.path.join(repo_path, 'config')):
+                continue
+            result = subprocess.run(
+                ['ostree', 'refs', f'--repo={repo_path}'],
+                capture_output=True, text=True,
+            )
+            if result.returncode != 0:
+                continue
+            orphans = []
+            for ref in result.stdout.splitlines():
+                ref = ref.strip()
+                if not ref:
+                    continue
+                if ref in ALWAYS_KEEP:
+                    continue
+                if ref in known_refs:
+                    continue
+                orphans.append(ref)
+            if orphans:
+                orphans_by_repo[repo.name] = orphans
+
+        total = sum(len(v) for v in orphans_by_repo.values())
+        return JsonResponse({
+            'status': 'ok',
+            'total': total,
+            'orphans': orphans_by_repo,
+        })
+
+
+class PruneOrphanedRefsView(LoginRequiredMixin, View):
+    """Delete a specific orphaned ref from a named repository."""
+
+    def post(self, request):
+        import json
+        from .models import Repository
+        try:
+            body = json.loads(request.body)
+            repo_name = body.get('repo')
+            ref = body.get('ref')
+        except (ValueError, AttributeError):
+            return JsonResponse({'error': 'Invalid JSON body'}, status=400)
+
+        if not repo_name or not ref:
+            return JsonResponse({'error': 'repo and ref are required'}, status=400)
+
+        repo = get_object_or_404(Repository, name=repo_name)
+        repo_path = repo.repo_path
+        if not os.path.exists(os.path.join(repo_path, 'config')):
+            return JsonResponse({'error': f'Repository {repo_name} not found on disk'}, status=404)
+
+        del_result = subprocess.run(
+            ['ostree', 'refs', f'--repo={repo_path}', '--delete', ref],
+            capture_output=True, text=True,
+        )
+        if del_result.returncode != 0:
+            return JsonResponse({'error': del_result.stderr.strip() or del_result.stdout.strip()}, status=500)
+
+        # Regenerate summary so the ref disappears from flatpak remote-ls.
+        update_repo_metadata(repo_path, repo.gpg_key, generate_deltas=False)
+
+        logger.info("Pruned orphaned ref %s from %s (user: %s)", ref, repo_name, request.user)
+        return JsonResponse({'status': 'ok', 'message': f'Deleted {ref} from {repo_name}'})
 
 
 @login_required
@@ -2166,6 +2295,13 @@ class ExternalRefDeleteView(LoginRequiredMixin, DeleteView):
     def get_queryset(self):
         from .models import ExternalRef
         return ExternalRef.objects.all()
+
+    def form_valid(self, form):
+        """Remove the ref from repos before deleting the DB record."""
+        from apps.flatpak.tasks import remove_external_ref_from_repos
+        ext = self.get_object()
+        remove_external_ref_from_repos(ext)
+        return super().form_valid(form)
 
 
 class ExternalRefPullView(LoginRequiredMixin, View):

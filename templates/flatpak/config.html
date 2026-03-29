@@ -322,6 +322,29 @@ sudo ./setup-bst1-venv.sh /opt/flat-manager/bst1-venv</pre>
     </div>
 </div>
 
+<!-- Orphaned Refs -->
+<div class="row">
+    <div class="col-12 mb-4">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-hdd-stack"></i> Orphaned Repository Refs</h5>
+                <button id="btn-scan-orphans" class="btn btn-sm btn-outline-secondary" onclick="scanOrphans()">
+                    <i class="bi bi-search"></i> Scan Repos
+                </button>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-3">
+                    Find OSTree refs present in repositories that are not associated with any
+                    Package, External Ref, or BuildStream source. These can be safely removed
+                    to keep repos clean.
+                </p>
+                <div id="orphan-scan-status" style="display:none;"></div>
+                <div id="orphan-results"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Confirm Modal -->
 <div class="modal fade" id="configConfirmModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog">
@@ -381,6 +404,88 @@ function runTaskNow(key, url, label) {
         btn.disabled = false;
         btn.innerHTML = originalHtml;
     });
+}
+
+const CSRF = document.querySelector('[name=csrfmiddlewaretoken]').value;
+
+async function scanOrphans() {
+    const btn = document.getElementById('btn-scan-orphans');
+    const status = document.getElementById('orphan-scan-status');
+    const results = document.getElementById('orphan-results');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Scanning…';
+    status.style.display = 'none';
+    results.innerHTML = '';
+
+    try {
+        const r = await fetch('{% url "flatpak:scan_orphaned_refs" %}', {
+            method: 'POST',
+            headers: {'X-CSRFToken': CSRF},
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || r.statusText);
+
+        if (data.total === 0) {
+            results.innerHTML = '<div class="alert alert-success mb-0"><i class="bi bi-check-circle"></i> No orphaned refs found.</div>';
+        } else {
+            let html = `<div class="alert alert-warning"><i class="bi bi-exclamation-triangle"></i> Found <strong>${data.total}</strong> orphaned ref(s).</div>`;
+            html += '<div class="table-responsive"><table class="table table-sm table-hover">';
+            html += '<thead><tr><th>Repository</th><th>Ref</th><th></th></tr></thead><tbody>';
+            for (const [repo, refs] of Object.entries(data.orphans)) {
+                for (const ref of refs) {
+                    const safeRepo = repo.replace(/"/g, '&quot;');
+                    const safeRef = ref.replace(/"/g, '&quot;');
+                    html += `<tr id="orphan-row-${btoa(repo+ref).replace(/[^a-z0-9]/gi,'')}">` +
+                        `<td><code>${repo}</code></td>` +
+                        `<td><code>${ref}</code></td>` +
+                        `<td><button class="btn btn-sm btn-outline-danger" onclick="pruneOrphan(this, '${safeRepo}', '${safeRef}')">`+
+                        `<i class="bi bi-trash"></i> Remove</button></td></tr>`;
+                }
+            }
+            html += '</tbody></table></div>';
+            results.innerHTML = html;
+        }
+    } catch (e) {
+        results.innerHTML = `<div class="alert alert-danger mb-0"><i class="bi bi-exclamation-circle"></i> ${e.message}</div>`;
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-search"></i> Scan Repos';
+    }
+}
+
+async function pruneOrphan(btn, repo, ref) {
+    // Use the shared confirm modal
+    document.getElementById('configConfirmTitle').textContent = 'Remove Orphaned Ref';
+    document.getElementById('configConfirmBody').innerHTML =
+        `<p>Remove <code>${ref}</code> from <strong>${repo}</strong>?</p>` +
+        '<p class="text-muted small mb-0">This permanently deletes the ref from the repository on disk.</p>';
+    const okBtn = document.getElementById('configConfirmOk');
+    okBtn.textContent = 'Remove';
+    okBtn.className = 'btn btn-danger';
+    const modal = new bootstrap.Modal(document.getElementById('configConfirmModal'));
+    okBtn.onclick = async function() {
+        modal.hide();
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+        try {
+            const r = await fetch('{% url "flatpak:prune_orphaned_ref" %}', {
+                method: 'POST',
+                headers: {'X-CSRFToken': CSRF, 'Content-Type': 'application/json'},
+                body: JSON.stringify({repo: repo, ref: ref}),
+            });
+            const data = await r.json();
+            if (!r.ok) throw new Error(data.error || r.statusText);
+            // Remove the row from the table
+            const rowId = 'orphan-row-' + btoa(repo+ref).replace(/[^a-z0-9]/gi,'');
+            const row = document.getElementById(rowId);
+            if (row) row.remove();
+        } catch (e) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-trash"></i> Remove';
+            alert('Error: ' + e.message);
+        }
+    };
+    modal.show();
 }
 </script>
 {% endblock %}
