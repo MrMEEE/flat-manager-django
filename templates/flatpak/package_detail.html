@@ -38,7 +38,7 @@
         
         {% if package.status not in 'pending,building,committing,publishing' %}
         <button type="button" class="btn btn-outline-info" onclick="retryBuild({{ package.pk }})">
-            <i class="bi bi-arrow-clockwise"></i> Retry
+            <i class="bi bi-arrow-clockwise"></i> Rebuild
         </button>
         {% endif %}
 
@@ -481,7 +481,7 @@
 
     // Retry build via AJAX
     window.retryBuild = async function(id) {
-        showConfirm('Retry Build', 'Start a new build attempt for this package?', 'Retry', 'btn-info', async function() {
+        showConfirm('Rebuild', 'Start a new build attempt for this package?', 'Rebuild', 'btn-info', async function() {
             try {
                 const response = await fetch(`/packages/${id}/retry/`, {
                     method: 'POST',
@@ -684,12 +684,12 @@
             actionContainer.appendChild(editBtn);
         }
         
-        // Show Retry button for all completed/failed builds
+        // Show Rebuild button for all completed/failed builds
         if (!['pending', 'building', 'committing', 'publishing'].includes(status)) {
             const retryBtn = document.createElement('button');
             retryBtn.type = 'button';
             retryBtn.className = 'btn btn-outline-info';
-            retryBtn.innerHTML = '<i class=\"bi bi-arrow-clockwise\"></i> Retry';
+            retryBtn.innerHTML = '<i class=\"bi bi-arrow-clockwise\"></i> Rebuild';
             retryBtn.onclick = () => retryBuild(buildId);
             actionContainer.appendChild(retryBtn);
         }

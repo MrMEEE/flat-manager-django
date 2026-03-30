@@ -1574,6 +1574,51 @@ class PackageRetryAllFailedView(LoginRequiredMixin, View):
         })
 
 
+class PackageBulkActionView(LoginRequiredMixin, View):
+    """Perform a bulk action (rebuild or delete) on a list of package IDs."""
+
+    def post(self, request):
+        import json
+        from django.http import JsonResponse
+
+        try:
+            data = json.loads(request.body)
+        except (json.JSONDecodeError, ValueError):
+            return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+        action = data.get('action')
+        ids = data.get('ids', [])
+
+        if not isinstance(ids, list) or not ids:
+            return JsonResponse({'error': 'No package IDs provided'}, status=400)
+
+        if action not in ('rebuild', 'delete'):
+            return JsonResponse({'error': f'Unknown action: {action}'}, status=400)
+
+        packages = Package.objects.filter(pk__in=ids)
+        results = {'ok': [], 'skipped': []}
+
+        for package in packages:
+            if action == 'rebuild':
+                package.build_number += 1
+                package.status = 'pending'
+                package.error_message = ''
+                package.save()
+                results['ok'].append(package.package_name)
+            elif action == 'delete':
+                if package.status in ['pending', 'building', 'committing', 'publishing']:
+                    package.status = 'cancelled'
+                    package.save()
+                    results['ok'].append(package.package_name)
+                elif package.status in ['failed', 'cancelled', 'published', 'built', 'committed']:
+                    results['ok'].append(package.package_name)
+                    package.delete()
+                else:
+                    results['skipped'].append(package.package_name)
+
+        return JsonResponse({'status': 'success', **results})
+
+
 class PackageRetryView(LoginRequiredMixin, View):
     """Retry a failed or cancelled build."""
     

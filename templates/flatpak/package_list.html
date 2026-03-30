@@ -8,8 +8,8 @@
     <div class="d-flex gap-2">
         {% if failed_count %}
         <button class="btn btn-danger" id="retry-all-failed-btn"
-                title="Retry all {{ failed_count }} failed/cancelled package{{ failed_count|pluralize }}">
-            <i class="bi bi-arrow-clockwise"></i> Retry Failed
+                title="Rebuild all {{ failed_count }} failed/cancelled package{{ failed_count|pluralize }}">
+            <i class="bi bi-arrow-clockwise"></i> Rebuild Failed
             <span class="badge bg-white text-danger ms-1">{{ failed_count }}</span>
         </button>
         {% endif %}
@@ -55,6 +55,17 @@
     </div>
 </div>
 
+<div id="bulk-toolbar" class="alert alert-secondary d-flex align-items-center gap-3 py-2 mb-2" style="display:none!important">
+    <span id="bulk-count" class="fw-semibold">0 selected</span>
+    <button class="btn btn-sm btn-outline-primary" id="bulk-rebuild-btn">
+        <i class="bi bi-arrow-clockwise"></i> Rebuild
+    </button>
+    <button class="btn btn-sm btn-outline-danger" id="bulk-delete-btn">
+        <i class="bi bi-trash"></i> Delete
+    </button>
+    <button class="btn btn-sm btn-link text-secondary ms-auto" id="bulk-deselect-btn">Deselect all</button>
+</div>
+
 <div id="results-container">
 <div class="card">
     <div class="card-body">
@@ -63,6 +74,7 @@
             <table class="table table-hover">
                 <thead>
                     <tr>
+                        <th style="width:1%"><input type="checkbox" id="select-all" title="Select all"></th>
                         <th>Name</th>
                         <th>Package ID</th>
                         <th>Repository</th>
@@ -78,7 +90,8 @@
                 </thead>
                 <tbody>
                     {% for package in packages %}
-                    <tr>
+                    <tr data-pk="{{ package.pk }}">
+                        <td><input type="checkbox" class="pkg-checkbox" value="{{ package.pk }}"></td>
                         <td>
                             <a href="{% url 'flatpak:package_detail' package.pk %}">
                                 <strong>{{ package.package_name }}</strong>
@@ -268,9 +281,9 @@
     var _csrf = '{{ csrf_token }}';
     btn.addEventListener('click', function () {
         showConfirmModal(
-            'Retry All Failed',
-            '<p>Retry all <strong>{{ failed_count }} failed/cancelled package{{ failed_count|pluralize }}</strong>?</p>',
-            'Retry All',
+            'Rebuild All Failed',
+            '<p>Rebuild all <strong>{{ failed_count }} failed/cancelled package{{ failed_count|pluralize }}</strong>?</p>',
+            'Rebuild All',
             function () {
                 btn.disabled = true;
                 btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Retrying&hellip;';
@@ -284,21 +297,106 @@
                     if (d.status === 'success') {
                         location.reload();
                     } else {
-                        showErrorModal('Retry Failed', d.error || 'Unknown error');
+                        showErrorModal('Rebuild Failed', d.error || 'Unknown error');
                         btn.disabled = false;
-                        btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Retry Failed';
+                        btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Rebuild Failed';
                     }
                 })
                 .catch(function (e) {
-                    showErrorModal('Retry Error', e.message);
+                    showErrorModal('Rebuild Error', e.message);
                     btn.disabled = false;
-                    btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Retry Failed';
+                    btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Rebuild Failed';
                 });
             }
         );
     });
 })();
 {% endif %}
+
+// ── Bulk selection ─────────────────────────────────────────────────────────
+(function () {
+    var _csrf = '{{ csrf_token }}';
+    var toolbar = document.getElementById('bulk-toolbar');
+    var countEl = document.getElementById('bulk-count');
+
+    function getChecked() {
+        return Array.from(document.querySelectorAll('.pkg-checkbox:checked'));
+    }
+
+    function updateToolbar() {
+        var checked = getChecked();
+        if (checked.length > 0) {
+            toolbar.style.display = '';
+            countEl.textContent = checked.length + ' selected';
+        } else {
+            toolbar.style.display = 'none';
+        }
+    }
+
+    // Select-all checkbox
+    document.addEventListener('change', function (e) {
+        if (e.target && e.target.id === 'select-all') {
+            document.querySelectorAll('.pkg-checkbox').forEach(function (cb) {
+                cb.checked = e.target.checked;
+            });
+            updateToolbar();
+        } else if (e.target && e.target.classList.contains('pkg-checkbox')) {
+            var all = document.querySelectorAll('.pkg-checkbox');
+            var allChecked = Array.from(all).every(function (cb) { return cb.checked; });
+            var selectAll = document.getElementById('select-all');
+            if (selectAll) selectAll.checked = allChecked;
+            updateToolbar();
+        }
+    });
+
+    document.getElementById('bulk-deselect-btn').addEventListener('click', function () {
+        document.querySelectorAll('.pkg-checkbox, #select-all').forEach(function (cb) { cb.checked = false; });
+        updateToolbar();
+    });
+
+    function runBulkAction(action, confirmTitle, confirmBody, confirmLabel) {
+        var ids = getChecked().map(function (cb) { return parseInt(cb.value, 10); });
+        if (!ids.length) return;
+        showConfirmModal(confirmTitle, confirmBody, confirmLabel, function () {
+            fetch('{% url "flatpak:package_bulk_action" %}', {
+                method: 'POST',
+                headers: { 'X-CSRFToken': _csrf, 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({ action: action, ids: ids }),
+            })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (d.status === 'success') {
+                    location.reload();
+                } else {
+                    showErrorModal('Bulk Action Failed', d.error || 'Unknown error');
+                }
+            })
+            .catch(function (e) { showErrorModal('Bulk Action Error', e.message); });
+        });
+    }
+
+    document.getElementById('bulk-rebuild-btn').addEventListener('click', function () {
+        var ids = getChecked();
+        runBulkAction(
+            'rebuild',
+            'Rebuild Selected',
+            '<p>Rebuild <strong>' + ids.length + ' selected package' + (ids.length === 1 ? '' : 's') + '</strong>?</p>',
+            'Rebuild'
+        );
+    });
+
+    document.getElementById('bulk-delete-btn').addEventListener('click', function () {
+        var ids = getChecked();
+        runBulkAction(
+            'delete',
+            'Delete Selected',
+            '<p>Delete <strong>' + ids.length + ' selected package' + (ids.length === 1 ? '' : 's') + '</strong>?<br>' +
+            '<small class="text-muted">In-progress packages will be cancelled; completed packages will be deleted.</small></p>',
+            'Delete'
+        );
+    });
+})();
 
 function showConfirmModal(title, body, okLabel, onOk) {
     document.getElementById('confirmTitle').textContent = title;

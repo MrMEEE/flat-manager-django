@@ -99,6 +99,40 @@ def parse_updates(output):
     return result
 
 
+def refresh_appstream():
+    """
+    Refresh appstream metadata so version info is current before collecting data.
+    Runs ``flatpak update --appstream`` for the system installation and for
+    every human user account (requires root for per-user refresh).
+    Failures are non-fatal — the checkin continues with whatever data is
+    already cached.
+    """
+    # System-wide appstream refresh
+    result = subprocess.run(
+        ['flatpak', 'update', '--appstream', '--system', '--noninteractive'],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if result.returncode != 0:
+        print(f'WARNING: flatpak update --appstream --system failed: {result.stderr.strip()}',
+              file=sys.stderr)
+
+    # Per-user appstream refresh (requires root via runuser)
+    if os.geteuid() == 0:
+        for username, _ in get_local_users():
+            res = subprocess.run(
+                ['runuser', '-u', username, '--',
+                 'flatpak', 'update', '--appstream', '--user', '--noninteractive'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            if res.returncode != 0:
+                print(f'WARNING: flatpak update --appstream --user failed for {username}: '
+                      f'{res.stderr.strip()}', file=sys.stderr)
+
+
 def get_system_installed():
     out = run(['flatpak', 'list', '--system', '--columns=application,version,origin,name,branch'])
     return parse_installed(out)
@@ -225,6 +259,7 @@ def main():
 
     remotes         = get_remotes()
     managed_remotes = identify_managed_remotes(remotes, server_url)
+    refresh_appstream()
     installed       = get_system_installed()
     updates         = get_system_updates()
     user_flatpaks   = collect_user_flatpaks()
