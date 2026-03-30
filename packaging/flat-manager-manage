@@ -56,7 +56,7 @@ case "${1:-}" in
         URLS=$(printf '%s' "${RELEASE_JSON}" | \
             python3 -c "import sys,json; [print(a['browser_download_url']) for a in json.load(sys.stdin)['assets']]" \
             | grep "\.el${OS_VER}\." | grep '\.rpm$' \
-            | grep -E '/flat-manager-django(-python-libs)?-[^/]+\.rpm$')
+            | grep -E '/flat-manager-django(-python-libs)?-[0-9][^/]*\.rpm$')
         if [ -z "${URLS}" ]; then
             echo "ERROR: no server el${OS_VER} RPM assets found for release ${LATEST_TAG}." >&2
             exit 1
