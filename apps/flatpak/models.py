@@ -481,6 +481,16 @@ class SiteConfig(models.Model):
             "Leave empty to fall back to the value in settings.py."
         ),
     )
+    timezone = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        help_text=(
+            "IANA timezone name used for displaying dates and times in the web UI "
+            "(e.g. Europe/Copenhagen, America/New_York). "
+            "Leave empty to use the system default (UTC)."
+        ),
+    )
     class Meta:
         verbose_name = 'Site Configuration'
 

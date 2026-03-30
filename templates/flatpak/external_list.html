@@ -37,11 +37,26 @@
 </form>
 
 {% if externals %}
+<div id="bulk-toolbar" class="alert alert-secondary d-flex align-items-center gap-3 py-2 mb-2" style="display:none!important">
+    <span id="bulk-count" class="fw-semibold">0 selected</span>
+    <button class="btn btn-sm btn-outline-primary" id="bulk-pull-btn">
+        <i class="bi bi-cloud-download"></i> Pull
+    </button>
+    <button class="btn btn-sm btn-outline-secondary" id="bulk-assign-orgs-btn">
+        <i class="bi bi-people"></i> Assign Organisations
+    </button>
+    <button class="btn btn-sm btn-outline-danger" id="bulk-delete-btn">
+        <i class="bi bi-trash"></i> Delete
+    </button>
+    <button class="btn btn-sm btn-link text-secondary ms-auto" id="bulk-deselect-btn">Deselect all</button>
+</div>
+
 <div class="card">
     <div class="table-responsive">
         <table class="table table-hover mb-0">
             <thead class="table-light">
                 <tr>
+                    <th style="width:1%"><input type="checkbox" id="select-all" title="Select all"></th>
                     <th>Ref</th>
                     <th>Remote</th>
                     <th>Repository</th>
@@ -54,6 +69,7 @@
             <tbody>
             {% for ext in externals %}
                 <tr>
+                    <td><input type="checkbox" class="ext-checkbox" value="{{ ext.pk }}"></td>
                     <td>
                         <a href="{% url 'flatpak:external_detail' ext.pk %}">
                             {{ ext.display_name|default:ext.ref }}
@@ -131,4 +147,157 @@
     </a>
 </div>
 {% endif %}
+
+<!-- Confirm / Org-picker modal -->
+<div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="confirmTitle">Confirm</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="confirmBody"></div>
+            <div class="modal-footer" id="confirmFooter">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="confirmOk">Confirm</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# Hidden org data #}
+<span style="display:none">
+{% for org in all_organisations %}
+<span class="org-option" data-pk="{{ org.pk }}" data-name="{{ org.name|escapejs }}"></span>
+{% endfor %}
+</span>
 {% endblock %}
+
+{% block extra_js %}
+<script>
+// ── Bulk selection ────────────────────────────────────────────────────────────
+(function () {
+    var _csrf = '{{ csrf_token }}';
+    var toolbar = document.getElementById('bulk-toolbar');
+    var countEl = document.getElementById('bulk-count');
+
+    function getChecked() {
+        return Array.from(document.querySelectorAll('.ext-checkbox:checked'));
+    }
+
+    function updateToolbar() {
+        var n = getChecked().length;
+        toolbar.style.display = n > 0 ? '' : 'none';
+        countEl.textContent = n + ' selected';
+    }
+
+    document.addEventListener('change', function (e) {
+        if (e.target && e.target.id === 'select-all') {
+            document.querySelectorAll('.ext-checkbox').forEach(cb => { cb.checked = e.target.checked; });
+            updateToolbar();
+        } else if (e.target && e.target.classList.contains('ext-checkbox')) {
+            var all = document.querySelectorAll('.ext-checkbox');
+            var sa = document.getElementById('select-all');
+            if (sa) sa.checked = Array.from(all).every(cb => cb.checked);
+            updateToolbar();
+        }
+    });
+
+    document.getElementById('bulk-deselect-btn').addEventListener('click', function () {
+        document.querySelectorAll('.ext-checkbox, #select-all').forEach(cb => { cb.checked = false; });
+        updateToolbar();
+    });
+
+    function postBulk(payload) {
+        return fetch('{% url "flatpak:external_bulk_action" %}', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': _csrf, 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify(payload),
+        }).then(r => r.json());
+    }
+
+    function showConfirm(title, body, okLabel, okClass, onOk) {
+        document.getElementById('confirmTitle').textContent = title;
+        document.getElementById('confirmBody').innerHTML = body;
+        var footer = document.getElementById('confirmFooter');
+        footer.innerHTML = '<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>' +
+            '<button type="button" class="btn ' + okClass + '" id="confirmOk">' + okLabel + '</button>';
+        document.getElementById('confirmOk').onclick = function () {
+            bootstrap.Modal.getInstance(document.getElementById('confirmModal')).hide();
+            onOk();
+        };
+        new bootstrap.Modal(document.getElementById('confirmModal')).show();
+    }
+
+    function showError(msg) {
+        document.getElementById('confirmTitle').textContent = 'Error';
+        document.getElementById('confirmBody').innerHTML = '<div class="alert alert-danger mb-0">' + msg + '</div>';
+        document.getElementById('confirmFooter').innerHTML = '<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>';
+        var el = document.getElementById('confirmModal');
+        (bootstrap.Modal.getInstance(el) || new bootstrap.Modal(el)).show();
+    }
+
+    document.getElementById('bulk-pull-btn').addEventListener('click', function () {
+        var ids = getChecked().map(cb => parseInt(cb.value, 10));
+        if (!ids.length) return;
+        showConfirm(
+            'Pull Selected',
+            '<p>Queue a pull for <strong>' + ids.length + ' selected ref' + (ids.length === 1 ? '' : 's') + '</strong>?</p>',
+            'Pull', 'btn-primary',
+            function () {
+                postBulk({ action: 'pull', ids: ids })
+                    .then(d => { if (d.status === 'success') location.reload(); else showError(d.error || 'Unknown error'); })
+                    .catch(e => showError(e.message));
+            }
+        );
+    });
+
+    document.getElementById('bulk-assign-orgs-btn').addEventListener('click', function () {
+        var ids = getChecked().map(cb => parseInt(cb.value, 10));
+        if (!ids.length) return;
+        var orgs = document.querySelectorAll('.org-option');
+        var html = '<p>Set organisations for <strong>' + ids.length + ' selected ref' + (ids.length === 1 ? '' : 's') + '</strong>:</p>';
+        if (orgs.length) {
+            html += '<div class="d-flex flex-column gap-1" id="org-pick-list">';
+            orgs.forEach(function (o) {
+                html += '<div class="form-check"><input class="form-check-input" type="checkbox" value="' + o.dataset.pk + '" id="orgchk-' + o.dataset.pk + '"><label class="form-check-label" for="orgchk-' + o.dataset.pk + '">' + o.dataset.name + '</label></div>';
+            });
+            html += '</div><p class="text-muted small mt-2 mb-0">Replaces the current organisation list for all selected refs.</p>';
+        } else {
+            html += '<p class="text-muted">No organisations defined yet.</p>';
+        }
+        document.getElementById('confirmTitle').textContent = 'Assign Organisations';
+        document.getElementById('confirmBody').innerHTML = html;
+        var footer = document.getElementById('confirmFooter');
+        footer.innerHTML = '<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>' +
+            '<button type="button" class="btn btn-primary" id="confirmOk">Apply</button>';
+        document.getElementById('confirmOk').onclick = function () {
+            var orgPks = Array.from(document.querySelectorAll('#org-pick-list input:checked')).map(cb => parseInt(cb.value, 10));
+            bootstrap.Modal.getInstance(document.getElementById('confirmModal')).hide();
+            postBulk({ action: 'assign_orgs', ids: ids, org_pks: orgPks })
+                .then(d => { if (d.status === 'success') location.reload(); else showError(d.error || 'Unknown error'); })
+                .catch(e => showError(e.message));
+        };
+        new bootstrap.Modal(document.getElementById('confirmModal')).show();
+    });
+
+    document.getElementById('bulk-delete-btn').addEventListener('click', function () {
+        var ids = getChecked().map(cb => parseInt(cb.value, 10));
+        if (!ids.length) return;
+        showConfirm(
+            'Delete Selected',
+            '<p>Permanently delete <strong>' + ids.length + ' selected ref' + (ids.length === 1 ? '' : 's') + '</strong>?</p>' +
+            '<p class="text-muted small mb-0">This cannot be undone.</p>',
+            'Delete', 'btn-danger',
+            function () {
+                postBulk({ action: 'delete', ids: ids })
+                    .then(d => { if (d.status === 'success') location.reload(); else showError(d.error || 'Unknown error'); })
+                    .catch(e => showError(e.message));
+            }
+        );
+    });
+})();
+</script>
+{% endblock %}
+

@@ -12,6 +12,31 @@
 <form method="post">
 {% csrf_token %}
 <div class="row">
+    <!-- General / Timezone -->
+    <div class="col-lg-6 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-globe"></i> General</h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label for="{{ form.timezone.id_for_label }}" class="form-label fw-semibold">
+                        {{ form.timezone.label }}
+                    </label>
+                    {{ form.timezone }}
+                    {% if form.timezone.help_text %}
+                    <div class="form-text">{{ form.timezone.help_text }}</div>
+                    {% endif %}
+                    {% if form.timezone.errors %}
+                    <div class="invalid-feedback d-block">
+                        {% for error in form.timezone.errors %}{{ error }}{% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Build Cleanup Settings -->
     <div class="col-lg-6 mb-4">
         <div class="card">

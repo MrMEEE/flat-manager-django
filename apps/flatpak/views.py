@@ -496,6 +496,7 @@ class PackageListView(LoginRequiredMixin, ListView):
         get_params.pop('page', None)
         ctx['filter_params'] = get_params.urlencode()
         ctx['failed_count'] = Package.objects.filter(status__in=['failed', 'cancelled']).count()
+        ctx['all_organisations'] = Organisation.objects.all()
         return ctx
 
 
@@ -1599,10 +1600,18 @@ class PackageBulkActionView(LoginRequiredMixin, View):
         if not isinstance(ids, list) or not ids:
             return JsonResponse({'error': 'No package IDs provided'}, status=400)
 
-        if action not in ('rebuild', 'delete'):
+        if action not in ('rebuild', 'delete', 'assign_orgs'):
             return JsonResponse({'error': f'Unknown action: {action}'}, status=400)
 
         packages = Package.objects.filter(pk__in=ids)
+
+        if action == 'assign_orgs':
+            org_pks = data.get('org_pks', [])
+            orgs = Organisation.objects.filter(pk__in=org_pks)
+            for package in packages:
+                package.organisations.set(orgs)
+            return JsonResponse({'status': 'success', 'updated': packages.count()})
+
         results = {'ok': [], 'skipped': []}
 
         for package in packages:
@@ -2282,7 +2291,45 @@ class ExternalRefListView(LoginRequiredMixin, ListView):
         get_params = self.request.GET.copy()
         get_params.pop('page', None)
         ctx['filter_params'] = get_params.urlencode()
+        ctx['all_organisations'] = Organisation.objects.all()
         return ctx
+
+
+class ExternalRefBulkActionView(LoginRequiredMixin, View):
+    def post(self, request, *args, **kwargs):
+        from .models import ExternalRef
+        import json
+        try:
+            data = json.loads(request.body)
+        except (json.JSONDecodeError, ValueError):
+            return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+        ids = data.get('ids', [])
+        action = data.get('action', '')
+        if not isinstance(ids, list) or not ids or not action:
+            return JsonResponse({'error': 'ids and action are required'}, status=400)
+
+        qs = ExternalRef.objects.filter(pk__in=ids)
+
+        if action == 'delete':
+            count = qs.count()
+            qs.delete()
+            return JsonResponse({'status': 'success', 'deleted': count})
+
+        if action == 'pull':
+            from .tasks import pull_external_ref_task
+            for ext in qs:
+                pull_external_ref_task.delay(ext.pk)
+            return JsonResponse({'status': 'success', 'queued': qs.count()})
+
+        if action == 'assign_orgs':
+            org_pks = data.get('org_pks', [])
+            orgs = Organisation.objects.filter(pk__in=org_pks)
+            for ext in qs:
+                ext.organisations.set(orgs)
+            return JsonResponse({'status': 'success', 'updated': qs.count()})
+
+        return JsonResponse({'error': f'Unknown action: {action}'}, status=400)
 
 
 class ExternalRefDetailView(LoginRequiredMixin, DetailView):
@@ -2664,6 +2711,54 @@ class BuildStreamSourceListView(LoginRequiredMixin, ListView):
     template_name = 'flatpak/buildstreamsource_list.html'
     context_object_name = 'sources'
     ordering = ['-created_at']
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx['all_organisations'] = Organisation.objects.all()
+        return ctx
+
+
+class BuildStreamBulkActionView(LoginRequiredMixin, View):
+    """POST — bulk rebuild, assign organisations, or delete BST sources."""
+
+    def post(self, request):
+        import json as _json
+        try:
+            data = _json.loads(request.body)
+        except (ValueError, _json.JSONDecodeError):
+            return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+        action = data.get('action')
+        ids = data.get('ids', [])
+        if not isinstance(ids, list) or not ids:
+            return JsonResponse({'error': 'No sources selected'}, status=400)
+
+        sources = BuildStreamSource.objects.filter(pk__in=ids)
+
+        if action == 'assign_orgs':
+            org_pks = data.get('org_pks', [])
+            orgs = Organisation.objects.filter(pk__in=org_pks)
+            for source in sources:
+                source.organisations.set(orgs)
+            return JsonResponse({'status': 'success', 'updated': sources.count()})
+
+        if action == 'rebuild':
+            count = 0
+            for source in sources:
+                if source.status in ('failed', 'built', 'published', 'cancelled'):
+                    source.status = 'pending'
+                    source.build_number += 1
+                    source.error_message = ''
+                    source.save()
+                    count += 1
+            return JsonResponse({'status': 'success', 'queued': count})
+
+        if action == 'delete':
+            count = sources.count()
+            sources.delete()
+            return JsonResponse({'status': 'success', 'deleted': count})
+
+        return JsonResponse({'error': f'Unknown action: {action}'}, status=400)
 
 
 class BuildStreamSourceCreateView(LoginRequiredMixin, CreateView):

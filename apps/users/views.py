@@ -5,6 +5,7 @@ from django.views import View
 from django.views.generic import ListView, DetailView, CreateView, UpdateView
 from django.urls import reverse_lazy
 from django.contrib import messages
+from django.db import models
 from .models import User, UserProfile
 from .forms import UserCreateForm, SetPasswordForm
 
@@ -49,13 +50,14 @@ class LogoutView(LoginRequiredMixin, View):
 class DashboardView(LoginRequiredMixin, View):
     """Main dashboard view."""
     def get(self, request):
-        from apps.flatpak.models import Repository, Package, Build
-        from django.db.models import Count, Max
+        from apps.flatpak.models import Repository, Package, Build, Client, SiteConfig
+        from django.db.models import Count, Max, F
+        from django.utils import timezone
+        from datetime import timedelta
 
         repo_count = Repository.objects.filter(is_active=True).count()
         package_count = Package.objects.count()
 
-        from django.db.models import F
         packages_building  = Package.objects.filter(status__in=['building', 'committing', 'committed', 'publishing']).count()
         packages_built     = Package.objects.filter(status='built').count()
         packages_failed    = Package.objects.filter(status__in=['failed', 'cancelled']).count()
@@ -70,6 +72,17 @@ class DashboardView(LoginRequiredMixin, View):
             .order_by('-started_at')[:10]
         )
 
+        # Client stats
+        stale_hours = SiteConfig.get_solo().client_stale_hours
+        stale_threshold = timezone.now() - timedelta(hours=stale_hours)
+        clients_online   = Client.objects.filter(last_checkin__gte=stale_threshold).count()
+        clients_offline  = Client.objects.filter(
+            models.Q(last_checkin__lt=stale_threshold) | models.Q(last_checkin__isnull=True)
+        ).count()
+        clients_uptodate = Client.objects.filter(outdated_count=0).count()
+        clients_outdated = Client.objects.filter(outdated_count__gt=0).count()
+        clients_foreign  = Client.objects.filter(foreign_count__gt=0).count()
+
         context = {
             'user': request.user,
             'repo_count':          repo_count,
@@ -80,6 +93,11 @@ class DashboardView(LoginRequiredMixin, View):
             'packages_published':  packages_published,
             'packages_outdated':   packages_outdated,
             'recent_builds':       recent_builds,
+            'clients_online':      clients_online,
+            'clients_offline':     clients_offline,
+            'clients_uptodate':    clients_uptodate,
+            'clients_outdated':    clients_outdated,
+            'clients_foreign':     clients_foreign,
         }
         return render(request, 'users/dashboard.html', context)
 

@@ -5,6 +5,7 @@
 {% block content %}
 <h2 class="mb-4"><i class="bi bi-speedometer2"></i> Dashboard</h2>
 
+<h5 class="text-muted fw-semibold mb-2">Packages</h5>
 <!-- ── Stat cards ──────────────────────────────────────────────────────────── -->
 <div class="row g-3 mb-4">
     <div class="col-6 col-md-3">
@@ -104,6 +105,80 @@
             </div>
         </a>
     </div></div>
+
+<h5 class="text-muted fw-semibold mt-4 mb-2">Clients</h5>
+<!-- ── Client stat cards ────────────────────────────────────────────────────── -->
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <a href="{% url 'flatpak:client_list' %}?status=uptodate" class="text-decoration-none">
+            <div class="card text-white bg-success h-100">
+                <div class="card-body d-flex align-items-center gap-3">
+                    <i class="bi bi-check2-all fs-2 opacity-75"></i>
+                    <div>
+                        <div class="display-6 fw-bold lh-1">{{ clients_uptodate }}</div>
+                        <div class="small opacity-75">Up to date</div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <div class="col-6 col-md-3">
+        <a href="{% url 'flatpak:client_list' %}?status=outdated" class="text-decoration-none">
+            <div class="card text-white bg-warning h-100">
+                <div class="card-body d-flex align-items-center gap-3">
+                    <i class="bi bi-arrow-up-circle fs-2 opacity-75"></i>
+                    <div>
+                        <div class="display-6 fw-bold lh-1">{{ clients_outdated }}</div>
+                        <div class="small opacity-75">Outdated</div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <div class="col-6 col-md-3">
+        <a href="{% url 'flatpak:client_list' %}?status=foreign" class="text-decoration-none">
+            <div class="card border-info h-100">
+                <div class="card-body d-flex align-items-center gap-3">
+                    <i class="bi bi-boxes fs-2 text-info opacity-75"></i>
+                    <div>
+                        <div class="display-6 fw-bold lh-1">{{ clients_foreign }}</div>
+                        <div class="small text-muted">Foreign packages</div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <div class="col-6 col-md-3">
+        <a href="{% url 'flatpak:client_list' %}?status=online" class="text-decoration-none">
+            <div class="card border-success h-100">
+                <div class="card-body d-flex align-items-center gap-3">
+                    <i class="bi bi-wifi fs-2 text-success opacity-75"></i>
+                    <div>
+                        <div class="display-6 fw-bold lh-1">{{ clients_online }}</div>
+                        <div class="small text-muted">Online</div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <div class="col-6 col-md-3">
+        <a href="{% url 'flatpak:client_list' %}?status=offline" class="text-decoration-none">
+            <div class="card border-secondary h-100">
+                <div class="card-body d-flex align-items-center gap-3">
+                    <i class="bi bi-wifi-off fs-2 text-secondary opacity-75"></i>
+                    <div>
+                        <div class="display-6 fw-bold lh-1">{{ clients_offline }}</div>
+                        <div class="small text-muted">Offline</div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+</div>
 
 <!-- ── Main content ───────────────────────────────────────────────────────── -->
 <div class="row g-3">

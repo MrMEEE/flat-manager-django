@@ -1,8 +1,13 @@
 """
 Flatpak app forms.
 """
+import zoneinfo
 from django import forms
 from .models import GPGKey, Repository, Package, Token, SiteConfig, FlatpakRemote
+
+_TZ_CHOICES = [('', '— System default (UTC) —')] + [
+    (tz, tz) for tz in sorted(zoneinfo.available_timezones())
+]
 
 
 class GPGKeyGenerateForm(forms.Form):
@@ -95,6 +100,14 @@ class GPGKeyImportForm(forms.Form):
 class SiteConfigForm(forms.ModelForm):
     """Form for editing site-wide configuration."""
 
+    timezone = forms.ChoiceField(
+        choices=_TZ_CHOICES,
+        required=False,
+        label='Timezone',
+        widget=forms.Select(attrs={'class': 'form-select', 'style': 'max-width: 300px;'}),
+        help_text='IANA timezone for displaying dates in the web UI. Leave empty to use UTC.',
+    )
+
     class Meta:
         model = SiteConfig
         fields = [
@@ -106,6 +119,7 @@ class SiteConfigForm(forms.ModelForm):
             'stale_build_timeout_minutes',
             'client_stale_hours',
             'bst1_venv_path',
+            'timezone',
         ]
         widgets = {
             'failed_builds_to_keep': forms.NumberInput(

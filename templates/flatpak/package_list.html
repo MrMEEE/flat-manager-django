@@ -60,6 +60,9 @@
     <button class="btn btn-sm btn-outline-primary" id="bulk-rebuild-btn">
         <i class="bi bi-arrow-clockwise"></i> Rebuild
     </button>
+    <button class="btn btn-sm btn-outline-secondary" id="bulk-assign-orgs-btn">
+        <i class="bi bi-people"></i> Assign Organisations
+    </button>
     <button class="btn btn-sm btn-outline-danger" id="bulk-delete-btn">
         <i class="bi bi-trash"></i> Delete
     </button>
@@ -404,6 +407,46 @@
             'Delete'
         );
     });
+
+    document.getElementById('bulk-assign-orgs-btn').addEventListener('click', function () {
+        var ids = getChecked().map(function (cb) { return parseInt(cb.value, 10); });
+        if (!ids.length) return;
+        // Build org checklist
+        var orgs = document.querySelectorAll('.org-option');
+        var html = '<p>Set organisations for <strong>' + ids.length + ' selected package' + (ids.length === 1 ? '' : 's') + '</strong>:</p>';
+        if (orgs.length) {
+            html += '<div class="d-flex flex-column gap-1" id="org-pick-list">';
+            orgs.forEach(function (o) {
+                html += '<div class="form-check"><input class="form-check-input" type="checkbox" value="' + o.dataset.pk + '" id="orgchk-' + o.dataset.pk + '"><label class="form-check-label" for="orgchk-' + o.dataset.pk + '">' + o.dataset.name + '</label></div>';
+            });
+            html += '</div>';
+            html += '<p class="text-muted small mt-2 mb-0">This replaces the current organisation list for all selected packages.</p>';
+        } else {
+            html += '<p class="text-muted">No organisations defined yet.</p>';
+        }
+        document.getElementById('confirmTitle').textContent = 'Assign Organisations';
+        document.getElementById('confirmBody').innerHTML = html;
+        var footer = document.getElementById('confirmFooter');
+        footer.innerHTML = '<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>' +
+            '<button type="button" class="btn btn-primary" id="confirmOk">Apply</button>';
+        document.getElementById('confirmOk').onclick = function () {
+            var orgPks = Array.from(document.querySelectorAll('#org-pick-list input:checked')).map(function (cb) { return parseInt(cb.value, 10); });
+            bootstrap.Modal.getInstance(document.getElementById('confirmModal')).hide();
+            fetch('{% url "flatpak:package_bulk_action" %}', {
+                method: 'POST',
+                headers: { 'X-CSRFToken': _csrf, 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({ action: 'assign_orgs', ids: ids, org_pks: orgPks }),
+            })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (d.status === 'success') { location.reload(); }
+                else { showErrorModal('Assign Failed', d.error || 'Unknown error'); }
+            })
+            .catch(function (e) { showErrorModal('Assign Error', e.message); });
+        };
+        new bootstrap.Modal(document.getElementById('confirmModal')).show();
+    });
 })();
 
 function showConfirmModal(title, body, okLabel, onOk) {
@@ -444,4 +487,11 @@ function showErrorModal(title, message) {
         </div>
     </div>
 </div>
+
+{# Hidden org data — used by the assign-orgs JS above #}
+<span id="org-data" style="display:none">
+{% for org in all_organisations %}
+<span class="org-option" data-pk="{{ org.pk }}" data-name="{{ org.name|escapejs }}"></span>
+{% endfor %}
+</span>
 {% endblock %}
