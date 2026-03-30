@@ -434,15 +434,33 @@ def package_from_git_task(self, package_id):
         if not package.git_repo_url:
             raise ValueError("No git repository URL specified")
         
-        # Create Build history record for this attempt
-        build = Build.objects.create(
+        # Create Build history record for this attempt.
+        # Use get_or_create to handle the race where check_pending_builds dispatches
+        # a duplicate task before the first task has saved package.status='building'.
+        build, created = Build.objects.get_or_create(
             package=package,
             build_number=package.build_number,
-            status='building',
-            started_at=timezone.now(),
-            celery_task_id=self.request.id or '',
+            defaults={
+                'status': 'building',
+                'started_at': timezone.now(),
+                'celery_task_id': self.request.id or '',
+            },
         )
-        
+        if not created:
+            if build.status not in ('failed', 'cancelled'):
+                logger.warning(
+                    f"Duplicate task for package {package_id} build "
+                    f"#{package.build_number} (existing status: '{build.status}') — skipping"
+                )
+                return
+            # Retrying a previously-failed build: reset the record
+            build.status = 'building'
+            build.started_at = timezone.now()
+            build.celery_task_id = self.request.id or ''
+            build.error_message = ''
+            build.completed_at = None
+            build.save()
+
         # Update package status
         package.status = 'building'
         package.save()
@@ -859,14 +877,32 @@ def buildstream_build_task(self, bst_source_id, force_rebuild=False):
         # BST 1 does not recognise this flag, so only add it for BST 2.
         bst_global_flags = ['--no-fuse'] if bst_version_str != 'bst1' else []
 
-        # Create Build history record
-        build = Build.objects.create(
+        # Create Build history record.
+        # Use get_or_create to handle duplicate dispatch from check_pending_builds.
+        build, created = Build.objects.get_or_create(
             bst_source=source,
             build_number=source.build_number,
-            status='building',
-            started_at=timezone.now(),
-            celery_task_id=self.request.id or '',
+            defaults={
+                'status': 'building',
+                'started_at': timezone.now(),
+                'celery_task_id': self.request.id or '',
+            },
         )
+        if not created:
+            if build.status not in ('failed', 'cancelled'):
+                logger.warning(
+                    f"Duplicate task for BST source {bst_source_id} build "
+                    f"#{source.build_number} (existing status: '{build.status}') — skipping"
+                )
+                return
+            # Retrying a previously-failed build: reset the record
+            build.status = 'building'
+            build.started_at = timezone.now()
+            build.celery_task_id = self.request.id or ''
+            build.error_message = ''
+            build.completed_at = None
+            build.save()
+
         source.status = 'building'
         source.save()
 
