@@ -28,6 +28,7 @@
                     <th>Status</th>
                     <th>Version</th>
                     <th>Build&nbsp;#</th>
+                    <th>Organisations</th>
                     <th></th>
                 </tr>
             </thead>
@@ -57,6 +58,13 @@
                     </td>
                     <td>{{ source.version|default:"—" }}</td>
                     <td>{{ source.build_number }}</td>
+                    <td>
+                        {% for org in source.organisations.all %}
+                        <span class="badge bg-secondary">{{ org.name }}</span>
+                        {% empty %}
+                        <span class="text-muted">—</span>
+                        {% endfor %}
+                    </td>
                     <td class="text-end">
                         <a href="{% url 'flatpak:bst_source_edit' source.pk %}" class="btn btn-sm btn-outline-secondary">
                             <i class="bi bi-pencil"></i>

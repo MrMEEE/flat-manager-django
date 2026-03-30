@@ -1,0 +1,44 @@
+{% extends 'base.html' %}
+
+{% block title %}Delete Organisation - Flat Manager{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'flatpak:organisation_list' %}">Organisations</a></li>
+        <li class="breadcrumb-item active">Delete</li>
+    </ol>
+</nav>
+
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card border-danger">
+            <div class="card-header bg-danger text-white">
+                <h5 class="mb-0"><i class="bi bi-exclamation-triangle"></i> Confirm Deletion</h5>
+            </div>
+            <div class="card-body">
+                <h5>Delete Organisation: {{ object.name }}</h5>
+                <p><strong>Responsible:</strong> {{ object.responsible_name }} &lt;{{ object.responsible_email }}&gt;</p>
+                {% if object.description %}
+                <p><strong>Description:</strong> {{ object.description }}</p>
+                {% endif %}
+
+                <div class="alert alert-danger">
+                    <strong>This action cannot be undone!</strong>
+                    This organisation will be removed from all assigned packages, BuildStream sources, and external refs.
+                </div>
+
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-danger">
+                            <i class="bi bi-trash"></i> Yes, Delete
+                        </button>
+                        <a href="{% url 'flatpak:organisation_list' %}" class="btn btn-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

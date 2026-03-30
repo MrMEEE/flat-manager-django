@@ -83,6 +83,27 @@ class RepositorySubset(models.Model):
         return f"{self.repository.name} - {self.name}"
 
 
+class Organisation(models.Model):
+    """
+    An organisation that owns or is responsible for one or more packages,
+    BuildStream sources, or external refs.
+    """
+    name = models.CharField(max_length=255, unique=True, help_text="Organisation name")
+    responsible_name = models.CharField(max_length=255, help_text="Name of the responsible person")
+    responsible_email = models.EmailField(help_text="Email of the responsible person")
+    description = models.TextField(blank=True, help_text="Optional description")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+        verbose_name = 'Organisation'
+        verbose_name_plural = 'Organisations'
+
+    def __str__(self):
+        return self.name
+
+
 class Package(models.Model):
     """
     Flatpak package configuration (formerly Build).
@@ -171,7 +192,11 @@ class Package(models.Model):
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='packages')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+    organisations = models.ManyToManyField(
+        'Organisation', blank=True, related_name='packages',
+        help_text="Organisations responsible for this package",
+    )
+
     class Meta:
         ordering = ['-created_at']
         unique_together = [['repository', 'package_id', 'arch', 'branch', 'git_branch']]
@@ -265,6 +290,10 @@ class BuildStreamSource(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    organisations = models.ManyToManyField(
+        'Organisation', blank=True, related_name='bst_sources',
+        help_text="Organisations responsible for this BuildStream source",
+    )
 
     class Meta:
         ordering = ['-created_at']
@@ -620,6 +649,10 @@ class ExternalRef(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     last_pulled_at = models.DateTimeField(null=True, blank=True)
+    organisations = models.ManyToManyField(
+        'Organisation', blank=True, related_name='external_refs',
+        help_text="Organisations responsible for this external ref",
+    )
 
     class Meta:
         ordering = ['-created_at']

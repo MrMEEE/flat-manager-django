@@ -46,6 +46,7 @@
                     <th>Remote</th>
                     <th>Repository</th>
                     <th>Status</th>
+                    <th>Organisations</th>
                     <th>Last Pulled</th>
                     <th></th>
                 </tr>
@@ -78,6 +79,13 @@
                         {% endif %}
                     </td>
                     <td>
+                        {% for org in ext.organisations.all %}
+                        <span class="badge bg-secondary">{{ org.name }}</span>
+                        {% empty %}
+                        <span class="text-muted">—</span>
+                        {% endfor %}
+                    </td>
+                    <td>
                         {% if ext.last_pulled_at %}
                             {{ ext.last_pulled_at|date:"Y-m-d H:i" }}
                         {% else %}
@@ -87,6 +95,9 @@
                     <td class="text-end">
                         <a href="{% url 'flatpak:external_detail' ext.pk %}" class="btn btn-sm btn-outline-secondary">
                             <i class="bi bi-eye"></i>
+                        </a>
+                        <a href="{% url 'flatpak:external_edit' ext.pk %}" class="btn btn-sm btn-outline-primary" title="Edit">
+                            <i class="bi bi-pencil"></i>
                         </a>
                     </td>
                 </tr>

@@ -191,6 +191,15 @@
                         <div class="text-danger">{{ form.installation_type.errors }}</div>
                         {% endif %}
                     </div>
+
+                    <div class="mb-3">
+                        <label for="id_organisations" class="form-label">Organisations</label>
+                        {{ form.organisations }}
+                        {% if form.organisations.errors %}
+                        <div class="text-danger">{{ form.organisations.errors }}</div>
+                        {% endif %}
+                        <div class="form-text">{{ form.organisations.help_text }}</div>
+                    </div>
                     
                     <hr class="my-4">
                     

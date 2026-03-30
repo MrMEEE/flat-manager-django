@@ -84,6 +84,7 @@
                         <th>Upstream Version</th>
                         <th>Branch</th>
                         <th>Arch</th>
+                        <th>Organisations</th>
                         <th>Created</th>
                         <th>Actions</th>
                     </tr>
@@ -153,6 +154,13 @@
                         </td>
                         <td><code>{{ package.branch }}</code></td>
                         <td>{{ package.arch }}</td>
+                        <td>
+                            {% for org in package.organisations.all %}
+                            <span class="badge bg-secondary">{{ org.name }}</span>
+                            {% empty %}
+                            <span class="text-muted">—</span>
+                            {% endfor %}
+                        </td>
                         <td>{{ package.created_at|date:"M d, H:i" }}</td>
                         <td>
                             <a href="{% url 'flatpak:package_detail' package.pk %}" class="btn btn-sm btn-outline-primary">

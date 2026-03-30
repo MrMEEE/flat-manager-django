@@ -10,7 +10,7 @@ from django.urls import reverse_lazy, reverse
 from django.contrib import messages
 from django.shortcuts import render, redirect, get_object_or_404
 from django.conf import settings
-from .models import GPGKey, Repository, RepositorySubset, Package, Build, Promotion, BuildStreamSource, Client, ExternalRef, ExternalRefPromotion
+from .models import GPGKey, Repository, RepositorySubset, Package, Build, Promotion, BuildStreamSource, Client, ExternalRef, ExternalRefPromotion, Organisation
 from .forms import GPGKeyGenerateForm, GPGKeyImportForm
 from .utils.gpg import generate_gpg_key, import_gpg_key
 from .utils.ostree import init_ostree_repo, sign_repo_summary, delete_ostree_repo, temp_gpg_homedir, update_repo_metadata
@@ -1405,7 +1405,7 @@ class PackageCreateView(LoginRequiredMixin, CreateView):
     """Create new package."""
     model = Package
     template_name = 'flatpak/package_form.html'
-    fields = ['repository', 'package_id', 'package_name', 'version', 'git_repo_url', 'git_branch', 'manifest_file', 'upstream_url', 'upstream_version_script', 'branch', 'arch', 'installation_type']
+    fields = ['repository', 'package_id', 'package_name', 'version', 'git_repo_url', 'git_branch', 'manifest_file', 'upstream_url', 'upstream_version_script', 'branch', 'arch', 'installation_type', 'organisations']
     
     def get_initial(self):
         initial = super().get_initial()
@@ -1461,7 +1461,7 @@ class PackageUpdateView(LoginRequiredMixin, UpdateView):
     """Edit package details."""
     model = Package
     template_name = 'flatpak/package_form.html'
-    fields = ['repository', 'package_id', 'package_name', 'version', 'branch', 'arch', 'git_repo_url', 'git_branch', 'manifest_file', 'upstream_url', 'upstream_version_script', 'installation_type']
+    fields = ['repository', 'package_id', 'package_name', 'version', 'branch', 'arch', 'git_repo_url', 'git_branch', 'manifest_file', 'upstream_url', 'upstream_version_script', 'installation_type', 'organisations']
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -2357,6 +2357,24 @@ class ExternalRefDeleteView(LoginRequiredMixin, DeleteView):
         return super().form_valid(form)
 
 
+class ExternalRefUpdateView(LoginRequiredMixin, UpdateView):
+    model = ExternalRef
+    template_name = 'flatpak/external_form.html'
+    fields = ['organisations']
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['edit_mode'] = True
+        return context
+
+    def form_valid(self, form):
+        messages.success(self.request, f'External ref updated.')
+        return super().form_valid(form)
+
+    def get_success_url(self):
+        return reverse('flatpak:external_detail', kwargs={'pk': self.object.pk})
+
+
 class ExternalRefPullView(LoginRequiredMixin, View):
     """Queue a pull (and subsequent publish) task for an ExternalRef."""
 
@@ -2405,6 +2423,32 @@ class ExternalRefStatusView(LoginRequiredMixin, View):
             'commit_hash': ext.commit_hash,
             'error_message': ext.error_message,
         })
+
+
+class OrganisationListView(LoginRequiredMixin, ListView):
+    model = Organisation
+    template_name = 'flatpak/organisation_list.html'
+    context_object_name = 'organisations'
+
+
+class OrganisationCreateView(LoginRequiredMixin, CreateView):
+    model = Organisation
+    template_name = 'flatpak/organisation_form.html'
+    fields = ['name', 'responsible_name', 'responsible_email', 'description']
+    success_url = reverse_lazy('flatpak:organisation_list')
+
+
+class OrganisationUpdateView(LoginRequiredMixin, UpdateView):
+    model = Organisation
+    template_name = 'flatpak/organisation_form.html'
+    fields = ['name', 'responsible_name', 'responsible_email', 'description']
+    success_url = reverse_lazy('flatpak:organisation_list')
+
+
+class OrganisationDeleteView(LoginRequiredMixin, DeleteView):
+    model = Organisation
+    template_name = 'flatpak/organisation_confirm_delete.html'
+    success_url = reverse_lazy('flatpak:organisation_list')
 
 
 class ClientListView(LoginRequiredMixin, ListView):
@@ -2569,7 +2613,7 @@ class BuildStreamSourceListView(LoginRequiredMixin, ListView):
 class BuildStreamSourceCreateView(LoginRequiredMixin, CreateView):
     model = BuildStreamSource
     template_name = 'flatpak/buildstreamsource_form.html'
-    fields = ['repository', 'name', 'git_repo_url', 'git_branch', 'bst_element', 'bst_version']
+    fields = ['repository', 'name', 'git_repo_url', 'git_branch', 'bst_element', 'bst_version', 'organisations']
 
     def get_initial(self):
         initial = super().get_initial()
@@ -2653,7 +2697,7 @@ class BuildStreamSourceDetailView(LoginRequiredMixin, DetailView):
 class BuildStreamSourceUpdateView(LoginRequiredMixin, UpdateView):
     model = BuildStreamSource
     template_name = 'flatpak/buildstreamsource_form.html'
-    fields = ['repository', 'name', 'git_repo_url', 'git_branch', 'bst_element', 'bst_version']
+    fields = ['repository', 'name', 'git_repo_url', 'git_branch', 'bst_element', 'bst_version', 'organisations']
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)

@@ -1,0 +1,81 @@
+{% extends 'base.html' %}
+
+{% block title %}{% if object %}Edit{% else %}New{% endif %} Organisation - Flat Manager{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>
+        <i class="bi bi-building"></i>
+        {% if object %}Edit Organisation{% else %}New Organisation{% endif %}
+    </h2>
+    <a href="{% url 'flatpak:organisation_list' %}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back
+    </a>
+</div>
+
+<div class="row">
+    <div class="col-md-7">
+        <div class="card">
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+
+                    {% if form.non_field_errors %}
+                    <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+                    {% endif %}
+
+                    <div class="mb-3">
+                        <label for="id_name" class="form-label">Name *</label>
+                        <input type="text" class="form-control{% if form.name.errors %} is-invalid{% endif %}"
+                               id="id_name" name="name"
+                               value="{{ form.name.value|default:'' }}"
+                               placeholder="My Organisation">
+                        {% if form.name.errors %}
+                        <div class="invalid-feedback">{{ form.name.errors }}</div>
+                        {% endif %}
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="id_responsible_name" class="form-label">Responsible Person *</label>
+                        <input type="text" class="form-control{% if form.responsible_name.errors %} is-invalid{% endif %}"
+                               id="id_responsible_name" name="responsible_name"
+                               value="{{ form.responsible_name.value|default:'' }}"
+                               placeholder="Jane Doe">
+                        {% if form.responsible_name.errors %}
+                        <div class="invalid-feedback">{{ form.responsible_name.errors }}</div>
+                        {% endif %}
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="id_responsible_email" class="form-label">Responsible Email *</label>
+                        <input type="email" class="form-control{% if form.responsible_email.errors %} is-invalid{% endif %}"
+                               id="id_responsible_email" name="responsible_email"
+                               value="{{ form.responsible_email.value|default:'' }}"
+                               placeholder="jane@example.com">
+                        {% if form.responsible_email.errors %}
+                        <div class="invalid-feedback">{{ form.responsible_email.errors }}</div>
+                        {% endif %}
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="id_description" class="form-label">Description</label>
+                        <textarea class="form-control" id="id_description" name="description"
+                                  rows="3"
+                                  placeholder="Optional description">{{ form.description.value|default:'' }}</textarea>
+                        {% if form.description.errors %}
+                        <div class="text-danger">{{ form.description.errors }}</div>
+                        {% endif %}
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-lg"></i> {% if object %}Save Changes{% else %}Create Organisation{% endif %}
+                        </button>
+                        <a href="{% url 'flatpak:organisation_list' %}" class="btn btn-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

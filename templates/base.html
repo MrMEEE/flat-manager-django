@@ -127,11 +127,10 @@
             <a class="nav-link" href="{% url 'users:user_list' %}">
                 <i class="bi bi-people"></i> Users
             </a>
-            {% endif %}
-            
-            <a class="nav-link" href="{% url 'users:profile' %}">
-                <i class="bi bi-person-circle"></i> Profile
+            <a class="nav-link" href="{% url 'flatpak:organisation_list' %}">
+                <i class="bi bi-building"></i> Organisations
             </a>
+            {% endif %}
             
             <a class="nav-link" href="{% url 'flatpak:config' %}">
                 <i class="bi bi-gear"></i> Config
@@ -156,12 +155,17 @@
             <span class="navbar-text">
                 Welcome, <strong>{{ user.username }}</strong>
             </span>
-            <form method="post" action="{% url 'users:logout' %}" class="d-flex">
-                {% csrf_token %}
-                <button class="btn btn-outline-light btn-sm" type="submit">
-                    <i class="bi bi-box-arrow-right"></i> Logout
-                </button>
-            </form>
+            <div class="d-flex align-items-center gap-2">
+                <a href="{% url 'users:profile' %}" class="btn btn-outline-light btn-sm">
+                    <i class="bi bi-person-circle"></i> Profile
+                </a>
+                <form method="post" action="{% url 'users:logout' %}" class="d-flex">
+                    {% csrf_token %}
+                    <button class="btn btn-outline-light btn-sm" type="submit">
+                        <i class="bi bi-box-arrow-right"></i> Logout
+                    </button>
+                </form>
+            </div>
         </div>
     </nav>
     {% endif %}
