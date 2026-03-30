@@ -1,11 +1,12 @@
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
-from django.shortcuts import render, redirect
+from django.shortcuts import render, redirect, get_object_or_404
 from django.views import View
 from django.views.generic import ListView, DetailView, CreateView, UpdateView
 from django.urls import reverse_lazy
 from django.contrib import messages
 from .models import User, UserProfile
+from .forms import UserCreateForm, SetPasswordForm
 
 
 class IndexView(View):
@@ -108,9 +109,9 @@ class UserCreateView(LoginRequiredMixin, AdminRequiredMixin, CreateView):
     """Create new user (admin only)."""
     model = User
     template_name = 'users/user_form.html'
-    fields = ['username', 'email', 'first_name', 'last_name', 'is_repo_admin', 'is_build_admin', 'is_staff']
+    form_class = UserCreateForm
     success_url = reverse_lazy('users:user_list')
-    
+
     def form_valid(self, form):
         messages.success(self.request, 'User created successfully.')
         return super().form_valid(form)
@@ -126,6 +127,29 @@ class UserUpdateView(LoginRequiredMixin, AdminRequiredMixin, UpdateView):
     def form_valid(self, form):
         messages.success(self.request, 'User updated successfully.')
         return super().form_valid(form)
+
+
+class UserSetPasswordView(LoginRequiredMixin, AdminRequiredMixin, View):
+    """Set or change a user's password (admin only)."""
+    template_name = 'users/user_password.html'
+
+    def get_user(self, pk):
+        return get_object_or_404(User, pk=pk)
+
+    def get(self, request, pk):
+        user_obj = self.get_user(pk)
+        form = SetPasswordForm()
+        return render(request, self.template_name, {'form': form, 'user_obj': user_obj})
+
+    def post(self, request, pk):
+        user_obj = self.get_user(pk)
+        form = SetPasswordForm(request.POST)
+        if form.is_valid():
+            user_obj.set_password(form.cleaned_data['password1'])
+            user_obj.save(update_fields=['password'])
+            messages.success(request, f'Password updated for {user_obj.username}.')
+            return redirect('users:user_detail', pk=pk)
+        return render(request, self.template_name, {'form': form, 'user_obj': user_obj})
 
 
 class ProfileView(LoginRequiredMixin, View):
