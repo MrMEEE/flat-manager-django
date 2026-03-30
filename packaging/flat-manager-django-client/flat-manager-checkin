@@ -296,12 +296,17 @@ def main():
 
     # Merge user installs into the main list (deduplicate by app_id so runtimes
     # that appear in both system and user scopes are counted only once).
+    # Tag each entry with 'user' so the server knows who has it installed.
+    for pkg in sys_installed:
+        pkg['user'] = 'system'
     installed = list(sys_installed)
     seen_ids = {pkg['app_id'] for pkg in installed}
     for uf in user_flatpaks:
         for pkg in uf.get('installed', []):
             if pkg['app_id'] not in seen_ids:
-                installed.append(pkg)
+                tagged = dict(pkg)
+                tagged['user'] = uf['username']
+                installed.append(tagged)
                 seen_ids.add(pkg['app_id'])
 
     # Merge user updates the same way

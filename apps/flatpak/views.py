@@ -2471,10 +2471,19 @@ class ClientDetailView(LoginRequiredMixin, DetailView):
         # Build a single annotated list: status = 'uptodate' | 'outdated' | 'foreign'
         outdated_map = {pkg['app_id']: pkg for pkg in (client.outdated_flatpaks or [])}
         managed = set(client.managed_remotes or [])
+
+        # Map package_id → Package pk for all installed apps (enables detail links)
+        installed_ids = [p['app_id'] for p in (client.installed_flatpaks or [])]
+        pkg_pk_map = {
+            p.package_id: p.pk
+            for p in Package.objects.filter(package_id__in=installed_ids).only('package_id', 'pk')
+        }
+
         order = {'outdated': 0, 'foreign': 1, 'uptodate': 2}
         annotated = []
         for pkg in (client.installed_flatpaks or []):
             entry = dict(pkg)
+            entry['installed_by'] = pkg.get('user', 'system')
             if pkg.get('origin') not in managed:
                 entry['pkg_status'] = 'foreign'
             elif pkg['app_id'] in outdated_map:
@@ -2482,6 +2491,8 @@ class ClientDetailView(LoginRequiredMixin, DetailView):
                 entry['new_version'] = outdated_map[pkg['app_id']].get('new_version', '')
             else:
                 entry['pkg_status'] = 'uptodate'
+            if entry['pkg_status'] != 'foreign' and pkg['app_id'] in pkg_pk_map:
+                entry['pkg_pk'] = pkg_pk_map[pkg['app_id']]
             annotated.append(entry)
         annotated.sort(key=lambda p: (
             order[p['pkg_status']],

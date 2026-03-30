@@ -95,6 +95,7 @@
                     <th>Branch</th>
                     <th>Version</th>
                     <th>Remote</th>
+                    <th>Installed by</th>
                 </tr>
             </thead>
             <tbody>
@@ -109,8 +110,20 @@
                         <span class="badge bg-success"><i class="bi bi-check-circle"></i> Up to date</span>
                         {% endif %}
                     </td>
-                    <td><code>{{ pkg.app_id }}</code></td>
-                    <td>{{ pkg.name }}</td>
+                    <td>
+                        {% if pkg.pkg_pk %}
+                        <a href="{% url 'flatpak:package_detail' pkg.pkg_pk %}"><code>{{ pkg.app_id }}</code></a>
+                        {% else %}
+                        <code>{{ pkg.app_id }}</code>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if pkg.pkg_pk %}
+                        <a href="{% url 'flatpak:package_detail' pkg.pkg_pk %}">{{ pkg.name }}</a>
+                        {% else %}
+                        {{ pkg.name }}
+                        {% endif %}
+                    </td>
                     <td><span class="badge bg-secondary">{{ pkg.branch }}</span></td>
                     <td>
                         {{ pkg.version }}
@@ -120,6 +133,13 @@
                         {% endif %}
                     </td>
                     <td>{{ pkg.origin }}</td>
+                    <td>
+                        {% if pkg.installed_by == 'system' %}
+                        <span class="badge bg-secondary"><i class="bi bi-hdd"></i> system</span>
+                        {% else %}
+                        <span class="badge bg-info text-dark"><i class="bi bi-person"></i> {{ pkg.installed_by }}</span>
+                        {% endif %}
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>
