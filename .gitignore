@@ -17,6 +17,7 @@ celerybeat.pid
 
 # Redis
 dump.rdb
+temp-*.rdb
 
 # Environment
 .env
