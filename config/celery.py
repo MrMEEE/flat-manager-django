@@ -4,6 +4,7 @@ Celery configuration for flat-manager project.
 import os
 from celery import Celery
 from celery.schedules import crontab
+from kombu import Queue
 
 # Set the default Django settings module for the 'celery' program.
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
@@ -17,6 +18,16 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 # Load task modules from all registered Django apps.
 app.autodiscover_tasks()
 
+# ── Queue definitions ─────────────────────────────────────────────────────────
+# 'build'  — long-running, CPU/IO-intensive flatpak and BuildStream builds
+# 'ops'    — everything else: commit, publish, promote, periodic beat tasks
+app.conf.task_queues = (
+    Queue('build'),
+    Queue('ops'),
+)
+# Tasks without an explicit queue declaration land on 'ops'.
+app.conf.task_default_queue = 'ops'
+
 # Celery Beat schedule for periodic tasks
 app.conf.beat_schedule = {
     'check-pending-builds': {
@@ -24,6 +35,7 @@ app.conf.beat_schedule = {
         'schedule': 5.0,  # Run every 5 seconds
         'options': {
             'expires': 3.0,  # Task expires after 3 seconds if not executed
+            'queue': 'ops',
         }
     },
     'cleanup-stale-builds': {
@@ -31,6 +43,7 @@ app.conf.beat_schedule = {
         'schedule': 30.0,  # Default 30 seconds; overridden at runtime by SiteConfig
         'options': {
             'expires': 20.0,
+            'queue': 'ops',
         }
     },
     'cleanup-failed-builds': {
@@ -38,6 +51,7 @@ app.conf.beat_schedule = {
         'schedule': 3600.0,  # Run every hour
         'options': {
             'expires': 300.0,  # Task expires after 5 minutes if not executed
+            'queue': 'ops',
         }
     },
     'sync-repo-state': {
@@ -45,6 +59,7 @@ app.conf.beat_schedule = {
         'schedule': 300.0,  # Run every 5 minutes to catch external drift
         'options': {
             'expires': 60.0,
+            'queue': 'ops',
         }
     },
 }
@@ -113,11 +128,17 @@ from celery.signals import worker_ready, worker_shutdown  # noqa: E402
 
 @worker_ready.connect
 def on_worker_ready(sender, **kwargs):
-    """On startup, fail packages that were building when the last worker died."""
-    _fail_stuck_packages('Celery worker restarted — build was interrupted')
+    """On startup, fail packages that were building when the last worker died.
+    Only runs on build workers (FLAT_MANAGER_WORKER_TYPE=build).
+    """
+    if os.environ.get('FLAT_MANAGER_WORKER_TYPE') == 'build':
+        _fail_stuck_packages('Celery worker restarted — build was interrupted')
 
 
 @worker_shutdown.connect
 def on_worker_shutdown(sender, **kwargs):
-    """On graceful shutdown, fail packages that are still in progress."""
-    _fail_stuck_packages('Celery worker shut down — build was interrupted')
+    """On graceful shutdown, fail packages that are still in progress.
+    Only runs on build workers (FLAT_MANAGER_WORKER_TYPE=build).
+    """
+    if os.environ.get('FLAT_MANAGER_WORKER_TYPE') == 'build':
+        _fail_stuck_packages('Celery worker shut down — build was interrupted')

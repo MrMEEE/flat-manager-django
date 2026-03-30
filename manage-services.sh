@@ -20,6 +20,7 @@ NC='\033[0m' # No Color
 declare -A SERVICES=(
     ["django"]="logs/django.pid"
     ["celery"]="logs/celery.pid"
+    ["celery-ops"]="logs/celery-ops.pid"
     ["beat"]="logs/celery-beat.pid"
     ["daphne"]="logs/daphne.pid"
 )
@@ -106,14 +107,25 @@ start_services() {
         echo -e "${GREEN}✅ Django server started (PID: $!)${NC}"
     fi
     
-    # Start Celery worker
-    echo -e "${BLUE}⚙️  Starting Celery worker...${NC}"
+    # Start Celery build worker
+    echo -e "${BLUE}⚙️  Starting Celery build worker...${NC}"
     if is_running "${SERVICES[celery]}"; then
-        echo -e "${YELLOW}⚠️  Celery worker is already running (PID: $(cat ${SERVICES[celery]}))${NC}"
+        echo -e "${YELLOW}⚠️  Celery build worker is already running (PID: $(cat ${SERVICES[celery]}))${NC}"
     else
-        nohup celery -A config worker --loglevel=info > logs/celery.log 2>&1 &
+        FLAT_MANAGER_WORKER_TYPE=build nohup celery -A config worker --queues=build --hostname=build@%h --loglevel=info > logs/celery.log 2>&1 &
         echo $! > ${SERVICES[celery]}
-        echo -e "${GREEN}✅ Celery worker started (PID: $!)${NC}"
+        echo -e "${GREEN}✅ Celery build worker started (PID: $!)${NC}"
+    fi
+
+    # Start Celery ops worker
+    echo -e "${BLUE}⚙️  Starting Celery ops worker...${NC}"
+    if is_running "${SERVICES[celery-ops]}"; then
+        echo -e "${YELLOW}⚠️  Celery ops worker is already running (PID: $(cat ${SERVICES[celery-ops]}))${NC}"
+    else
+        OPS_CONCURRENCY=${CELERY_OPS_WORKER_CONCURRENCY:-4}
+        nohup celery -A config worker --queues=ops --concurrency=${OPS_CONCURRENCY} --hostname=ops@%h --loglevel=info > logs/celery-ops.log 2>&1 &
+        echo $! > ${SERVICES[celery-ops]}
+        echo -e "${GREEN}✅ Celery ops worker started (PID: $!, concurrency: ${OPS_CONCURRENCY})${NC}"
     fi
     
     # Start Celery beat (scheduler)
@@ -140,16 +152,18 @@ start_services() {
     echo -e "${GREEN}🎉 All services started successfully!${NC}"
     echo ""
     echo "Services running:"
-    echo "  - Django:        http://localhost:8000"
-    echo "  - WebSockets:    ws://localhost:8001"
-    echo "  - Celery Worker: $(cat ${SERVICES[celery]} 2>/dev/null || echo 'Not running')"
-    echo "  - Celery Beat:   $(cat ${SERVICES[beat]} 2>/dev/null || echo 'Not running')"
+    echo "  - Django:              http://localhost:8000"
+    echo "  - WebSockets:          ws://localhost:8001"
+    echo "  - Celery Build Worker: $(cat ${SERVICES[celery]} 2>/dev/null || echo 'Not running')"
+    echo "  - Celery Ops Worker:   $(cat ${SERVICES[celery-ops]} 2>/dev/null || echo 'Not running')"
+    echo "  - Celery Beat:         $(cat ${SERVICES[beat]} 2>/dev/null || echo 'Not running')"
     echo ""
     echo "To view logs:"
-    echo "  - Django:        tail -f logs/django.log"
-    echo "  - Celery Worker: tail -f logs/celery.log"
-    echo "  - Celery Beat:   tail -f logs/celery-beat.log"
-    echo "  - Daphne:        tail -f logs/daphne.log"
+    echo "  - Django:              tail -f logs/django.log"
+    echo "  - Celery Build Worker: tail -f logs/celery.log"
+    echo "  - Celery Ops Worker:   tail -f logs/celery-ops.log"
+    echo "  - Celery Beat:         tail -f logs/celery-beat.log"
+    echo "  - Daphne:              tail -f logs/daphne.log"
     echo ""
 }
 
@@ -160,7 +174,8 @@ stop_services() {
     
     stop_service "Daphne" "${SERVICES[daphne]}"
     stop_service "Celery Beat" "${SERVICES[beat]}"
-    stop_service "Celery Worker" "${SERVICES[celery]}"
+    stop_service "Celery Ops Worker" "${SERVICES[celery-ops]}"
+    stop_service "Celery Build Worker" "${SERVICES[celery]}"
     stop_service "Django" "${SERVICES[django]}"
     
     echo ""
@@ -184,11 +199,12 @@ show_status() {
     
     # Check all services
     echo "Services:"
-    for service in django celery beat daphne; do
+    for service in django celery celery-ops beat daphne; do
         local name=""
         case $service in
             django) name="Django Server" ;;
-            celery) name="Celery Worker" ;;
+            celery) name="Celery Build Worker" ;;
+            celery-ops) name="Celery Ops Worker" ;;
             beat) name="Celery Beat" ;;
             daphne) name="Daphne (WebSocket)" ;;
         esac

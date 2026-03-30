@@ -411,7 +411,7 @@ def run_cancellable(cmd, cwd, build, timeout_seconds):
     )
 
 
-@shared_task(bind=True)
+@shared_task(bind=True, queue='build')
 def package_from_git_task(self, package_id):
     """
     Build a flatpak from git repository using flatpak-builder.
@@ -820,7 +820,7 @@ def _get_bst_binary(bst_version):
     return which_bst or 'bst'
 
 
-@shared_task(bind=True)
+@shared_task(bind=True, queue='build')
 def buildstream_build_task(self, bst_source_id, force_rebuild=False):
     """
     Build a BuildStream project from a git repository.

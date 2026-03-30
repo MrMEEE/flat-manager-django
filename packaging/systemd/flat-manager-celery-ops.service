@@ -1,7 +1,7 @@
 [Unit]
-Description=Flat Manager — Celery build worker
+Description=Flat Manager — Celery ops worker (publish, commit, promote, …)
 Documentation=https://github.com/MrMEEE/flat-manager-django
-After=network.target mariadb.service redis.service valkey.service
+After=network.target mariadb.service redis.service valkey.service flat-manager-celery.service
 Wants=mariadb.service
 
 [Service]
@@ -12,11 +12,11 @@ WorkingDirectory=/opt/flat-manager/app
 EnvironmentFile=/etc/flat-manager/flat-manager.env
 Environment=VIRTUAL_ENV=/opt/flat-manager/venv
 Environment=PATH=/opt/flat-manager/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
-Environment=FLAT_MANAGER_WORKER_TYPE=build
 ExecStart=/opt/flat-manager/venv/bin/celery \
     -A config worker \
-    --queues=build \
-    --hostname=build@%h \
+    --queues=ops \
+    --concurrency=${CELERY_OPS_WORKER_CONCURRENCY:-4} \
+    --hostname=ops@%h \
     --loglevel=info
 
 RuntimeDirectory=flat-manager
@@ -36,7 +36,7 @@ ReadWritePaths=/var/lib/flat-manager /var/log/flat-manager /run/flat-manager
 
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=flat-manager-celery
+SyslogIdentifier=flat-manager-celery-ops
 
 [Install]
 WantedBy=flat-manager.target multi-user.target

@@ -160,6 +160,9 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 
+# Ops worker pool size (publish, commit, promote, etc. — everything except builds)
+CELERY_OPS_WORKER_CONCURRENCY = int(os.environ.get('CELERY_OPS_WORKER_CONCURRENCY', '4'))
+
 # Channels Configuration
 CHANNEL_LAYERS = {
     'default': {

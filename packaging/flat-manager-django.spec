@@ -451,6 +451,8 @@ install -D -m 0644 packaging/systemd/flat-manager-web.service \
     %{buildroot}%{_unitdir}/flat-manager-web.service
 install -D -m 0644 packaging/systemd/flat-manager-celery.service \
     %{buildroot}%{_unitdir}/flat-manager-celery.service
+install -D -m 0644 packaging/systemd/flat-manager-celery-ops.service \
+    %{buildroot}%{_unitdir}/flat-manager-celery-ops.service
 install -D -m 0644 packaging/systemd/flat-manager-celery-beat.service \
     %{buildroot}%{_unitdir}/flat-manager-celery-beat.service
 install -D -m 0644 packaging/systemd/flat-manager.target \
@@ -571,7 +573,7 @@ getent passwd %{app_user}  >/dev/null || \
 exit 0
 
 %post
-%systemd_post flat-manager-web.service flat-manager-celery.service flat-manager-celery-beat.service flat-manager.target
+%systemd_post flat-manager-web.service flat-manager-celery.service flat-manager-celery-ops.service flat-manager-celery-beat.service flat-manager.target
 
 chown -R %{app_user}:%{app_group} %{data_dir} %{log_dir} %{conf_dir}
 chown    %{app_user}:%{app_group} %{install_dir}
@@ -627,7 +629,7 @@ if [ $1 -ge 2 ]; then
     echo "Running database migrations..."
     flat-manager-manage migrate --noinput 2>&1 || \
         echo "WARNING: migrate failed — run 'flat-manager-manage migrate' manually"
-    for svc in flat-manager-web.service flat-manager-celery.service flat-manager-celery-beat.service; do
+    for svc in flat-manager-web.service flat-manager-celery.service flat-manager-celery-ops.service flat-manager-celery-beat.service; do
         if systemctl is-active --quiet "${svc}"; then
             echo "Restarting ${svc}..."
             systemctl restart "${svc}" 2>/dev/null || :
@@ -659,14 +661,14 @@ if [ $1 -eq 1 ]; then
 fi
 
 %preun
-%systemd_preun flat-manager-web.service flat-manager-celery.service flat-manager-celery-beat.service flat-manager.target
+%systemd_preun flat-manager-web.service flat-manager-celery.service flat-manager-celery-ops.service flat-manager-celery-beat.service flat-manager.target
 # Remove SELinux policy module on final uninstall
 if [ $1 -eq 0 ] && command -v semodule >/dev/null 2>&1; then
     semodule -r flat-manager-nginx 2>/dev/null || :
 fi
 
 %postun
-%systemd_postun_with_restart flat-manager-web.service flat-manager-celery.service flat-manager-celery-beat.service
+%systemd_postun_with_restart flat-manager-web.service flat-manager-celery.service flat-manager-celery-ops.service flat-manager-celery-beat.service
 
 # ─────────────────────────────────────────────────────────────────────────────
 %files
@@ -692,6 +694,7 @@ fi
 
 %{_unitdir}/flat-manager-web.service
 %{_unitdir}/flat-manager-celery.service
+%{_unitdir}/flat-manager-celery-ops.service
 %{_unitdir}/flat-manager-celery-beat.service
 %{_unitdir}/flat-manager.target
 %{_tmpfilesdir}/flat-manager.conf
