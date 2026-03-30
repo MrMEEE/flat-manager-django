@@ -730,6 +730,9 @@ fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 %changelog
+* Mon Mar 30 2026 Release Bot <noreply@example.com> - 0.2.1-1
+- Release 0.2.1
+
 * Mon Mar 30 2026 Release Bot <noreply@example.com> - 0.2.0-1
 - Release 0.2.0
 
