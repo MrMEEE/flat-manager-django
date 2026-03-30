@@ -67,6 +67,34 @@ def get_remotes():
     return remotes
 
 
+def get_user_remotes(username):
+    """Return list of {name, url} dicts for user-level flatpak remotes of *username*."""
+    out = run_as_user(username, ['flatpak', 'remotes', '--user', '--columns=name,url'])
+    remotes = []
+    for line in out.splitlines():
+        parts = line.split('\t', 1)
+        if len(parts) == 2:
+            remotes.append({'name': parts[0].strip(), 'url': parts[1].strip()})
+    return remotes
+
+
+def get_all_remotes():
+    """
+    Return combined list of system remotes plus any user remotes not already
+    present (by name) in the system list.  User remotes are collected via
+    runuser so root is required; without root only system remotes are returned.
+    """
+    remotes = get_remotes()
+    if os.geteuid() == 0:
+        seen = {r['name'] for r in remotes}
+        for username, _ in get_local_users():
+            for r in get_user_remotes(username):
+                if r['name'] not in seen:
+                    remotes.append(r)
+                    seen.add(r['name'])
+    return remotes
+
+
 def parse_installed(output):
     """Parse tab-separated flatpak list output into [{app_id, version, origin, name, branch}]."""
     result = []
@@ -257,12 +285,33 @@ def main():
         or socket.gethostname()
     )
 
-    remotes         = get_remotes()
+    remotes         = get_all_remotes()
     managed_remotes = identify_managed_remotes(remotes, server_url)
     refresh_appstream()
-    installed       = get_system_installed()
-    updates         = get_system_updates()
-    user_flatpaks   = collect_user_flatpaks()
+
+    # System-wide data
+    sys_installed = get_system_installed()
+    sys_updates   = get_system_updates()
+    user_flatpaks = collect_user_flatpaks()
+
+    # Merge user installs into the main list (deduplicate by app_id so runtimes
+    # that appear in both system and user scopes are counted only once).
+    installed = list(sys_installed)
+    seen_ids = {pkg['app_id'] for pkg in installed}
+    for uf in user_flatpaks:
+        for pkg in uf.get('installed', []):
+            if pkg['app_id'] not in seen_ids:
+                installed.append(pkg)
+                seen_ids.add(pkg['app_id'])
+
+    # Merge user updates the same way
+    updates = list(sys_updates)
+    seen_update_ids = {pkg['app_id'] for pkg in updates}
+    for uf in user_flatpaks:
+        for pkg in uf.get('updates_available', []):
+            if pkg['app_id'] not in seen_update_ids:
+                updates.append(pkg)
+                seen_update_ids.add(pkg['app_id'])
 
     status, body = checkin(server_url, hostname, remotes, managed_remotes,
                            installed, updates, user_flatpaks)
