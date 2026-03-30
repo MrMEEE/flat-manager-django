@@ -1858,13 +1858,6 @@ def publish_external_ref_task(external_ref_id):
                 f"{meta_result.get('detail', '') or meta_result.get('error', '')}"
             )
 
-        # flatpak build-update-repo regenerates appstream/x86_64 from each app
-        # commit's embedded stub — which is empty for Flathub-sourced apps.
-        # Overwrite with the upstream appstream refs we pulled into build-repo
-        # so 'flatpak list' can show version numbers.  Re-sign & re-summarise.
-        _fixup_upstream_appstream(build_repo_path, target_repo_path, gpg_key,
-                                  log_fn=lambda lvl, msg: _log_external(ext, lvl, msg))
-
         ext.status = 'published'
         ext.save()
         _log_external(ext, 'info', "Published successfully")
@@ -2917,8 +2910,6 @@ def promote_build_task(promotion_id):
         promotion.save()
         send_promotion_status_update(promotion)
         logger.info(f"Promotion {promotion_id} complete: {ref_name} → {target_repo.name}")
-        # Kick off a sync so any indirect state drift is caught immediately
-        sync_repo_state.delay()
 
     except Promotion.DoesNotExist:
         logger.error(f"Promotion {promotion_id} not found")
@@ -3012,16 +3003,11 @@ def promote_external_ref_task(external_promotion_id):
 
         update_repo_metadata(target_repo_path, target_repo.gpg_key, generate_deltas=False)
 
-        # Restore upstream appstream refs after flatpak build-update-repo
-        # regenerated them from empty Flathub app-commit stubs.
-        _fixup_upstream_appstream(build_repo_path, target_repo_path, target_repo.gpg_key)
-
         promotion.status = 'promoted'
         promotion.completed_at = timezone.now()
         promotion.save()
         send_external_ref_promotion_status_update(promotion)
         logger.info(f"External ref promotion {external_promotion_id} complete: {ext.ref} → {target_repo.name}")
-        sync_repo_state.delay()
 
     except ExternalRefPromotion.DoesNotExist:
         logger.error(f"ExternalRefPromotion {external_promotion_id} not found")
@@ -3133,7 +3119,6 @@ def promote_bst_task(bst_promotion_id):
         promo.save()
         send_bst_promotion_status_update(promo)
         logger.info(f"BST promotion {bst_promotion_id} complete → {promo.target_repo.name}")
-        sync_repo_state.delay()
 
     except BstPromotion.DoesNotExist:
         logger.error(f"BstPromotion {bst_promotion_id} not found")
