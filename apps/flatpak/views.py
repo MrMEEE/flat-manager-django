@@ -2467,21 +2467,23 @@ class ClientListView(LoginRequiredMixin, ListView):
     template_name = 'flatpak/client_list.html'
     context_object_name = 'clients'
 
-    def get_queryset(self):
-        from .models import Client, SiteConfig
-        from django.utils import timezone
-        from datetime import timedelta
-        stale_hours = SiteConfig.get_solo().client_stale_hours
-        threshold = timezone.now() - timedelta(hours=stale_hours)
-        qs = Client.objects.all()
-        # Annotate each client with its status for sorting/display
-        for client in qs:
+    def _annotate_status(self, clients, threshold):
+        for client in clients:
             if client.last_checkin is None or client.last_checkin < threshold:
                 client.status = 'red'
             elif client.outdated_count > 0 or client.foreign_count > 0:
                 client.status = 'yellow'
             else:
                 client.status = 'green'
+
+    def get_queryset(self):
+        from .models import Client, SiteConfig
+        from django.utils import timezone
+        from datetime import timedelta
+        stale_hours = SiteConfig.get_solo().client_stale_hours
+        threshold = timezone.now() - timedelta(hours=stale_hours)
+        qs = list(Client.objects.prefetch_related('organisations').all())
+        self._annotate_status(qs, threshold)
         return qs
 
     def get_context_data(self, **kwargs):
@@ -2491,13 +2493,8 @@ class ClientListView(LoginRequiredMixin, ListView):
         from datetime import timedelta
         stale_hours = SiteConfig.get_solo().client_stale_hours
         threshold = timezone.now() - timedelta(hours=stale_hours)
-        for client in context['clients']:
-            if client.last_checkin is None or client.last_checkin < threshold:
-                client.status = 'red'
-            elif client.outdated_count > 0 or client.foreign_count > 0:
-                client.status = 'yellow'
-            else:
-                client.status = 'green'
+        self._annotate_status(context['clients'], threshold)
+        context['all_organisations'] = Organisation.objects.all()
         return context
 
 
@@ -2507,7 +2504,7 @@ class ClientDetailView(LoginRequiredMixin, DetailView):
 
     def get_object(self):
         from .models import Client
-        return get_object_or_404(Client, pk=self.kwargs['pk'])
+        return get_object_or_404(Client.objects.prefetch_related('organisations'), pk=self.kwargs['pk'])
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -2555,7 +2552,54 @@ class ClientDetailView(LoginRequiredMixin, DetailView):
             (p.get('name') or p['app_id']).lower(),
         ))
         context['installed_annotated'] = annotated
+        context['all_organisations'] = Organisation.objects.all()
+        context['selected_org_pks'] = set(str(pk) for pk in client.organisations.values_list('pk', flat=True))
         return context
+
+
+class ClientAssignOrgsView(LoginRequiredMixin, View):
+    """POST — assign organisations to a single client."""
+
+    def post(self, request, pk):
+        from .models import Client
+        client = get_object_or_404(Client, pk=pk)
+        org_pks = request.POST.getlist('organisations')
+        client.organisations.set(Organisation.objects.filter(pk__in=org_pks))
+        messages.success(request, f'Organisations updated for {client.hostname}.')
+        return redirect('flatpak:client_detail', pk=pk)
+
+
+class ClientBulkActionView(LoginRequiredMixin, View):
+    """POST — bulk assign organisations or bulk delete clients."""
+
+    def post(self, request):
+        import json as _json
+        from .models import Client
+        try:
+            data = _json.loads(request.body)
+        except (ValueError, _json.JSONDecodeError):
+            return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+        action = data.get('action')
+        client_pks = data.get('client_pks', [])
+        if not client_pks:
+            return JsonResponse({'error': 'No clients selected'}, status=400)
+
+        clients = Client.objects.filter(pk__in=client_pks)
+
+        if action == 'assign_orgs':
+            org_pks = data.get('org_pks', [])
+            orgs = Organisation.objects.filter(pk__in=org_pks)
+            for client in clients:
+                client.organisations.set(orgs)
+            return JsonResponse({'status': 'ok', 'updated': clients.count()})
+
+        if action == 'delete':
+            count = clients.count()
+            clients.delete()
+            return JsonResponse({'status': 'ok', 'deleted': count})
+
+        return JsonResponse({'error': f'Unknown action: {action}'}, status=400)
 
 
 import json

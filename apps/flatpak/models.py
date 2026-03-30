@@ -763,6 +763,12 @@ class Client(models.Model):
         default=list,
         help_text="Per-user installed flatpaks: [{username, installed: [...], updates_available: [...]}]."
     )
+    organisations = models.ManyToManyField(
+        'Organisation',
+        blank=True,
+        related_name='clients',
+        help_text="Organisations this client belongs to.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

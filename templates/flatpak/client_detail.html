@@ -11,12 +11,17 @@
         {% elif client.status == 'yellow' %}
         <span class="badge bg-warning text-dark ms-2"><i class="bi bi-exclamation-triangle"></i> Issues</span>
         {% else %}
-        <span class="badge bg-danger ms-2"><i class="bi bi-x-circle"></i> Stale</span>
+        <span class="badge bg-danger ms-2"><i class="bi bi-x-circle"></i> Offline</span>
         {% endif %}
     </h2>
-    <a href="{% url 'flatpak:client_list' %}" class="btn btn-sm btn-outline-secondary">
-        <i class="bi bi-arrow-left"></i> Clients
-    </a>
+    <div class="d-flex gap-2">
+        <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#assignOrgsModal">
+            <i class="bi bi-building"></i> Assign Organisations
+        </button>
+        <a href="{% url 'flatpak:client_list' %}" class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Clients
+        </a>
+    </div>
 </div>
 
 <!-- Summary row -->
@@ -59,6 +64,22 @@
                 {% else %}
                     <span class="text-muted">Never</span>
                 {% endif %}
+            </dd>
+            <dt class="col-sm-3">Users</dt>
+            <dd class="col-sm-9">
+                {% for u in client.user_flatpaks %}
+                    <span class="badge bg-secondary me-1">{{ u.username }}</span>
+                {% empty %}
+                    <span class="text-muted">None</span>
+                {% endfor %}
+            </dd>
+            <dt class="col-sm-3">Organisations</dt>
+            <dd class="col-sm-9">
+                {% for org in client.organisations.all %}
+                    <span class="badge bg-info text-dark me-1">{{ org.name }}</span>
+                {% empty %}
+                    <span class="text-muted">None</span>
+                {% endfor %}
             </dd>
             <dt class="col-sm-3">Managed remotes</dt>
             <dd class="col-sm-9">
@@ -149,5 +170,40 @@
 {% else %}
 <p class="text-muted">No flatpaks installed.</p>
 {% endif %}
+
+<!-- Assign Organisations modal -->
+<div class="modal fade" id="assignOrgsModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post" action="{% url 'flatpak:client_assign_orgs' client.pk %}">
+                {% csrf_token %}
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-building"></i> Assign Organisations</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    {% if all_organisations %}
+                    <div class="d-flex flex-wrap gap-2">
+                        {% for org in all_organisations %}
+                        <input type="checkbox" class="btn-check" name="organisations"
+                               id="org{{ org.pk }}" value="{{ org.pk }}" autocomplete="off"
+                               {% if org.pk|stringformat:"s" in selected_org_pks %}checked{% endif %}>
+                        <label class="btn btn-outline-primary btn-sm" for="org{{ org.pk }}">{{ org.name }}</label>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <p class="text-muted mb-0">No organisations defined yet.</p>
+                    {% endif %}
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-lg"></i> Save
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
 
 {% endblock %}
