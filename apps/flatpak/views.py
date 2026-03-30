@@ -1129,27 +1129,28 @@ class BuildUnpublishView(LoginRequiredMixin, View):
             return JsonResponse({'error': 'Build is not published'}, status=400)
 
         package = build.package
-        build_repo_path = os.path.join(settings.REPOS_BASE_PATH, 'build-repo')
+        target_repo_path = package.repository.repo_path
         ref_name = f'app/{package.package_id}/{package.arch}/{package.branch}'
 
         try:
+            # Remove from the TARGET (published) repo only.
+            # build-repo is kept intact so the build can be re-published without rebuilding.
             subprocess.run(
-                ['ostree', 'refs', '--delete', ref_name, f'--repo={build_repo_path}'],
+                ['ostree', 'refs', '--delete', ref_name, f'--repo={target_repo_path}'],
                 capture_output=True, text=True, timeout=60
             )
             # Also remove locale ref if present
             locale_ref = f'runtime/{package.package_id}.Locale/{package.arch}/{package.branch}'
             subprocess.run(
-                ['ostree', 'refs', '--delete', locale_ref, f'--repo={build_repo_path}'],
+                ['ostree', 'refs', '--delete', locale_ref, f'--repo={target_repo_path}'],
                 capture_output=True, text=True, timeout=60
             )
-            # Update summary for build-repo (internal staging, no GPG needed)
-            subprocess.run(
-                ['ostree', 'summary', '-u', f'--repo={build_repo_path}'],
-                capture_output=True, text=True, timeout=60
-            )
+            # Regenerate target repo metadata so the ref is gone from the summary
+            from apps.flatpak.utils.ostree import update_repo_metadata
+            gpg_key = package.repository.gpg_key
+            update_repo_metadata(target_repo_path, gpg_key, generate_deltas=False)
         except Exception as e:
-            return JsonResponse({'error': f'Failed to remove ref from build-repo: {e}'}, status=500)
+            return JsonResponse({'error': f'Failed to remove ref from target repo: {e}'}, status=500)
 
         # Roll build and package status back to committed
         build.status = 'committed'
@@ -1162,7 +1163,7 @@ class BuildUnpublishView(LoginRequiredMixin, View):
             package.status = 'committed'
             package.save(update_fields=['status'])
 
-        return JsonResponse({'status': 'ok', 'message': f'Build #{build.build_number} unpublished from build-repo'})
+        return JsonResponse({'status': 'ok', 'message': f'Build #{build.build_number} unpublished'})
 
 
 class BuildCancelView(LoginRequiredMixin, View):
