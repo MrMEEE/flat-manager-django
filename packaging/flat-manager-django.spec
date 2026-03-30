@@ -658,6 +658,9 @@ fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 %changelog
+* Mon Mar 30 2026 Release Bot <m@rtinjuhl.dk> - 0.3.5-1
+- Release 0.3.5
+
 * Mon Mar 30 2026 Release Bot <m@rtinjuhl.dk> - 0.3.4-1
 - Release 0.3.4
 
