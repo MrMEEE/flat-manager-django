@@ -658,397 +658,397 @@ fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 %changelog
-* Mon Mar 30 2026 Release Bot <noreply@example.com> - 0.3.2-1
+* Mon Mar 30 2026 Release Bot <m@rtinjuhl.dk> - 0.3.2-1
 - Release 0.3.2
 
-* Mon Mar 30 2026 Release Bot <noreply@example.com> - 0.3.1-1
+* Mon Mar 30 2026 Release Bot <m@rtinjuhl.dk> - 0.3.1-1
 - Release 0.3.1
 
-* Mon Mar 30 2026 Release Bot <noreply@example.com> - 0.3.0-1
+* Mon Mar 30 2026 Release Bot <m@rtinjuhl.dk> - 0.3.0-1
 - Release 0.3.0
 
-* Mon Mar 30 2026 Release Bot <noreply@example.com> - 0.2.2-1
+* Mon Mar 30 2026 Release Bot <m@rtinjuhl.dk> - 0.2.2-1
 - Release 0.2.2
 
-* Mon Mar 30 2026 Release Bot <noreply@example.com> - 0.2.1-1
+* Mon Mar 30 2026 Release Bot <m@rtinjuhl.dk> - 0.2.1-1
 - Release 0.2.1
 
-* Mon Mar 30 2026 Release Bot <noreply@example.com> - 0.2.0-1
+* Mon Mar 30 2026 Release Bot <m@rtinjuhl.dk> - 0.2.0-1
 - Release 0.2.0
 
-* Mon Mar 30 2026 Release Bot <noreply@example.com> - 0.1.125-1
+* Mon Mar 30 2026 Release Bot <m@rtinjuhl.dk> - 0.1.125-1
 - Release 0.1.125
 
-* Mon Mar 30 2026 Release Bot <noreply@example.com> - 0.1.124-1
+* Mon Mar 30 2026 Release Bot <m@rtinjuhl.dk> - 0.1.124-1
 - Release 0.1.124
 
-* Mon Mar 30 2026 Release Bot <noreply@example.com> - 0.1.123-1
+* Mon Mar 30 2026 Release Bot <m@rtinjuhl.dk> - 0.1.123-1
 - Release 0.1.123
 
-* Mon Mar 30 2026 Release Bot <noreply@example.com> - 0.1.122-1
+* Mon Mar 30 2026 Release Bot <m@rtinjuhl.dk> - 0.1.122-1
 - Release 0.1.122
 
-* Sun Mar 29 2026 Release Bot <noreply@example.com> - 0.1.120-1
+* Sun Mar 29 2026 Release Bot <m@rtinjuhl.dk> - 0.1.120-1
 - Release 0.1.120
 
-* Sun Mar 29 2026 Release Bot <noreply@example.com> - 0.1.119-1
+* Sun Mar 29 2026 Release Bot <m@rtinjuhl.dk> - 0.1.119-1
 - Release 0.1.119
 
-* Sun Mar 29 2026 Release Bot <noreply@example.com> - 0.1.118-1
+* Sun Mar 29 2026 Release Bot <m@rtinjuhl.dk> - 0.1.118-1
 - Release 0.1.118
 
-* Sun Mar 29 2026 Release Bot <noreply@example.com> - 0.1.117-1
+* Sun Mar 29 2026 Release Bot <m@rtinjuhl.dk> - 0.1.117-1
 - Release 0.1.117
 
-* Sun Mar 29 2026 Release Bot <noreply@example.com> - 0.1.116-1
+* Sun Mar 29 2026 Release Bot <m@rtinjuhl.dk> - 0.1.116-1
 - Release 0.1.116
 
-* Sun Mar 29 2026 Release Bot <noreply@example.com> - 0.1.115-1
+* Sun Mar 29 2026 Release Bot <m@rtinjuhl.dk> - 0.1.115-1
 - Release 0.1.115
 
-* Sun Mar 29 2026 Release Bot <noreply@example.com> - 0.1.114-1
+* Sun Mar 29 2026 Release Bot <m@rtinjuhl.dk> - 0.1.114-1
 - Release 0.1.114
 
-* Sun Mar 29 2026 Release Bot <noreply@example.com> - 0.1.113-1
+* Sun Mar 29 2026 Release Bot <m@rtinjuhl.dk> - 0.1.113-1
 - Release 0.1.113
 
-* Sun Mar 29 2026 Release Bot <noreply@example.com> - 0.1.112-1
+* Sun Mar 29 2026 Release Bot <m@rtinjuhl.dk> - 0.1.112-1
 - Release 0.1.112
 
-* Sun Mar 29 2026 Release Bot <noreply@example.com> - 0.1.111-1
+* Sun Mar 29 2026 Release Bot <m@rtinjuhl.dk> - 0.1.111-1
 - Release 0.1.111
 
-* Sat Mar 28 2026 Release Bot <noreply@example.com> - 0.1.110-1
+* Sat Mar 28 2026 Release Bot <m@rtinjuhl.dk> - 0.1.110-1
 - Release 0.1.110
 
-* Sat Mar 28 2026 Release Bot <noreply@example.com> - 0.1.109-1
+* Sat Mar 28 2026 Release Bot <m@rtinjuhl.dk> - 0.1.109-1
 - Release 0.1.109
 
-* Sat Mar 28 2026 Release Bot <noreply@example.com> - 0.1.108-1
+* Sat Mar 28 2026 Release Bot <m@rtinjuhl.dk> - 0.1.108-1
 - Release 0.1.108
 
-* Sat Mar 28 2026 Release Bot <noreply@example.com> - 0.1.107-1
+* Sat Mar 28 2026 Release Bot <m@rtinjuhl.dk> - 0.1.107-1
 - Release 0.1.107
 
-* Sat Mar 28 2026 Release Bot <noreply@example.com> - 0.1.106-1
+* Sat Mar 28 2026 Release Bot <m@rtinjuhl.dk> - 0.1.106-1
 - Release 0.1.106
 
-* Sat Mar 28 2026 Release Bot <noreply@example.com> - 0.1.105-1
+* Sat Mar 28 2026 Release Bot <m@rtinjuhl.dk> - 0.1.105-1
 - Release 0.1.105
 
-* Sat Mar 28 2026 Release Bot <noreply@example.com> - 0.1.104-1
+* Sat Mar 28 2026 Release Bot <m@rtinjuhl.dk> - 0.1.104-1
 - Release 0.1.104
 
-* Fri Mar 27 2026 Release Bot <noreply@example.com> - 0.1.103-1
+* Fri Mar 27 2026 Release Bot <m@rtinjuhl.dk> - 0.1.103-1
 - Release 0.1.103
 
-* Fri Mar 27 2026 Release Bot <noreply@example.com> - 0.1.102-1
+* Fri Mar 27 2026 Release Bot <m@rtinjuhl.dk> - 0.1.102-1
 - Release 0.1.102
 
-* Fri Mar 27 2026 Release Bot <noreply@example.com> - 0.1.101-1
+* Fri Mar 27 2026 Release Bot <m@rtinjuhl.dk> - 0.1.101-1
 - Release 0.1.101
 
-* Fri Mar 27 2026 Release Bot <noreply@example.com> - 0.1.100-1
+* Fri Mar 27 2026 Release Bot <m@rtinjuhl.dk> - 0.1.100-1
 - Release 0.1.100
 
-* Fri Mar 27 2026 Release Bot <noreply@example.com> - 0.1.99-1
+* Fri Mar 27 2026 Release Bot <m@rtinjuhl.dk> - 0.1.99-1
 - Release 0.1.99
 
-* Fri Mar 27 2026 Release Bot <noreply@example.com> - 0.1.98-1
+* Fri Mar 27 2026 Release Bot <m@rtinjuhl.dk> - 0.1.98-1
 - Release 0.1.98
 
-* Fri Mar 27 2026 Release Bot <noreply@example.com> - 0.1.97-1
+* Fri Mar 27 2026 Release Bot <m@rtinjuhl.dk> - 0.1.97-1
 - Release 0.1.97
 
-* Fri Mar 27 2026 Release Bot <noreply@example.com> - 0.1.96-1
+* Fri Mar 27 2026 Release Bot <m@rtinjuhl.dk> - 0.1.96-1
 - Release 0.1.96
 
-* Fri Mar 27 2026 Release Bot <noreply@example.com> - 0.1.95-1
+* Fri Mar 27 2026 Release Bot <m@rtinjuhl.dk> - 0.1.95-1
 - Release 0.1.95
 
-* Fri Mar 27 2026 Release Bot <noreply@example.com> - 0.1.94-1
+* Fri Mar 27 2026 Release Bot <m@rtinjuhl.dk> - 0.1.94-1
 - Release 0.1.94
 
-* Fri Mar 27 2026 Release Bot <noreply@example.com> - 0.1.93-1
+* Fri Mar 27 2026 Release Bot <m@rtinjuhl.dk> - 0.1.93-1
 - Release 0.1.93
 
-* Fri Mar 27 2026 Release Bot <noreply@example.com> - 0.1.92-1
+* Fri Mar 27 2026 Release Bot <m@rtinjuhl.dk> - 0.1.92-1
 - Release 0.1.92
 
-* Fri Mar 27 2026 Release Bot <noreply@example.com> - 0.1.91-1
+* Fri Mar 27 2026 Release Bot <m@rtinjuhl.dk> - 0.1.91-1
 - Release 0.1.91
 
-* Thu Mar 26 2026 Release Bot <noreply@example.com> - 0.1.90-1
+* Thu Mar 26 2026 Release Bot <m@rtinjuhl.dk> - 0.1.90-1
 - Release 0.1.90
 
-* Thu Mar 26 2026 Release Bot <noreply@example.com> - 0.1.89-1
+* Thu Mar 26 2026 Release Bot <m@rtinjuhl.dk> - 0.1.89-1
 - Release 0.1.89
 
-* Sat Mar 21 2026 Release Bot <noreply@example.com> - 0.1.88-1
+* Sat Mar 21 2026 Release Bot <m@rtinjuhl.dk> - 0.1.88-1
 - Release 0.1.88
 
-* Fri Mar 20 2026 Release Bot <noreply@example.com> - 0.1.87-1
+* Fri Mar 20 2026 Release Bot <m@rtinjuhl.dk> - 0.1.87-1
 - Release 0.1.87
 
-* Fri Mar 20 2026 Release Bot <noreply@example.com> - 0.1.86-1
+* Fri Mar 20 2026 Release Bot <m@rtinjuhl.dk> - 0.1.86-1
 - Release 0.1.86
 
-* Fri Mar 20 2026 Release Bot <noreply@example.com> - 0.1.85-1
+* Fri Mar 20 2026 Release Bot <m@rtinjuhl.dk> - 0.1.85-1
 - Release 0.1.85
 
-* Fri Mar 20 2026 Release Bot <noreply@example.com> - 0.1.84-1
+* Fri Mar 20 2026 Release Bot <m@rtinjuhl.dk> - 0.1.84-1
 - Release 0.1.84
 
-* Fri Mar 20 2026 Release Bot <noreply@example.com> - 0.1.83-1
+* Fri Mar 20 2026 Release Bot <m@rtinjuhl.dk> - 0.1.83-1
 - Release 0.1.83
 
-* Fri Mar 20 2026 Release Bot <noreply@example.com> - 0.1.82-1
+* Fri Mar 20 2026 Release Bot <m@rtinjuhl.dk> - 0.1.82-1
 - Release 0.1.82
 
-* Fri Mar 20 2026 Release Bot <noreply@example.com> - 0.1.81-1
+* Fri Mar 20 2026 Release Bot <m@rtinjuhl.dk> - 0.1.81-1
 - Release 0.1.81
 
-* Fri Mar 20 2026 Release Bot <noreply@example.com> - 0.1.80-1
+* Fri Mar 20 2026 Release Bot <m@rtinjuhl.dk> - 0.1.80-1
 - Release 0.1.80
 
-* Fri Mar 20 2026 Release Bot <noreply@example.com> - 0.1.79-1
+* Fri Mar 20 2026 Release Bot <m@rtinjuhl.dk> - 0.1.79-1
 - Release 0.1.79
 
-* Fri Mar 20 2026 Release Bot <noreply@example.com> - 0.1.78-1
+* Fri Mar 20 2026 Release Bot <m@rtinjuhl.dk> - 0.1.78-1
 - Release 0.1.78
 
-* Fri Mar 20 2026 Release Bot <noreply@example.com> - 0.1.77-1
+* Fri Mar 20 2026 Release Bot <m@rtinjuhl.dk> - 0.1.77-1
 - Release 0.1.77
 
-* Fri Mar 20 2026 Release Bot <noreply@example.com> - 0.1.76-1
+* Fri Mar 20 2026 Release Bot <m@rtinjuhl.dk> - 0.1.76-1
 - Release 0.1.76
 
-* Fri Mar 20 2026 Release Bot <noreply@example.com> - 0.1.75-1
+* Fri Mar 20 2026 Release Bot <m@rtinjuhl.dk> - 0.1.75-1
 - Release 0.1.75
 
-* Fri Mar 20 2026 Release Bot <noreply@example.com> - 0.1.74-1
+* Fri Mar 20 2026 Release Bot <m@rtinjuhl.dk> - 0.1.74-1
 - Release 0.1.74
 
-* Fri Mar 20 2026 Release Bot <noreply@example.com> - 0.1.73-1
+* Fri Mar 20 2026 Release Bot <m@rtinjuhl.dk> - 0.1.73-1
 - Release 0.1.73
 
-* Fri Mar 20 2026 Release Bot <noreply@example.com> - 0.1.72-1
+* Fri Mar 20 2026 Release Bot <m@rtinjuhl.dk> - 0.1.72-1
 - Release 0.1.72
 
-* Fri Mar 20 2026 Release Bot <noreply@example.com> - 0.1.71-1
+* Fri Mar 20 2026 Release Bot <m@rtinjuhl.dk> - 0.1.71-1
 - Release 0.1.71
 
-* Fri Mar 20 2026 Release Bot <noreply@example.com> - 0.1.70-1
+* Fri Mar 20 2026 Release Bot <m@rtinjuhl.dk> - 0.1.70-1
 - Release 0.1.70
 
-* Fri Mar 20 2026 Release Bot <noreply@example.com> - 0.1.69-1
+* Fri Mar 20 2026 Release Bot <m@rtinjuhl.dk> - 0.1.69-1
 - Release 0.1.69
 
-* Fri Mar 20 2026 Release Bot <noreply@example.com> - 0.1.68-1
+* Fri Mar 20 2026 Release Bot <m@rtinjuhl.dk> - 0.1.68-1
 - Release 0.1.68
 
-* Thu Mar 19 2026 Release Bot <noreply@example.com> - 0.1.67-1
+* Thu Mar 19 2026 Release Bot <m@rtinjuhl.dk> - 0.1.67-1
 - Release 0.1.67
 
-* Thu Mar 19 2026 Release Bot <noreply@example.com> - 0.1.66-1
+* Thu Mar 19 2026 Release Bot <m@rtinjuhl.dk> - 0.1.66-1
 - Release 0.1.66
 
-* Thu Mar 19 2026 Release Bot <noreply@example.com> - 0.1.65-1
+* Thu Mar 19 2026 Release Bot <m@rtinjuhl.dk> - 0.1.65-1
 - Release 0.1.65
 
-* Wed Mar 18 2026 Release Bot <noreply@example.com> - 0.1.64-1
+* Wed Mar 18 2026 Release Bot <m@rtinjuhl.dk> - 0.1.64-1
 - Release 0.1.64
 
-* Tue Mar 17 2026 Release Bot <noreply@example.com> - 0.1.63-1
+* Tue Mar 17 2026 Release Bot <m@rtinjuhl.dk> - 0.1.63-1
 - Release 0.1.63
 
-* Tue Mar 17 2026 Release Bot <noreply@example.com> - 0.1.62-1
+* Tue Mar 17 2026 Release Bot <m@rtinjuhl.dk> - 0.1.62-1
 - Release 0.1.62
 
-* Tue Mar 17 2026 Release Bot <noreply@example.com> - 0.1.61-1
+* Tue Mar 17 2026 Release Bot <m@rtinjuhl.dk> - 0.1.61-1
 - Release 0.1.61
 
-* Tue Mar 17 2026 Release Bot <noreply@example.com> - 0.1.60-1
+* Tue Mar 17 2026 Release Bot <m@rtinjuhl.dk> - 0.1.60-1
 - Release 0.1.60
 
-* Tue Mar 17 2026 Release Bot <noreply@example.com> - 0.1.59-1
+* Tue Mar 17 2026 Release Bot <m@rtinjuhl.dk> - 0.1.59-1
 - Release 0.1.59
 
-* Tue Mar 17 2026 Release Bot <noreply@example.com> - 0.1.58-1
+* Tue Mar 17 2026 Release Bot <m@rtinjuhl.dk> - 0.1.58-1
 - Release 0.1.58
 
-* Mon Mar 16 2026 Release Bot <noreply@example.com> - 0.1.57-1
+* Mon Mar 16 2026 Release Bot <m@rtinjuhl.dk> - 0.1.57-1
 - Release 0.1.57
 
-* Mon Mar 16 2026 Release Bot <noreply@example.com> - 0.1.56-1
+* Mon Mar 16 2026 Release Bot <m@rtinjuhl.dk> - 0.1.56-1
 - Release 0.1.56
 
-* Mon Mar 16 2026 Release Bot <noreply@example.com> - 0.1.55-1
+* Mon Mar 16 2026 Release Bot <m@rtinjuhl.dk> - 0.1.55-1
 - Release 0.1.55
 
-* Mon Mar 16 2026 Release Bot <noreply@example.com> - 0.1.54-1
+* Mon Mar 16 2026 Release Bot <m@rtinjuhl.dk> - 0.1.54-1
 - Release 0.1.54
 
-* Mon Mar 16 2026 Release Bot <noreply@example.com> - 0.1.53-1
+* Mon Mar 16 2026 Release Bot <m@rtinjuhl.dk> - 0.1.53-1
 - Release 0.1.53
 
-* Mon Mar 16 2026 Release Bot <noreply@example.com> - 0.1.52-1
+* Mon Mar 16 2026 Release Bot <m@rtinjuhl.dk> - 0.1.52-1
 - Release 0.1.52
 
-* Mon Mar 16 2026 Release Bot <noreply@example.com> - 0.1.51-1
+* Mon Mar 16 2026 Release Bot <m@rtinjuhl.dk> - 0.1.51-1
 - Release 0.1.51
 
-* Mon Mar 16 2026 Release Bot <noreply@example.com> - 0.1.50-1
+* Mon Mar 16 2026 Release Bot <m@rtinjuhl.dk> - 0.1.50-1
 - Release 0.1.50
 
-* Mon Mar 16 2026 Release Bot <noreply@example.com> - 0.1.49-1
+* Mon Mar 16 2026 Release Bot <m@rtinjuhl.dk> - 0.1.49-1
 - Release 0.1.49
 
-* Mon Mar 16 2026 Release Bot <noreply@example.com> - 0.1.48-1
+* Mon Mar 16 2026 Release Bot <m@rtinjuhl.dk> - 0.1.48-1
 - Release 0.1.48
 
-* Mon Mar 16 2026 Release Bot <noreply@example.com> - 0.1.47-1
+* Mon Mar 16 2026 Release Bot <m@rtinjuhl.dk> - 0.1.47-1
 - Release 0.1.47
 
-* Mon Mar 16 2026 Release Bot <noreply@example.com> - 0.1.46-1
+* Mon Mar 16 2026 Release Bot <m@rtinjuhl.dk> - 0.1.46-1
 - Release 0.1.46
 
-* Mon Mar 16 2026 Release Bot <noreply@example.com> - 0.1.45-1
+* Mon Mar 16 2026 Release Bot <m@rtinjuhl.dk> - 0.1.45-1
 - Release 0.1.45
 
-* Mon Mar 16 2026 Release Bot <noreply@example.com> - 0.1.44-1
+* Mon Mar 16 2026 Release Bot <m@rtinjuhl.dk> - 0.1.44-1
 - Release 0.1.44
 
-* Mon Mar 16 2026 Release Bot <noreply@example.com> - 0.1.43-1
+* Mon Mar 16 2026 Release Bot <m@rtinjuhl.dk> - 0.1.43-1
 - Release 0.1.43
 
-* Mon Mar 16 2026 Release Bot <noreply@example.com> - 0.1.42-1
+* Mon Mar 16 2026 Release Bot <m@rtinjuhl.dk> - 0.1.42-1
 - Release 0.1.42
 
-* Mon Mar 16 2026 Release Bot <noreply@example.com> - 0.1.41-1
+* Mon Mar 16 2026 Release Bot <m@rtinjuhl.dk> - 0.1.41-1
 - Release 0.1.41
 
-* Mon Mar 16 2026 Release Bot <noreply@example.com> - 0.1.40-1
+* Mon Mar 16 2026 Release Bot <m@rtinjuhl.dk> - 0.1.40-1
 - Release 0.1.40
 
-* Sun Mar 15 2026 Release Bot <noreply@example.com> - 0.1.39-1
+* Sun Mar 15 2026 Release Bot <m@rtinjuhl.dk> - 0.1.39-1
 - Release 0.1.39
 
-* Sun Mar 15 2026 Release Bot <noreply@example.com> - 0.1.38-1
+* Sun Mar 15 2026 Release Bot <m@rtinjuhl.dk> - 0.1.38-1
 - Release 0.1.38
 
-* Sun Mar 15 2026 Release Bot <noreply@example.com> - 0.1.37-1
+* Sun Mar 15 2026 Release Bot <m@rtinjuhl.dk> - 0.1.37-1
 - Release 0.1.37
 
-* Sun Mar 15 2026 Release Bot <noreply@example.com> - 0.1.36-1
+* Sun Mar 15 2026 Release Bot <m@rtinjuhl.dk> - 0.1.36-1
 - Release 0.1.36
 
-* Sun Mar 15 2026 Release Bot <noreply@example.com> - 0.1.35-1
+* Sun Mar 15 2026 Release Bot <m@rtinjuhl.dk> - 0.1.35-1
 - Release 0.1.35
 
-* Sun Mar 15 2026 Release Bot <noreply@example.com> - 0.1.34-1
+* Sun Mar 15 2026 Release Bot <m@rtinjuhl.dk> - 0.1.34-1
 - Release 0.1.34
 
-* Sun Mar 15 2026 Release Bot <noreply@example.com> - 0.1.33-1
+* Sun Mar 15 2026 Release Bot <m@rtinjuhl.dk> - 0.1.33-1
 - Release 0.1.33
 
-* Sun Mar 15 2026 Release Bot <noreply@example.com> - 0.1.32-1
+* Sun Mar 15 2026 Release Bot <m@rtinjuhl.dk> - 0.1.32-1
 - Release 0.1.32
 
-* Sat Mar 14 2026 Release Bot <noreply@example.com> - 0.1.31-1
+* Sat Mar 14 2026 Release Bot <m@rtinjuhl.dk> - 0.1.31-1
 - Release 0.1.31
 
-* Sat Mar 14 2026 Release Bot <noreply@example.com> - 0.1.30-1
+* Sat Mar 14 2026 Release Bot <m@rtinjuhl.dk> - 0.1.30-1
 - Release 0.1.30
 
-* Sat Mar 14 2026 Release Bot <noreply@example.com> - 0.1.29-1
+* Sat Mar 14 2026 Release Bot <m@rtinjuhl.dk> - 0.1.29-1
 - Release 0.1.29
 
-* Fri Mar 13 2026 Release Bot <noreply@example.com> - 0.1.28-1
+* Fri Mar 13 2026 Release Bot <m@rtinjuhl.dk> - 0.1.28-1
 - Release 0.1.28
 
-* Fri Mar 13 2026 Release Bot <noreply@example.com> - 0.1.27-1
+* Fri Mar 13 2026 Release Bot <m@rtinjuhl.dk> - 0.1.27-1
 - Release 0.1.27
 
-* Fri Mar 13 2026 Release Bot <noreply@example.com> - 0.1.26-1
+* Fri Mar 13 2026 Release Bot <m@rtinjuhl.dk> - 0.1.26-1
 - Release 0.1.26
 
-* Fri Mar 13 2026 Release Bot <noreply@example.com> - 0.1.25-1
+* Fri Mar 13 2026 Release Bot <m@rtinjuhl.dk> - 0.1.25-1
 - Release 0.1.25
 
-* Fri Mar 13 2026 Release Bot <noreply@example.com> - 0.1.24-1
+* Fri Mar 13 2026 Release Bot <m@rtinjuhl.dk> - 0.1.24-1
 - Release 0.1.24
 
-* Fri Mar 13 2026 Release Bot <noreply@example.com> - 0.1.23-1
+* Fri Mar 13 2026 Release Bot <m@rtinjuhl.dk> - 0.1.23-1
 - Release 0.1.23
 
-* Fri Mar 13 2026 Release Bot <noreply@example.com> - 0.1.22-1
+* Fri Mar 13 2026 Release Bot <m@rtinjuhl.dk> - 0.1.22-1
 - Release 0.1.22
 
-* Fri Mar 13 2026 Release Bot <noreply@example.com> - 0.1.21-1
+* Fri Mar 13 2026 Release Bot <m@rtinjuhl.dk> - 0.1.21-1
 - Release 0.1.21
 
-* Thu Mar 12 2026 Release Bot <noreply@example.com> - 0.1.20-1
+* Thu Mar 12 2026 Release Bot <m@rtinjuhl.dk> - 0.1.20-1
 - Release 0.1.20
 
-* Thu Mar 12 2026 Release Bot <noreply@example.com> - 0.1.19-1
+* Thu Mar 12 2026 Release Bot <m@rtinjuhl.dk> - 0.1.19-1
 - Release 0.1.19
 
-* Thu Mar 12 2026 Release Bot <noreply@example.com> - 0.1.18-1
+* Thu Mar 12 2026 Release Bot <m@rtinjuhl.dk> - 0.1.18-1
 - Release 0.1.18
 
-* Thu Mar 12 2026 Release Bot <noreply@example.com> - 0.1.17-1
+* Thu Mar 12 2026 Release Bot <m@rtinjuhl.dk> - 0.1.17-1
 - Release 0.1.17
 
-* Wed Mar 11 2026 Release Bot <noreply@example.com> - 0.1.16-1
+* Wed Mar 11 2026 Release Bot <m@rtinjuhl.dk> - 0.1.16-1
 - Release 0.1.16
 
-* Wed Mar 11 2026 Release Bot <noreply@example.com> - 0.1.15-1
+* Wed Mar 11 2026 Release Bot <m@rtinjuhl.dk> - 0.1.15-1
 - Release 0.1.15
 
-* Wed Mar 11 2026 Release Bot <noreply@example.com> - 0.1.14-1
+* Wed Mar 11 2026 Release Bot <m@rtinjuhl.dk> - 0.1.14-1
 - Release 0.1.14
 
-* Wed Mar 11 2026 Release Bot <noreply@example.com> - 0.1.13-1
+* Wed Mar 11 2026 Release Bot <m@rtinjuhl.dk> - 0.1.13-1
 - Release 0.1.13
 
-* Wed Mar 11 2026 Release Bot <noreply@example.com> - 0.1.12-1
+* Wed Mar 11 2026 Release Bot <m@rtinjuhl.dk> - 0.1.12-1
 - Release 0.1.12
 
-* Wed Mar 11 2026 Release Bot <noreply@example.com> - 0.1.11-1
+* Wed Mar 11 2026 Release Bot <m@rtinjuhl.dk> - 0.1.11-1
 - Release 0.1.11
 
-* Wed Mar 11 2026 Release Bot <noreply@example.com> - 0.1.10-1
+* Wed Mar 11 2026 Release Bot <m@rtinjuhl.dk> - 0.1.10-1
 - Release 0.1.10
 
-* Tue Mar 10 2026 Release Bot <noreply@example.com> - 0.1.9-1
+* Tue Mar 10 2026 Release Bot <m@rtinjuhl.dk> - 0.1.9-1
 - Release 0.1.9
 
-* Tue Mar 10 2026 Release Bot <noreply@example.com> - 0.1.8-1
+* Tue Mar 10 2026 Release Bot <m@rtinjuhl.dk> - 0.1.8-1
 - Release 0.1.8
 
-* Tue Mar 10 2026 Release Bot <noreply@example.com> - 0.1.7-1
+* Tue Mar 10 2026 Release Bot <m@rtinjuhl.dk> - 0.1.7-1
 - Release 0.1.7
 
-* Mon Mar 09 2026 Release Bot <noreply@example.com> - 0.1.6-1
+* Mon Mar 09 2026 Release Bot <m@rtinjuhl.dk> - 0.1.6-1
 - Release 0.1.6
 
-* Mon Mar 09 2026 Release Bot <noreply@example.com> - 0.1.5-1
+* Mon Mar 09 2026 Release Bot <m@rtinjuhl.dk> - 0.1.5-1
 - Release 0.1.5
 
-* Mon Mar 09 2026 Release Bot <noreply@example.com> - 0.1.4-1
+* Mon Mar 09 2026 Release Bot <m@rtinjuhl.dk> - 0.1.4-1
 - Release 0.1.4
 
-* Mon Mar 09 2026 Release Bot <noreply@example.com> - 0.1.3-1
+* Mon Mar 09 2026 Release Bot <m@rtinjuhl.dk> - 0.1.3-1
 - Release 0.1.3
 
-* Fri Mar 06 2026 Release Bot <noreply@example.com> - 0.1.2-1
+* Fri Mar 06 2026 Release Bot <m@rtinjuhl.dk> - 0.1.2-1
 - Release 0.1.2
 
-* Fri Mar 06 2026 Release Bot <noreply@example.com> - 0.1.1-1
+* Fri Mar 06 2026 Release Bot <m@rtinjuhl.dk> - 0.1.1-1
 - Release 0.1.1
 
-* Fri Mar 06 2026 RPM Bot <noreply@example.com> - 0.1.0-1
+* Fri Mar 06 2026 RPM Bot <m@rtinjuhl.dk> - 0.1.0-1
 - Initial release
 - Split virtualenv into flat-manager-django-python-libs subpackage
 - flat-manager-django is noarch; python-libs carries compiled extensions

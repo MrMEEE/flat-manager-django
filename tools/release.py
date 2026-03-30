@@ -178,7 +178,7 @@ class ReleaseManager:
         self.info(f"Prepending %changelog entry to {SPEC_FILE.relative_to(PROJECT_ROOT)}")
         today = datetime.now().strftime("%a %b %d %Y")
         entry = (
-            f"* {today} Release Bot <noreply@example.com> - {new_version}-1\n"
+            f"* {today} Release Bot <m@rtinjuhl.dk> - {new_version}-1\n"
             f"- Release {new_version}\n"
         )
         text = SPEC_FILE.read_text()
