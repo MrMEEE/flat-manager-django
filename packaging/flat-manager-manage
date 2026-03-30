@@ -70,6 +70,80 @@ case "${1:-}" in
         echo "Update to ${LATEST_VER} complete."
         exit 0
         ;;
+
+    diagnose)
+        # Quick health-check for stuck/pending builds.
+        VENV=/opt/flat-manager/venv
+        APP=/opt/flat-manager/app
+
+        echo "=== flat-manager-django installed version ==="
+        rpm -q flat-manager-django --queryformat '%{NAME}  %{VERSION}-%{RELEASE}  (%{ARCH})\n' 2>/dev/null \
+            || echo "  (not installed via RPM)"
+        echo ""
+
+        echo "=== Systemd service status ==="
+        for svc in flat-manager-web flat-manager-celery flat-manager-celery-beat flat-manager-celery-ops; do
+            printf "  %-35s " "${svc}:"
+            systemctl is-active "${svc}" 2>/dev/null || true
+        done
+        echo ""
+
+        echo "=== Celery worker ping ==="
+        "${VENV}/bin/celery" -A config --workdir="${APP}" inspect ping 2>&1 | head -20
+        echo ""
+
+        echo "=== Active tasks ==="
+        "${VENV}/bin/celery" -A config --workdir="${APP}" inspect active 2>&1 | head -30
+        echo ""
+
+        echo "=== Reserved (queued on worker) ==="
+        "${VENV}/bin/celery" -A config --workdir="${APP}" inspect reserved 2>&1 | head -20
+        echo ""
+
+        echo "=== Active queues per worker ==="
+        "${VENV}/bin/celery" -A config --workdir="${APP}" inspect active_queues 2>&1 | head -30
+        echo ""
+
+        echo "=== Pending packages in DB ==="
+        "${VENV}/bin/python" "${APP}/manage.py" shell -c "
+from apps.flatpak.models import Package, BuildStreamSource
+pkgs = Package.objects.filter(status='pending')
+bsts = BuildStreamSource.objects.filter(status='pending')
+if pkgs.exists():
+    print(f'  Packages ({pkgs.count()}):')
+    for p in pkgs:
+        git = (p.git_repo_url or '')[:60] or 'NO GIT URL'
+        print(f'    [{p.pk}] #{p.build_number}  {p.package_name}  git={git}')
+else:
+    print('  No pending packages.')
+if bsts.exists():
+    print(f'  BST sources ({bsts.count()}):')
+    for s in bsts:
+        print(f'    [{s.pk}] #{s.build_number}  {s.name}')
+else:
+    print('  No pending BST sources.')
+" 2>&1
+        echo ""
+
+        echo "=== check_pending_builds periodic task ==="
+        "${VENV}/bin/python" "${APP}/manage.py" shell -c "
+from django_celery_beat.models import PeriodicTask
+t = PeriodicTask.objects.filter(task__icontains='check_pending').first()
+if t:
+    print(f'  name    : {t.name}')
+    print(f'  enabled : {t.enabled}')
+    print(f'  last run: {t.last_run_at}')
+else:
+    print('  (task not found in django-celery-beat)')
+" 2>&1
+        echo ""
+
+        echo "=== Recent worker logs (last 30 lines) ==="
+        journalctl -u flat-manager-celery -n 30 --no-pager 2>/dev/null \
+            || tail -30 /var/log/flat-manager/celery.log 2>/dev/null \
+            || echo "  (no logs found)"
+        exit 0
+        ;;
 esac
 
 # ── Delegate everything else to Django manage.py ─────────────────────────────
