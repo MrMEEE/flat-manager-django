@@ -447,19 +447,15 @@ def package_from_git_task(self, package_id):
             },
         )
         if not created:
-            if build.status not in ('failed', 'cancelled'):
-                logger.warning(
-                    f"Duplicate task for package {package_id} build "
-                    f"#{package.build_number} (existing status: '{build.status}') — skipping"
-                )
-                return
-            # Retrying a previously-failed build: reset the record
-            build.status = 'building'
-            build.started_at = timezone.now()
-            build.celery_task_id = self.request.id or ''
-            build.error_message = ''
-            build.completed_at = None
-            build.save()
+            # A Build record already exists for this build_number — this task is
+            # a stale duplicate queued before the first task saved status='building'.
+            # Always skip: legitimate retries come via "Rebuild" which increments
+            # build_number so get_or_create would produce a fresh record.
+            logger.warning(
+                f"Duplicate task for package {package_id} build "
+                f"#{package.build_number} (existing status: '{build.status}') — skipping"
+            )
+            return
 
         # Update package status
         package.status = 'building'
@@ -889,19 +885,12 @@ def buildstream_build_task(self, bst_source_id, force_rebuild=False):
             },
         )
         if not created:
-            if build.status not in ('failed', 'cancelled'):
-                logger.warning(
-                    f"Duplicate task for BST source {bst_source_id} build "
-                    f"#{source.build_number} (existing status: '{build.status}') — skipping"
-                )
-                return
-            # Retrying a previously-failed build: reset the record
-            build.status = 'building'
-            build.started_at = timezone.now()
-            build.celery_task_id = self.request.id or ''
-            build.error_message = ''
-            build.completed_at = None
-            build.save()
+            # A Build record already exists for this build_number — stale duplicate.
+            logger.warning(
+                f"Duplicate task for BST source {bst_source_id} build "
+                f"#{source.build_number} (existing status: '{build.status}') — skipping"
+            )
+            return
 
         source.status = 'building'
         source.save()
