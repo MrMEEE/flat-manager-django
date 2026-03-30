@@ -1426,6 +1426,8 @@ class PackageCreateView(LoginRequiredMixin, CreateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['repositories'] = Repository.objects.filter(parent_repos__isnull=True)
+        context['all_organisations'] = Organisation.objects.all()
+        context['selected_org_pks'] = set(self.request.POST.getlist('organisations')) if self.request.method == 'POST' else set()
         return context
     
     def form_valid(self, form):
@@ -1467,6 +1469,11 @@ class PackageUpdateView(LoginRequiredMixin, UpdateView):
         context = super().get_context_data(**kwargs)
         context['edit_mode'] = True
         context['package'] = self.object
+        context['all_organisations'] = Organisation.objects.all()
+        if self.request.method == 'POST':
+            context['selected_org_pks'] = set(self.request.POST.getlist('organisations'))
+        else:
+            context['selected_org_pks'] = set(str(pk) for pk in self.object.organisations.values_list('pk', flat=True))
         return context
     
     def get_form(self, form_class=None):
@@ -2365,6 +2372,11 @@ class ExternalRefUpdateView(LoginRequiredMixin, UpdateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['edit_mode'] = True
+        context['all_organisations'] = Organisation.objects.all()
+        if self.request.method == 'POST':
+            context['selected_org_pks'] = set(self.request.POST.getlist('organisations'))
+        else:
+            context['selected_org_pks'] = set(str(pk) for pk in self.object.organisations.values_list('pk', flat=True))
         return context
 
     def form_valid(self, form):
@@ -2638,6 +2650,12 @@ class BuildStreamSourceCreateView(LoginRequiredMixin, CreateView):
         )
         return response
 
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['all_organisations'] = Organisation.objects.all()
+        context['selected_org_pks'] = set(self.request.POST.getlist('organisations')) if self.request.method == 'POST' else set()
+        return context
+
     def get_success_url(self):
         return reverse('flatpak:bst_source_detail', kwargs={'pk': self.object.pk})
 
@@ -2702,6 +2720,11 @@ class BuildStreamSourceUpdateView(LoginRequiredMixin, UpdateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['edit_mode'] = True
+        context['all_organisations'] = Organisation.objects.all()
+        if self.request.method == 'POST':
+            context['selected_org_pks'] = set(self.request.POST.getlist('organisations'))
+        else:
+            context['selected_org_pks'] = set(str(pk) for pk in self.object.organisations.values_list('pk', flat=True))
         return context
 
     def form_valid(self, form):

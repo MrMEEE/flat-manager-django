@@ -104,12 +104,25 @@
                     </div>
 
                     <div class="mb-3">
-                        <label for="id_organisations" class="form-label">Organisations</label>
-                        {{ form.organisations }}
-                        {% if form.organisations.errors %}
-                        <div class="text-danger">{{ form.organisations.errors }}</div>
+                        <label class="form-label">Organisations</label>
+                        {% if all_organisations %}
+                        <div class="d-flex flex-wrap gap-2">
+                            {% for org in all_organisations %}
+                            <input type="checkbox" class="btn-check" name="organisations"
+                                   id="org_{{ org.pk }}" value="{{ org.pk }}" autocomplete="off"
+                                   {% if org.pk|stringformat:"s" in selected_org_pks %}checked{% endif %}>
+                            <label class="btn btn-outline-secondary btn-sm" for="org_{{ org.pk }}">
+                                <i class="bi bi-building"></i> {{ org.name }}
+                            </label>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <p class="text-muted mb-0">No organisations yet. <a href="{% url 'flatpak:organisation_create' %}" target="_blank">Create one</a></p>
                         {% endif %}
-                        <div class="form-text">{{ form.organisations.help_text }}</div>
+                        {% if form.organisations.errors %}
+                        <div class="text-danger mt-1">{{ form.organisations.errors }}</div>
+                        {% endif %}
+                        <div class="form-text">Organisations responsible for this source</div>
                     </div>
 
                     <div class="d-flex gap-2 mt-4">

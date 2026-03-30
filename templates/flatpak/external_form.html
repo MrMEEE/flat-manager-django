@@ -16,6 +16,26 @@
             <div class="card-body">
                 <form method="post">
                     {% csrf_token %}
+                    {% if edit_mode %}
+                    <div class="mb-3">
+                        <label class="form-label">Organisations</label>
+                        {% if all_organisations %}
+                        <div class="d-flex flex-wrap gap-2">
+                            {% for org in all_organisations %}
+                            <input type="checkbox" class="btn-check" name="organisations"
+                                   id="org_{{ org.pk }}" value="{{ org.pk }}" autocomplete="off"
+                                   {% if org.pk|stringformat:"s" in selected_org_pks %}checked{% endif %}>
+                            <label class="btn btn-outline-secondary btn-sm" for="org_{{ org.pk }}">
+                                <i class="bi bi-building"></i> {{ org.name }}
+                            </label>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <p class="text-muted mb-0">No organisations yet. <a href="{% url 'flatpak:organisation_create' %}" target="_blank">Create one</a></p>
+                        {% endif %}
+                        <div class="form-text">Organisations responsible for this external ref</div>
+                    </div>
+                    {% else %}
                     {% for field in form %}
                     <div class="mb-3">
                         <label for="{{ field.id_for_label }}" class="form-label fw-semibold">
@@ -36,6 +56,7 @@
                         {% endfor %}
                     </div>
                     {% endfor %}
+                    {% endif %}
                     <div class="d-flex gap-2">
                         <button type="submit" class="btn btn-primary">
                             {% if edit_mode %}
