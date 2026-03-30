@@ -2467,11 +2467,27 @@ class ClientDetailView(LoginRequiredMixin, DetailView):
             client.status = 'yellow'
         else:
             client.status = 'green'
-        # Only pass users who have at least one installed or pending update
-        context['user_flatpaks'] = [
-            u for u in (client.user_flatpaks or [])
-            if u.get('installed') or u.get('updates_available')
-        ]
+
+        # Build a single annotated list: status = 'uptodate' | 'outdated' | 'foreign'
+        outdated_map = {pkg['app_id']: pkg for pkg in (client.outdated_flatpaks or [])}
+        managed = set(client.managed_remotes or [])
+        order = {'outdated': 0, 'foreign': 1, 'uptodate': 2}
+        annotated = []
+        for pkg in (client.installed_flatpaks or []):
+            entry = dict(pkg)
+            if pkg.get('origin') not in managed:
+                entry['pkg_status'] = 'foreign'
+            elif pkg['app_id'] in outdated_map:
+                entry['pkg_status'] = 'outdated'
+                entry['new_version'] = outdated_map[pkg['app_id']].get('new_version', '')
+            else:
+                entry['pkg_status'] = 'uptodate'
+            annotated.append(entry)
+        annotated.sort(key=lambda p: (
+            order[p['pkg_status']],
+            (p.get('name') or p['app_id']).lower(),
+        ))
+        context['installed_annotated'] = annotated
         return context
 
 
