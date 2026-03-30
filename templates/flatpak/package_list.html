@@ -337,10 +337,10 @@
     function updateToolbar() {
         var checked = getChecked();
         if (checked.length > 0) {
-            toolbar.style.display = '';
+            toolbar.style.removeProperty('display');
             countEl.textContent = checked.length + ' selected';
         } else {
-            toolbar.style.display = 'none';
+            toolbar.style.setProperty('display', 'none', 'important');
         }
     }
 
@@ -447,6 +447,51 @@
         };
         new bootstrap.Modal(document.getElementById('confirmModal')).show();
     });
+})();
+
+// ── WebSocket live status updates ────────────────────────────────────────
+(function () {
+    var statusMap = {
+        'pending':    '<span class="badge bg-secondary">Pending</span>',
+        'building':   '<span class="badge bg-primary">Building</span>',
+        'built':      '<span class="badge bg-info">Built</span>',
+        'committing': '<span class="badge bg-primary">Committing</span>',
+        'committed':  '<span class="badge bg-info">Committed</span>',
+        'publishing': '<span class="badge bg-primary">Publishing</span>',
+        'published':  '<span class="badge bg-success">Published</span>',
+        'failed':     '<span class="badge bg-danger">Failed</span>',
+        'cancelled':  '<span class="badge bg-warning">Cancelled</span>',
+    };
+
+    function connectWs() {
+        var wsScheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        var ws = new WebSocket(wsScheme + '://' + window.location.host + '/ws/notifications/');
+
+        ws.onmessage = function (e) {
+            try {
+                var data = JSON.parse(e.data);
+                if (data.type !== 'build_status_update') return;
+                var pkId = data.build_id;
+                var status = data.status;
+                if (!pkId || !status) return;
+                var row = document.querySelector('tr[data-pk="' + pkId + '"]');
+                if (!row) return;
+                var statusTd = row.querySelectorAll('td')[4];
+                if (!statusTd) return;
+                var badge = statusMap[status];
+                statusTd.innerHTML = badge
+                    ? badge
+                    : '<span class="badge bg-secondary">' + status + '</span>';
+            } catch (err) { /* ignore malformed messages */ }
+        };
+
+        ws.onclose = function () {
+            // Reconnect after 3 s
+            setTimeout(connectWs, 3000);
+        };
+    }
+
+    connectWs();
 })();
 
 function showConfirmModal(title, body, okLabel, onOk) {
