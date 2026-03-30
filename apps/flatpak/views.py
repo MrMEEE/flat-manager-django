@@ -1007,8 +1007,6 @@ class BstPromotionDeleteView(LoginRequiredMixin, View):
         from apps.flatpak.models import BstPromotion
         promo = get_object_or_404(BstPromotion, pk=pk)
         promo.delete()
-        from apps.flatpak.tasks import sync_repo_state
-        sync_repo_state.delay()
         return JsonResponse({'status': 'ok'})
 
 
@@ -1116,8 +1114,6 @@ class PromotionDeleteView(LoginRequiredMixin, View):
             _delete_promotion_from_repo(promotion)
         except Exception as e:
             return JsonResponse({'error': f'Failed to remove ref from repo: {e}'}, status=500)
-        from apps.flatpak.tasks import sync_repo_state
-        sync_repo_state.delay()
         return JsonResponse({
             'status': 'ok',
             'deleted_children': len(children),
@@ -1166,8 +1162,6 @@ class BuildUnpublishView(LoginRequiredMixin, View):
             package.status = 'committed'
             package.save(update_fields=['status'])
 
-        from apps.flatpak.tasks import sync_repo_state
-        sync_repo_state.delay()
         return JsonResponse({'status': 'ok', 'message': f'Build #{build.build_number} unpublished from build-repo'})
 
 
