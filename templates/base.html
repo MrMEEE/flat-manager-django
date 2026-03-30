@@ -89,30 +89,34 @@
             <a class="nav-link" href="{% url 'users:dashboard' %}">
                 <i class="bi bi-speedometer2"></i> Dashboard
             </a>
+            <hr class="my-2" style="border-color: rgba(255,255,255,0.15);">
             <a class="nav-link" href="{% url 'flatpak:repo_list' %}">
                 <i class="bi bi-archive"></i> Repositories
             </a>
+            <a class="nav-link" href="{% url 'flatpak:gpgkey_list' %}">
+                <i class="bi bi-key"></i> GPG Keys
+            </a>
+            <hr class="my-2" style="border-color: rgba(255,255,255,0.15);">
             <a class="nav-link" href="{% url 'flatpak:package_list' %}">
-                <i class="bi bi-box-seam"></i> Packages
+                <i class="bi bi-box-seam"></i> Flatpaks
             </a>
             <a class="nav-link" href="{% url 'flatpak:bst_source_list' %}">
                 <i class="bi bi-layers"></i> BuildStream
             </a>
+            <a class="nav-link" href="{% url 'flatpak:external_list' %}">
+                <i class="bi bi-cloud-download"></i> Externals
+            </a>
+            <hr class="my-2" style="border-color: rgba(255,255,255,0.15);">
             <a class="nav-link" href="{% url 'flatpak:build_list' %}">
                 <i class="bi bi-hammer"></i> Builds
             </a>
             <a class="nav-link" href="{% url 'flatpak:promotion_list' %}">
                 <i class="bi bi-arrow-up-right-circle"></i> Published Builds
             </a>
-            <a class="nav-link" href="{% url 'flatpak:gpgkey_list' %}">
-                <i class="bi bi-key"></i> GPG Keys
-            </a>
             <a class="nav-link" href="{% url 'flatpak:dependencies_list' %}">
                 <i class="bi bi-puzzle"></i> Dependencies
             </a>
-            <a class="nav-link" href="{% url 'flatpak:external_list' %}">
-                <i class="bi bi-cloud-download"></i> Externals
-            </a>
+            <hr class="my-2" style="border-color: rgba(255,255,255,0.15);">
             <a class="nav-link" href="{% url 'flatpak:client_list' %}">
                 <i class="bi bi-pc-display"></i> Clients
             </a>
