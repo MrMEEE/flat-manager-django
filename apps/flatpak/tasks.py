@@ -1746,7 +1746,14 @@ def pull_external_ref_task(external_ref_id):
 
         ext.status = 'pulled'
         from django.utils import timezone as tz
-        ext.last_pulled_at = tz.now()
+        _now = tz.now()
+        ext.last_pulled_at = _now
+        # Record the upstream commit we just fetched so the Update column shows
+        # "Up to date" immediately — without waiting for the periodic check task.
+        if upstream_commit:
+            ext.upstream_commit = upstream_commit
+            ext.upstream_checked_at = _now
+            ext.update_available = False
         ext.save()
 
         _log_external(ext, 'info', "Pull complete — publishing to repository")
