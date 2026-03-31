@@ -203,6 +203,38 @@
         </div>
     </div>
 
+    <!-- External Ref Update Checks -->
+    <div class="col-lg-6 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-arrow-repeat"></i> External Ref Update Checks</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-3">
+                    Controls how often the scheduler polls Flatpak remotes to detect
+                    new upstream commits for external refs.
+                </p>
+                <div class="mb-3">
+                    <label for="{{ form.external_ref_check_interval_hours.id_for_label }}" class="form-label fw-semibold">
+                        Check interval
+                    </label>
+                    <div class="d-flex align-items-center gap-2">
+                        {{ form.external_ref_check_interval_hours }}
+                        <span class="text-muted">hours between checks</span>
+                    </div>
+                    {% if form.external_ref_check_interval_hours.help_text %}
+                    <div class="form-text">{{ form.external_ref_check_interval_hours.help_text }}</div>
+                    {% endif %}
+                    {% if form.external_ref_check_interval_hours.errors %}
+                    <div class="invalid-feedback d-block">
+                        {% for error in form.external_ref_check_interval_hours.errors %}{{ error }}{% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- BuildStream 1 -->
     <div class="col-lg-6 mb-4">
         <div class="card">
