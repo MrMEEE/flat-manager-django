@@ -1458,6 +1458,9 @@ _ANSI_ESC_RE = re.compile(r'\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 def _log_external(ext_ref, level, message):
     """Append a timestamped line to ExternalRef.log and save."""
     from django.utils import timezone as tz
+    # Sanitize to ASCII: the log column may not be utf8mb4, and ostree / other
+    # tools can produce non-ASCII characters (progress arrows, em-dashes, etc.)
+    message = str(message).encode('ascii', errors='replace').decode('ascii')
     line = f"[{tz.now().strftime('%H:%M:%S')}] [{level.upper()}] {message}"
     ext_ref.log = (ext_ref.log + '\n' + line).lstrip('\n')
     ext_ref.save(update_fields=['log', 'updated_at'])
@@ -1682,7 +1685,7 @@ def pull_external_ref_task(external_ref_id):
             _log_external(ext, 'info', f"Upstream commit: {upstream_commit[:12]}")
             if resolved_ref != ref:
                 _log_external(ext, 'info',
-                              f"Ref corrected: {ref} → {resolved_ref} (remote uses different prefix)")
+                              f"Ref corrected: {ref} -> {resolved_ref} (remote uses different prefix)")
                 ref = resolved_ref
                 ext.ref = resolved_ref
         else:
@@ -1818,7 +1821,7 @@ def pull_external_ref_task(external_ref_id):
             ext.update_available = False
         ext.save()
 
-        _log_external(ext, 'info', "Pull complete — publishing to repository")
+        _log_external(ext, 'info', "Pull complete - publishing to repository")
 
         # Immediately publish to target repo
         publish_external_ref_task(external_ref_id)
