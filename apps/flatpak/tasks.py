@@ -1419,6 +1419,9 @@ def publish_package_task(package_id, generate_deltas=False):
                       f"{meta_result.get('detail', meta_result.get('error', ''))}")
             logger.warning("update_repo_metadata warning for %s: %s", target_repo_path, meta_result)
         
+        # Snapshot which ExternalRefs (and their upstream commits) this build depended on
+        _snapshot_build_external_refs(build, package)
+
         # Mark as published
         package.status = 'published'
         package.save()
@@ -1976,7 +1979,133 @@ def check_external_ref_updates():
     return f"Checked {checked} external refs; {updates_found} update(s) available"
 
 
-def log_build(build, level, message):
+@shared_task
+def evaluate_dependency_staleness():
+    """
+    Periodic task: for every published Package that has build dependency
+    snapshots (BuildExternalRef records), compare the upstream_commit currently
+    on each ExternalRef with the upstream_commit_at_build value recorded when
+    the package last built.  Sets/clears Package.deps_need_rebuild accordingly.
+    Interval is read from SiteConfig.dependency_ref_check_interval_hours.
+    """
+    from apps.flatpak.models import Package, BuildExternalRef, ExternalRef, SiteConfig
+
+    config = SiteConfig.get_solo()
+    interval_hours = config.dependency_ref_check_interval_hours
+
+    # Sync beat schedule
+    try:
+        from django_celery_beat.models import PeriodicTask, IntervalSchedule
+        if interval_hours > 0:
+            schedule, _ = IntervalSchedule.objects.get_or_create(
+                every=interval_hours,
+                period=IntervalSchedule.HOURS,
+            )
+            PeriodicTask.objects.filter(name='evaluate-dependency-staleness').update(
+                interval=schedule, enabled=True
+            )
+        else:
+            PeriodicTask.objects.filter(name='evaluate-dependency-staleness').update(enabled=False)
+            return 'Dependency staleness evaluation disabled (interval=0)'
+    except Exception as e:
+        logger.warning(f'Failed to sync dependency staleness schedule: {e}')
+
+    if interval_hours == 0:
+        return 'Disabled'
+
+    # Build a lookup: ref -> current upstream_commit for all known ExternalRefs
+    upstream_by_ref = {
+        ext.ref: ext.upstream_commit
+        for ext in ExternalRef.objects.exclude(upstream_commit='').only('ref', 'upstream_commit')
+    }
+
+    packages = Package.objects.filter(
+        status__in=['published', 'failed'],
+    ).prefetch_related('builds__external_ref_snapshots')
+
+    updated = stale = 0
+    for package in packages:
+        # Find the most recent build that has snapshot data
+        latest_build = None
+        for b in package.builds.all():  # already ordered -build_number
+            if b.external_ref_snapshots.exists():
+                latest_build = b
+                break
+
+        if not latest_build:
+            # No snapshot data yet — skip (will be populated on next build)
+            continue
+
+        snapshots = latest_build.external_ref_snapshots.all()
+        needs_rebuild = any(
+            upstream_by_ref.get(snap.ref, snap.upstream_commit_at_build)
+            != snap.upstream_commit_at_build
+            for snap in snapshots
+        )
+
+        if package.deps_need_rebuild != needs_rebuild:
+            package.deps_need_rebuild = needs_rebuild
+            package.save(update_fields=['deps_need_rebuild'])
+            updated += 1
+
+        if needs_rebuild:
+            stale += 1
+
+    return f"Evaluated {packages.count()} packages; {stale} need rebuild, {updated} status change(s)"
+
+
+def _snapshot_build_external_refs(build, package):
+    """
+    Called at build publish time.  Creates BuildExternalRef records linking
+    this build to every ExternalRef that matches a dependency in
+    package.dependencies, storing the current upstream_commit as the baseline.
+    """
+    from apps.flatpak.models import BuildExternalRef, ExternalRef
+
+    deps = package.dependencies
+    if not deps:
+        return
+
+    # Collect the full OSTree ref strings for all deps
+    dep_refs = []
+    for key in ('sdk_full', 'runtime_full', 'base_full'):
+        val = deps.get(key)
+        if val:
+            # stored as "org.kde.Sdk/x86_64/6.8" — normalise to "runtime/..." if needed
+            dep_refs.append(val)
+    for ext_entry in deps.get('sdk_extensions', []):
+        full = ext_entry.get('full')
+        if full:
+            dep_refs.append(full)
+
+    if not dep_refs:
+        return
+
+    # Match against ExternalRef objects (matching on the last 3 parts of the ref:
+    # name/arch/branch, regardless of the leading "runtime"/"app"/"sdk" segment)
+    def _ref_tail(ref_str):
+        parts = ref_str.split('/')
+        return '/'.join(parts[-3:]) if len(parts) >= 3 else ref_str
+
+    dep_tails = {_ref_tail(r): r for r in dep_refs}
+
+    all_ext = ExternalRef.objects.only('ref', 'upstream_commit')
+    for ext in all_ext:
+        tail = _ref_tail(ext.ref)
+        if tail not in dep_tails:
+            continue
+        BuildExternalRef.objects.update_or_create(
+            build=build,
+            ref=ext.ref,
+            defaults={
+                'external_ref': ext,
+                'upstream_commit_at_build': ext.upstream_commit,
+            }
+        )
+
+    logger.info(
+        f"Snapshotted external ref deps for {package.package_name} build #{build.build_number}"
+    )
     """Helper to create build log entries and broadcast via WebSocket."""
     from apps.flatpak.models import BuildLog
 

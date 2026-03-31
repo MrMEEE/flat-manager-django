@@ -87,6 +87,7 @@
                         <th>Upstream Version</th>
                         <th>Branch</th>
                         <th>Arch</th>
+                        <th>Dependencies</th>
                         <th>Organisations</th>
                         <th>Created</th>
                         <th>Actions</th>
@@ -157,6 +158,19 @@
                         </td>
                         <td><code>{{ package.branch }}</code></td>
                         <td>{{ package.arch }}</td>
+                        <td>
+                            {% if package.deps_need_rebuild %}
+                            <span class="badge bg-warning text-dark" title="One or more dependencies have a newer upstream commit than when this package was last built">
+                                <i class="bi bi-exclamation-triangle-fill"></i> Needs rebuild
+                            </span>
+                            {% elif package.status == 'published' or package.status == 'failed' %}
+                            <span class="badge bg-success">
+                                <i class="bi bi-check-circle-fill"></i> Up to date
+                            </span>
+                            {% else %}
+                            <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
                         <td>
                             {% for org in package.organisations.all %}
                             <span class="badge bg-secondary">{{ org.name }}</span>

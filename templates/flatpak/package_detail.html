@@ -172,6 +172,12 @@
                     {% if package.dependencies %}
                     <dt class="col-sm-3">Dependencies:</dt>
                     <dd class="col-sm-9">
+                        {% if package.deps_need_rebuild %}
+                        <div class="alert alert-warning py-1 px-2 mb-2 small d-inline-flex align-items-center gap-2">
+                            <i class="bi bi-exclamation-triangle-fill"></i>
+                            <strong>Needs rebuild</strong> — one or more dependencies have a newer upstream commit.
+                        </div>
+                        {% endif %}
                         <div class="small">
                             {% if package.dependencies.sdk %}
                             <div><strong>SDK:</strong> <code>{{ package.dependencies.sdk }}</code> 
@@ -189,6 +195,46 @@
                             </div>
                             {% endif %}
                         </div>
+                        {% if latest_dep_snapshots %}
+                        <table class="table table-sm table-bordered mt-2 mb-0 small">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Ref</th>
+                                    <th>Built with</th>
+                                    <th>Current upstream</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            {% for snap in latest_dep_snapshots %}
+                                <tr>
+                                    <td class="font-monospace">{{ snap.ref }}</td>
+                                    <td class="font-monospace">
+                                        {% if snap.upstream_commit_at_build %}
+                                            <span title="{{ snap.upstream_commit_at_build }}">{{ snap.upstream_commit_at_build|slice:":12" }}</span>
+                                        {% else %}
+                                            <span class="text-muted">—</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="font-monospace">
+                                        {% if snap.external_ref and snap.external_ref.upstream_commit %}
+                                            <span title="{{ snap.external_ref.upstream_commit }}">{{ snap.external_ref.upstream_commit|slice:":12" }}</span>
+                                        {% else %}
+                                            <span class="text-muted">—</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-center">
+                                        {% if snap.external_ref and snap.external_ref.upstream_commit and snap.upstream_commit_at_build and snap.external_ref.upstream_commit != snap.upstream_commit_at_build %}
+                                            <span class="badge bg-warning text-dark" title="Newer upstream commit available"><i class="bi bi-arrow-up-circle-fill"></i> New</span>
+                                        {% elif snap.upstream_commit_at_build %}
+                                            <span class="badge bg-success"><i class="bi bi-check-circle-fill"></i></span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                            </tbody>
+                        </table>
+                        {% endif %}
                     </dd>
                     {% endif %}
                     

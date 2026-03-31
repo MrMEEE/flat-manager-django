@@ -119,6 +119,7 @@ class SiteConfigForm(forms.ModelForm):
             'stale_build_timeout_minutes',
             'client_stale_hours',
             'external_ref_check_interval_hours',
+            'dependency_ref_check_interval_hours',
             'bst1_venv_path',
             'timezone',
         ]
@@ -147,6 +148,9 @@ class SiteConfigForm(forms.ModelForm):
             'external_ref_check_interval_hours': forms.NumberInput(
                 attrs={'class': 'form-control', 'min': '1', 'style': 'width: 130px;'}
             ),
+            'dependency_ref_check_interval_hours': forms.NumberInput(
+                attrs={'class': 'form-control', 'min': '1', 'style': 'width: 130px;'}
+            ),
             'bst1_venv_path': forms.TextInput(
                 attrs={'class': 'form-control', 'placeholder': '/opt/flat-manager/bst1-venv'}
             ),
@@ -160,6 +164,7 @@ class SiteConfigForm(forms.ModelForm):
             'stale_build_timeout_minutes': 'Minutes without log activity before an in-progress build is marked as failed.',
             'client_stale_hours': 'Hours without a check-in before a client is considered stale (shown in red).',
             'external_ref_check_interval_hours': 'How often to check external ref remotes for new upstream commits. Set to 1 or higher.',
+            'dependency_ref_check_interval_hours': 'How often to re-evaluate which packages need a rebuild because a dependency ref has a newer upstream commit. Set to 1 or higher.',
         }
 
 

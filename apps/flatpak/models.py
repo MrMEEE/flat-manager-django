@@ -182,6 +182,10 @@ class Package(models.Model):
     commit_hash = models.CharField(max_length=255, blank=True, help_text="OSTree commit hash")
     produced_refs = models.TextField(blank=True, default='', help_text="Newline-separated OSTree refs produced by the last successful build.")
     dependencies = models.JSONField(null=True, blank=True, help_text="Detected Flatpak dependencies")
+    deps_need_rebuild = models.BooleanField(
+        default=False,
+        help_text="True when one or more dependency ExternalRefs have a newer upstream commit than what this package was last built against"
+    )
     error_message = models.TextField(blank=True, help_text="Error message if build failed")
     
     # Current build state
@@ -362,6 +366,42 @@ class Build(models.Model):
         return f"Build #{self.build_number}"
 
 
+class BuildExternalRef(models.Model):
+    """
+    Records which ExternalRef (and which upstream commit of it) a Build was
+    compiled against.  Created when a build completes successfully and the
+    package.dependencies field is populated.
+
+    The upstream_commit_at_build field stores the value of
+    ExternalRef.upstream_commit at the moment the build finished — this is
+    the baseline used later to decide whether a rebuild is needed.
+    """
+    build = models.ForeignKey(
+        Build, on_delete=models.CASCADE, related_name='external_ref_snapshots',
+    )
+    external_ref = models.ForeignKey(
+        'ExternalRef', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='build_snapshots',
+        help_text="The ExternalRef used as a dependency in this build"
+    )
+    # Denormalised copy so we retain the info even if the ExternalRef is deleted
+    ref = models.CharField(
+        max_length=500,
+        help_text="Full OSTree ref string (e.g. runtime/org.kde.Platform/x86_64/6.8)"
+    )
+    upstream_commit_at_build = models.CharField(
+        max_length=64, blank=True,
+        help_text="upstream_commit value at the time this build completed"
+    )
+
+    class Meta:
+        ordering = ['ref']
+        unique_together = [['build', 'ref']]
+
+    def __str__(self):
+        return f"{self.ref} @ {self.upstream_commit_at_build[:12] or '?'} (Build #{self.build.build_number})"
+
+
 class BuildArtifact(models.Model):
     """
     Build artifacts (uploaded files).
@@ -473,6 +513,10 @@ class SiteConfig(models.Model):
     external_ref_check_interval_hours = models.PositiveIntegerField(
         default=6,
         help_text="How often (in hours) to check external refs for upstream commit changes. Set to 0 to disable."
+    )
+    dependency_ref_check_interval_hours = models.PositiveIntegerField(
+        default=6,
+        help_text="How often (in hours) to re-evaluate which packages need a rebuild due to updated dependency refs. Set to 0 to disable."
     )
     bst1_venv_path = models.CharField(
         max_length=500,

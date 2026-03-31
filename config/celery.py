@@ -70,6 +70,14 @@ app.conf.beat_schedule = {
             'queue': 'ops',
         }
     },
+    'evaluate-dependency-staleness': {
+        'task': 'apps.flatpak.tasks.evaluate_dependency_staleness',
+        'schedule': 21600.0,  # Default 6 hours; overridden at runtime by SiteConfig
+        'options': {
+            'expires': 3600.0,
+            'queue': 'ops',
+        }
+    },
 }
 
 

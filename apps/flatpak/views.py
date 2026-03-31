@@ -511,6 +511,16 @@ class PackageDetailView(LoginRequiredMixin, DetailView):
         # Get all builds (history) for this package
         context['builds'] = self.object.builds.all().order_by('-build_number')
 
+        # Find the most recent build that has dependency snapshots and expose them
+        from apps.flatpak.models import BuildExternalRef
+        latest_snapshots = []
+        for b in context['builds']:
+            snaps = list(b.external_ref_snapshots.select_related('external_ref').all())
+            if snaps:
+                latest_snapshots = snaps
+                break
+        context['latest_dep_snapshots'] = latest_snapshots
+
         # Build a coverage map for produced refs
         ref_coverage = {}
         for bst in BuildStreamSource.objects.all().only('pk', 'name', 'produced_refs'):
