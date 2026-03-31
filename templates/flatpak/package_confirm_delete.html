@@ -1,12 +1,12 @@
 {% extends 'base.html' %}
 
-{% block title %}{% if can_cancel %}Cancel{% else %}Delete{% endif %} Build - Flat Manager{% endblock %}
+{% block title %}{% if can_cancel %}Cancel{% else %}Delete{% endif %} Package - Flat Manager{% endblock %}
 
 {% block content %}
 <nav aria-label="breadcrumb">
     <ol class="breadcrumb">
         <li class="breadcrumb-item"><a href="{% url 'flatpak:package_list' %}">Packages</a></li>
-        <li class="breadcrumb-item"><a href="{% url 'flatpak:package_detail' package.pk %}">{{ package.build_id }}</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'flatpak:package_detail' package.pk %}">{{ package.package_name|default:package.package_id }}</a></li>
         <li class="breadcrumb-item active">{% if can_cancel %}Cancel{% else %}Delete{% endif %}</li>
     </ol>
 </nav>
@@ -15,55 +15,60 @@
     <div class="col-md-8 offset-md-2">
         <div class="card border-danger">
             <div class="card-header bg-danger text-white">
-                <h5 class="mb-0"><i class="bi bi-exclamation-triangle"></i> {% if can_cancel %}Cancel{% else %}Delete{% endif %} Build</h5>
+                <h5 class="mb-0"><i class="bi bi-exclamation-triangle"></i> {% if can_cancel %}Cancel{% else %}Delete{% endif %} Package</h5>
             </div>
             <div class="card-body">
-                <p class="mb-4">Are you sure you want to {% if can_cancel %}cancel{% else %}delete{% endif %} this build?</p>
-                
+                <p class="mb-4">Are you sure you want to {% if can_cancel %}cancel{% else %}permanently delete{% endif %} this package?</p>
+
                 <dl class="row">
+                    <dt class="col-sm-4">Package:</dt>
+                    <dd class="col-sm-8">{{ package.package_name|default:"—" }}</dd>
+
                     <dt class="col-sm-4">Package ID:</dt>
-                    <dd class="col-sm-8"><code>{{ package.build_id }}</code></dd>
-                    
-                    <dt class="col-sm-4">Application:</dt>
-                    <dd class="col-sm-8">{{ package.app_id }}</dd>
-                    
+                    <dd class="col-sm-8"><code>{{ package.package_id }}</code></dd>
+
                     <dt class="col-sm-4">Repository:</dt>
                     <dd class="col-sm-8">{{ package.repository.name }}</dd>
-                    
+
                     <dt class="col-sm-4">Status:</dt>
                     <dd class="col-sm-8">
-                        {% if build.status == 'pending' %}
+                        {% if package.status == 'pending' %}
                         <span class="badge bg-secondary">Pending</span>
-                        {% elif build.status == 'building' %}
+                        {% elif package.status == 'building' %}
                         <span class="badge bg-primary">Building</span>
-                        {% elif build.status == 'completed' %}
-                        <span class="badge bg-success">Completed</span>
-                        {% elif build.status == 'failed' %}
+                        {% elif package.status == 'built' %}
+                        <span class="badge bg-info text-dark">Built</span>
+                        {% elif package.status == 'published' %}
+                        <span class="badge bg-success">Published</span>
+                        {% elif package.status == 'failed' %}
                         <span class="badge bg-danger">Failed</span>
+                        {% elif package.status == 'cancelled' %}
+                        <span class="badge bg-secondary">Cancelled</span>
                         {% else %}
-                        <span class="badge bg-warning">{{ package.status }}</span>
+                        <span class="badge bg-warning text-dark">{{ package.status|capfirst }}</span>
                         {% endif %}
                     </dd>
-                    
+
                     <dt class="col-sm-4">Created:</dt>
                     <dd class="col-sm-8">{{ package.created_at|date:"M d, Y H:i" }}</dd>
                 </dl>
-                
+
                 <div class="alert alert-warning">
                     <strong>Warning:</strong> This action will:
                     <ul class="mb-0">
                         {% if can_cancel %}
-                        <li>Cancel the running build process</li>
+                        <li>Stop the running build process</li>
                         <li>Set the package status to 'cancelled'</li>
-                        <li>Keep the build record in the database</li>
+                        <li>Keep the package record in the database</li>
                         {% else %}
-                        <li>Remove build artifacts and logs</li>
-                        <li>Permanently delete the build from the database</li>
+                        <li>Permanently delete the package from the database</li>
+                        <li>Delete all build history, logs and artifacts</li>
+                        <li>Delete all promotions associated with this package</li>
                         <li>This action cannot be undone</li>
                         {% endif %}
                     </ul>
                 </div>
-                
+
                 <form method="post">
                     {% csrf_token %}
                     <div class="d-flex justify-content-between">
@@ -71,7 +76,7 @@
                             <i class="bi bi-arrow-left"></i> No, Go Back
                         </a>
                         <button type="submit" class="btn btn-danger">
-                            <i class="bi bi-x-circle"></i> Yes, {% if can_cancel %}Cancel{% else %}Delete{% endif %} Build
+                            <i class="bi bi-x-circle"></i> Yes, {% if can_cancel %}Cancel{% else %}Delete{% endif %} Package
                         </button>
                     </div>
                 </form>

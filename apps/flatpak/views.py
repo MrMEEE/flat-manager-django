@@ -1515,65 +1515,59 @@ class PackageDeleteView(LoginRequiredMixin, DeleteView):
     template_name = 'flatpak/package_confirm_delete.html'
     success_url = reverse_lazy('flatpak:package_list')
     
+    # Statuses where the package can be fully deleted
+    _DELETABLE_STATUSES = ['built', 'committed', 'published', 'failed', 'cancelled']
+    # Statuses where the package is actively running and should only be cancelled
+    _CANCELLABLE_STATUSES = ['pending', 'building', 'committing', 'publishing']
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         package = self.get_object()
-        context['can_cancel'] = package.status in ['pending', 'building']
-        context['can_delete'] = package.status in ['failed', 'cancelled', 'published']
+        context['can_cancel'] = package.status in self._CANCELLABLE_STATUSES
+        context['can_delete'] = package.status in self._DELETABLE_STATUSES
         return context
-    
+
     def post(self, request, *args, **kwargs):
         """Override post to handle cancellation vs deletion."""
-        import sys
-        print(f"!!!!! POST METHOD CALLED !!!!!", file=sys.stderr, flush=True)
-        
-        # Call delete which has our custom logic
         return self.delete(request, *args, **kwargs)
-    
+
     def delete(self, request, *args, **kwargs):
-        import logging
-        import json
-        import sys
         logger = logging.getLogger(__name__)
-        
+
         package = self.get_object()
         package_id = package.package_id
         current_status = package.status
-        
-        # Force output to console
-        print(f"!!!!! DELETE METHOD CALLED: package {package_id} (pk={package.pk}) status={current_status} !!!!!", file=sys.stderr, flush=True)
-        logger.info(f"Delete method called for package {package_id} (pk={package.pk}) with status {current_status} by user {request.user.username}")
-        
-        # If package is in progress, just cancel it (don't delete)
-        if current_status in ['pending', 'building', 'committing', 'publishing']:
-            print(f"!!!!! CANCELLING (NOT DELETING) package {package_id} !!!!!", file=sys.stderr, flush=True)
+
+        logger.info(f"Delete/cancel called for package {package_id} (pk={package.pk}) status={current_status} by {request.user.username}")
+
+        # If package is actively running, cancel rather than delete
+        if current_status in self._CANCELLABLE_STATUSES:
             package.status = 'cancelled'
             package.save()
-            print(f"!!!!! Status saved as cancelled for package {package_id} !!!!!", file=sys.stderr, flush=True)
-            
-            # Note: BuildLog will be created when we start tracking Build history
-            
-            logger.info(f"Package {package_id} (pk={package.pk}) cancelled successfully (status changed from {current_status} to cancelled, NOT DELETED)")
-            messages.success(request, f'Package {package_id} has been cancelled (status changed from {current_status} to cancelled).')
-            
-            # Handle AJAX requests
+            logger.info(f"Package {package_id} (pk={package.pk}) cancelled (was {current_status})")
+            messages.success(request, f'Package {package_id} has been cancelled.')
             if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.content_type == 'application/json':
                 from django.http import JsonResponse
                 return JsonResponse({'status': 'cancelled', 'message': f'Package {package_id} cancelled'})
-            
-            print(f"!!!!! Returning redirect, package {package_id} should NOT be deleted !!!!!", file=sys.stderr, flush=True)
             return HttpResponseRedirect(self.success_url)
-        
-        # Only delete if package is in a terminal state
-        if current_status not in ['failed', 'cancelled', 'published']:
-            logger.warning(f"Attempted to delete package {package_id} (pk={package.pk}) with invalid status {current_status}")
-            messages.error(request, f'Cannot delete package with status: {package.status}')
+
+        # Reject anything that isn't in a deletable terminal state
+        if current_status not in self._DELETABLE_STATUSES:
+            logger.warning(f"Attempted to delete package {package_id} (pk={package.pk}) with non-deletable status {current_status}")
+            messages.error(request, f'Cannot delete package with status: {current_status}')
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.content_type == 'application/json':
+                from django.http import JsonResponse
+                return JsonResponse({'error': f'Cannot delete package with status: {current_status}'}, status=400)
             return HttpResponseRedirect(reverse('flatpak:package_detail', kwargs={'pk': package.pk}))
-        
-        # Actually delete the package
-        logger.info(f"Deleting package {package_id} (pk={package.pk}) from database (status was {current_status})")
+
+        # Delete the package — all related Builds, BuildLogs, BuildArtifacts,
+        # BuildExternalRefs and Promotions cascade automatically via FK CASCADE.
+        logger.info(f"Deleting package {package_id} (pk={package.pk}) and all related records (status was {current_status})")
         messages.success(request, f'Package {package_id} deleted successfully.')
-        # TODO: Clean up build artifacts from build-repo
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.content_type == 'application/json':
+            from django.http import JsonResponse
+            package.delete()
+            return JsonResponse({'status': 'deleted', 'redirect': str(self.success_url)})
         return super().delete(request, *args, **kwargs)
 
 

@@ -53,9 +53,9 @@
             <i class="bi bi-x-circle"></i> Cancel
         </button>
         {% else %}
-        <a href="{% url 'flatpak:package_delete' package.pk %}" class="btn btn-outline-danger">
+        <button type="button" class="btn btn-outline-danger" onclick="deletePackage({{ package.pk }})">
             <i class="bi bi-trash"></i> Delete
-        </a>
+        </button>
         {% endif %}
     </div>
 </div>
@@ -708,16 +708,45 @@
             }
         });
     };
-    
+
+    // Delete package permanently via modal confirmation
+    window.deletePackage = function(id) {
+        showConfirm(
+            'Delete Package',
+            'Permanently delete this package? All build history, logs, artifacts and promotions will be removed. This cannot be undone.',
+            'Delete', 'btn-danger',
+            async function() {
+                try {
+                    const response = await fetch(`/packages/${id}/delete/`, {
+                        method: 'POST',
+                        headers: {
+                            'X-CSRFToken': '{{ csrf_token }}',
+                            'Content-Type': 'application/json',
+                        },
+                        credentials: 'same-origin',
+                    });
+                    const data = await response.json();
+                    if (response.ok && data.redirect) {
+                        window.location.href = data.redirect;
+                    } else {
+                        showAlert('Error', data.error || 'Failed to delete package.');
+                    }
+                } catch (error) {
+                    showAlert('Error', 'Error deleting package: ' + error.message);
+                }
+            }
+        );
+    };
+
     // Update action buttons based on status
     function updateActionButtons(status) {
         const actionContainer = document.getElementById('action-buttons');
         if (!actionContainer) return;
-        
+
         // Clear existing buttons (keep only badge)
         const existingButtons = actionContainer.querySelectorAll('button, a[href*=\"delete\"], a[href*=\"retry\"], a[href*=\"edit\"]');
         existingButtons.forEach(btn => btn.remove());
-        
+
         // Determine if build is active
         const isActive = ['pending', 'building', 'committing', 'publishing'].includes(status);
         
@@ -759,10 +788,11 @@
             cancelBtn.onclick = () => cancelBuild(buildId);
             actionContainer.appendChild(cancelBtn);
         } else {
-            const deleteBtn = document.createElement('a');
-            deleteBtn.href = `/packages/${buildId}/delete/`;
+            const deleteBtn = document.createElement('button');
+            deleteBtn.type = 'button';
             deleteBtn.className = 'btn btn-outline-danger';
             deleteBtn.innerHTML = '<i class=\"bi bi-trash\"></i> Delete';
+            deleteBtn.onclick = () => deletePackage(buildId);
             actionContainer.appendChild(deleteBtn);
         }
     }
