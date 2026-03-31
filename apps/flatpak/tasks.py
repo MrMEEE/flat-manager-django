@@ -1692,14 +1692,32 @@ def pull_external_ref_task(external_ref_id):
         # Pull the exact commit from the remote. We create/update the plain ref
         # explicitly afterwards instead of relying on --mirror ref semantics.
         pull_target = f'{ref}@{upstream_commit}' if upstream_commit else ref
-        pull_result = subprocess.run(
+        _log_external(ext, 'info',
+                      f"Starting ostree pull of {pull_target} (may take several minutes for large refs)")
+        pull_start = time.monotonic()
+        pull_proc = subprocess.Popen(
             ['ostree', 'pull', f'--repo={build_repo_path}', remote_name, pull_target],
-            capture_output=True, text=True, timeout=1800
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
         )
+        try:
+            last_heartbeat = time.monotonic()
+            for line in pull_proc.stdout:
+                line = line.rstrip('\r\n')
+                if not line or line.startswith('\r') or '\r' in line:
+                    # Skip carriage-return progress bars
+                    continue
+                _log_external(ext, 'info', line)
+                last_heartbeat = time.monotonic()
+            pull_proc.wait(timeout=1800)
+        except subprocess.TimeoutExpired:
+            pull_proc.kill()
+            pull_proc.wait()
+            raise RuntimeError("ostree pull timed out after 30 minutes")
+        elapsed = time.monotonic() - pull_start
 
-        if pull_result.returncode != 0:
-            pull_err = pull_result.stderr.strip() or pull_result.stdout.strip()
-            raise RuntimeError(f"ostree pull failed: {pull_err}")
+        if pull_proc.returncode != 0:
+            raise RuntimeError(f"ostree pull failed (exit {pull_proc.returncode})")
+        _log_external(ext, 'info', f"ostree pull completed in {elapsed:.0f}s")
 
         _log_external(ext, 'info', f"ostree pull succeeded")
 
@@ -1760,16 +1778,27 @@ def pull_external_ref_task(external_ref_id):
         # refs. We pull them now into build-repo so publish/promote can copy
         # them to the target after flatpak build-update-repo runs.
         for appstream_ref in ('appstream/x86_64', 'appstream2/x86_64'):
-            as_pull = subprocess.run(
+            _log_external(ext, 'info', f"Pulling {appstream_ref} from remote")
+            as_proc = subprocess.Popen(
                 ['ostree', 'pull', f'--repo={build_repo_path}', remote_name, appstream_ref],
-                capture_output=True, text=True, timeout=300,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
             )
-            if as_pull.returncode == 0:
-                _log_external(ext, 'info', f"Pulled {appstream_ref} from remote")
+            try:
+                for line in as_proc.stdout:
+                    line = line.rstrip('\r\n')
+                    if line and '\r' not in line:
+                        _log_external(ext, 'info', line)
+                as_proc.wait(timeout=300)
+            except subprocess.TimeoutExpired:
+                as_proc.kill()
+                as_proc.wait()
+                _log_external(ext, 'warning', f"Timed out pulling {appstream_ref} (non-fatal)")
+                continue
+            if as_proc.returncode == 0:
+                _log_external(ext, 'info', f"Pulled {appstream_ref} successfully")
             else:
                 _log_external(ext, 'warning',
-                              f"Could not pull {appstream_ref} (non-fatal): "
-                              f"{as_pull.stderr.strip() or as_pull.stdout.strip()}")
+                              f"Could not pull {appstream_ref} (non-fatal, exit {as_proc.returncode})")
 
         # Regenerate the summary so pull-local can find the ref by name.
         subprocess.run(

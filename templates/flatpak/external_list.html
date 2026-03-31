@@ -82,18 +82,25 @@
                     <td>{{ ext.repository.name }}</td>
                     <td>
                         {% if ext.status == 'pulling' or ext.status == 'publishing' %}
-                            <span class="badge bg-warning text-dark">
-                                <span class="spinner-border spinner-border-sm me-1"></span>
-                                {{ ext.status|capfirst }}
-                            </span>
+                            <div data-ext-pk="{{ ext.pk }}" data-ext-status="{{ ext.status }}">
+                                <span class="badge bg-warning text-dark ext-status-badge">
+                                    <span class="spinner-border spinner-border-sm me-1"></span>
+                                    {{ ext.status|capfirst }}
+                                </span>
+                                <div class="progress mt-1" style="height:4px;min-width:80px;">
+                                    <div class="progress-bar progress-bar-striped progress-bar-animated bg-warning ext-progress-bar"
+                                         style="width:100%"></div>
+                                </div>
+                                <div class="ext-log-line text-muted small mt-1" style="font-size:0.7rem;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
+                            </div>
                         {% elif ext.status == 'published' %}
-                            <span class="badge bg-primary">Published</span>
+                            <span class="badge bg-primary" data-ext-pk="{{ ext.pk }}" data-ext-status="{{ ext.status }}">Published</span>
                         {% elif ext.status == 'pulled' %}
-                            <span class="badge bg-success">Pulled</span>
+                            <span class="badge bg-success" data-ext-pk="{{ ext.pk }}" data-ext-status="{{ ext.status }}">Pulled</span>
                         {% elif ext.status == 'failed' %}
-                            <span class="badge bg-danger">Failed</span>
+                            <span class="badge bg-danger" data-ext-pk="{{ ext.pk }}" data-ext-status="{{ ext.status }}" title="{{ ext.error_message|default:'' }}">Failed</span>
                         {% else %}
-                            <span class="badge bg-secondary">{{ ext.status|capfirst }}</span>
+                            <span class="badge bg-secondary" data-ext-pk="{{ ext.pk }}" data-ext-status="{{ ext.status }}">{{ ext.status|capfirst }}</span>
                         {% endif %}
                     </td>
                     <td>
@@ -325,6 +332,73 @@
                     .catch(e => showError(e.message));
             }
         );
+    });
+})();
+
+// ── Per-row live status polling ───────────────────────────────────────────────
+(function () {
+    var BASE_STATUS = '{% url "flatpak:external_status" 0 %}'.replace('/0/', '/');
+
+    function statusBadgeHTML(status, errorMessage) {
+        if (status === 'pulling' || status === 'publishing') {
+            return '<span class="badge bg-warning text-dark"><span class="spinner-border spinner-border-sm me-1"></span>' + status.charAt(0).toUpperCase() + status.slice(1) + '</span>';
+        }
+        var map = {
+            'pulled':    '<span class="badge bg-success">Pulled</span>',
+            'published': '<span class="badge bg-primary">Published</span>',
+            'failed':    '<span class="badge bg-danger" title="' + (errorMessage || '').replace(/"/g, '&quot;') + '">Failed</span>',
+            'pending':   '<span class="badge bg-secondary">Pending</span>',
+        };
+        return map[status] || '<span class="badge bg-secondary">' + status + '</span>';
+    }
+
+    function lastLogLine(log) {
+        if (!log) return '';
+        var lines = log.trimEnd().split('\n');
+        // Find the last non-empty line and strip leading timestamp/level prefix
+        for (var i = lines.length - 1; i >= 0; i--) {
+            var l = lines[i].trim();
+            if (l) {
+                // Strip "[HH:MM:SS] [INFO] " style prefixes
+                return l.replace(/^\[\d{2}:\d{2}:\d{2}\]\s*\[[A-Z]+\]\s*/, '');
+            }
+        }
+        return '';
+    }
+
+    function watchRow(pk) {
+        var interval = setInterval(function () {
+            fetch(BASE_STATUS + pk + '/status/')
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    var cell = document.querySelector('[data-ext-pk="' + pk + '"]');
+                    if (!cell) { clearInterval(interval); return; }
+
+                    var active = data.status === 'pulling' || data.status === 'publishing';
+
+                    if (active) {
+                        // Update the last-log-line hint
+                        var hint = cell.querySelector('.ext-log-line');
+                        if (hint) hint.textContent = lastLogLine(data.log);
+                        cell.dataset.extStatus = data.status;
+                        // Update badge label in case status flipped pulling→publishing
+                        var badge = cell.querySelector('.ext-status-badge');
+                        if (badge) badge.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>' + data.status.charAt(0).toUpperCase() + data.status.slice(1);
+                    } else {
+                        // Replace the whole cell contents with a plain badge and stop polling.
+                        cell.outerHTML = statusBadgeHTML(data.status, data.error_message);
+                        clearInterval(interval);
+                        // Reload the page after a short grace period so other columns update.
+                        setTimeout(function () { location.reload(); }, 1500);
+                    }
+                })
+                .catch(function () { /* network hiccup */ });
+        }, 2000);
+    }
+
+    // Start watching any row that is currently in-progress.
+    document.querySelectorAll('[data-ext-status="pulling"], [data-ext-status="publishing"]').forEach(function (el) {
+        watchRow(el.dataset.extPk);
     });
 })();
 </script>

@@ -664,12 +664,16 @@
                 var fresh = doc.getElementById('results-container');
                 if (fresh) container.innerHTML = fresh.innerHTML;
                 bindPagination();
+                if (typeof window._rebindPromotionCheckboxes === 'function') {
+                    window._rebindPromotionCheckboxes();
+                }
             })
             .catch(function () {})
             .finally(function () { busy = false; container.style.opacity = ''; });
     }
 
     function submitFilter() {
+        _commitSel.clear(); _publishSel.clear(); _promoteSel.clear();
         var params = new URLSearchParams(new FormData(form));
         params.delete('page');
         loadUrl(location.pathname + '?' + params.toString(), true);
@@ -872,27 +876,48 @@ function onWebSocketReconnect() {
 const _csrf = '{{ csrf_token }}';
 const _promotionChildRepos = {{ promotion_child_repos_json|safe }};
 
+// Persist multiselect across AJAX history-table pagination.
+var _commitSel = new Set(), _publishSel = new Set(), _promoteSel = new Set();
+
 // ── Ready-to-commit / ready-to-publish checkbox + bulk action logic ──────────
 (function () {
-    function setupTable(selectAllId, chkClass, bulkBtnId) {
+    function setupTable(selectAllId, chkClass, bulkBtnId, selSet) {
         var selectAll = document.getElementById(selectAllId);
         var bulkBtn  = document.getElementById(bulkBtnId);
         if (!selectAll) return;
+
+        // Restore prior selections.
+        if (selSet && selSet.size) {
+            document.querySelectorAll('.' + chkClass).forEach(function (c) {
+                if (selSet.has(c.value)) c.checked = true;
+            });
+        }
 
         function syncBulkBtn() {
             var checked = document.querySelectorAll('.' + chkClass + ':checked').length;
             bulkBtn.classList.toggle('d-none', checked === 0);
         }
 
+        // Sync initial select-all state.
+        (function () {
+            var all = document.querySelectorAll('.' + chkClass);
+            var chk = document.querySelectorAll('.' + chkClass + ':checked');
+            selectAll.indeterminate = chk.length > 0 && chk.length < all.length;
+            selectAll.checked = all.length > 0 && chk.length === all.length;
+            syncBulkBtn();
+        })();
+
         selectAll.addEventListener('change', function () {
             document.querySelectorAll('.' + chkClass).forEach(function (c) {
                 c.checked = selectAll.checked;
+                if (selSet) { if (selectAll.checked) { selSet.add(c.value); } else { selSet.delete(c.value); } }
             });
             syncBulkBtn();
         });
 
         document.querySelectorAll('.' + chkClass).forEach(function (c) {
             c.addEventListener('change', function () {
+                if (selSet) { if (c.checked) { selSet.add(c.value); } else { selSet.delete(c.value); } }
                 var all = document.querySelectorAll('.' + chkClass);
                 var checked = document.querySelectorAll('.' + chkClass + ':checked');
                 selectAll.indeterminate = checked.length > 0 && checked.length < all.length;
@@ -902,9 +927,14 @@ const _promotionChildRepos = {{ promotion_child_repos_json|safe }};
         });
     }
 
-    setupTable('commit-select-all',  'commit-chk',  'commit-selected-btn');
-    setupTable('publish-select-all', 'publish-chk', 'publish-selected-btn');
-    setupTable('promote-select-all', 'promote-chk', 'promote-selected-btn');
+    function rebindAll() {
+        setupTable('commit-select-all',  'commit-chk',  'commit-selected-btn',  _commitSel);
+        setupTable('publish-select-all', 'publish-chk', 'publish-selected-btn', _publishSel);
+        setupTable('promote-select-all', 'promote-chk', 'promote-selected-btn', _promoteSel);
+    }
+
+    rebindAll();
+    window._rebindPromotionCheckboxes = rebindAll;
 })();
 
 async function _runAction(type, pkgPk) {

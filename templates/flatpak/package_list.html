@@ -230,6 +230,9 @@
 </div>
 </div>
 <script>
+// Persists pkg-checkbox selections across AJAX page navigation.
+var _pkgSel = new Set();
+
 (function () {
     var form = document.getElementById('filter-form');
     var container = document.getElementById('results-container');
@@ -256,6 +259,22 @@
                 var doc = new DOMParser().parseFromString(html, 'text/html');
                 var fresh = doc.getElementById('results-container');
                 if (fresh) container.innerHTML = fresh.innerHTML;
+                // Restore selections that survive across pages.
+                if (_pkgSel.size) {
+                    document.querySelectorAll('.pkg-checkbox').forEach(function (cb) {
+                        if (_pkgSel.has(cb.value)) cb.checked = true;
+                    });
+                    var all = document.querySelectorAll('.pkg-checkbox');
+                    var sa = document.getElementById('select-all');
+                    if (sa) sa.checked = all.length > 0 && Array.from(all).every(function (cb) { return cb.checked; });
+                    var toolbar = document.getElementById('bulk-toolbar');
+                    var countEl = document.getElementById('bulk-count');
+                    var n = document.querySelectorAll('.pkg-checkbox:checked').length;
+                    if (toolbar && countEl && n) {
+                        toolbar.style.removeProperty('display');
+                        countEl.textContent = n + ' selected';
+                    }
+                }
                 bindPagination();
             })
             .catch(function () {})
@@ -263,6 +282,7 @@
     }
 
     function submitFilter() {
+        _pkgSel.clear();
         var params = new URLSearchParams(new FormData(form));
         params.delete('page');
         loadUrl(location.pathname + '?' + params.toString(), true);
@@ -365,9 +385,11 @@
         if (e.target && e.target.id === 'select-all') {
             document.querySelectorAll('.pkg-checkbox').forEach(function (cb) {
                 cb.checked = e.target.checked;
+                if (e.target.checked) { _pkgSel.add(cb.value); } else { _pkgSel.delete(cb.value); }
             });
             updateToolbar();
         } else if (e.target && e.target.classList.contains('pkg-checkbox')) {
+            if (e.target.checked) { _pkgSel.add(e.target.value); } else { _pkgSel.delete(e.target.value); }
             var all = document.querySelectorAll('.pkg-checkbox');
             var allChecked = Array.from(all).every(function (cb) { return cb.checked; });
             var selectAll = document.getElementById('select-all');
@@ -377,6 +399,7 @@
     });
 
     document.getElementById('bulk-deselect-btn').addEventListener('click', function () {
+        _pkgSel.clear();
         document.querySelectorAll('.pkg-checkbox, #select-all').forEach(function (cb) { cb.checked = false; });
         updateToolbar();
     });

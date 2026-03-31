@@ -24,13 +24,22 @@
             <span class="badge bg-danger ms-1">{{ missing_deps|length }}</span>
             {% endif %}
         </h5>
-        <small class="text-muted">Dependencies required by built packages not yet tracked as External Refs</small>
+        <div class="d-flex align-items-center gap-2">
+            <small class="text-muted">Dependencies required by built packages not yet tracked as External Refs</small>
+            {% if missing_deps %}
+            <button id="btnImportSelected" class="btn btn-sm btn-secondary" disabled
+                    data-bs-toggle="modal" data-bs-target="#importSelectedModal">
+                <i class="bi bi-cloud-download"></i> Import Selected <span id="selectedCount" class="badge bg-light text-dark ms-1">0</span>
+            </button>
+            {% endif %}
+        </div>
     </div>
     {% if missing_deps %}
     <div class="table-responsive">
-        <table class="table table-hover align-middle mb-0">
+        <table class="table table-hover align-middle mb-0" id="missingDepsTable">
             <thead class="table-light">
                 <tr>
+                    <th style="width:1%"><input type="checkbox" id="selectAllMissing" class="form-check-input" title="Select all"></th>
                     <th>Ref</th>
                     <th>Type</th>
                     <th>Branch</th>
@@ -41,6 +50,7 @@
             <tbody>
             {% for dep in missing_deps %}
             <tr>
+                <td><input type="checkbox" class="form-check-input missing-dep-check" data-url="{{ dep.add_external_url }}"></td>
                 <td><code class="small">{{ dep.app_id }}</code></td>
                 <td>
                     {% if dep.type == 'SDK' %}<span class="badge bg-success">SDK</span>
@@ -229,5 +239,70 @@
         {% endif %}
     </div>
 </div>
+
+<!-- Import Selected confirmation modal -->
+<div class="modal fade" id="importSelectedModal" tabindex="-1" aria-labelledby="importSelectedModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="importSelectedModalLabel"><i class="bi bi-cloud-download"></i> Import Selected</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>This will open <strong id="importCount">0</strong> create form(s) in new tabs — one per selected dependency.</p>
+                <p class="mb-0 text-muted small">Your browser may block pop-ups. If tabs don't appear, allow pop-ups for this site.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="btnConfirmImport">
+                    <i class="bi bi-cloud-download"></i> Open Forms
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+(function () {
+    const selectAll = document.getElementById('selectAllMissing');
+    const countBadge = document.getElementById('selectedCount');
+    const importCountEl = document.getElementById('importCount');
+    const btnImport = document.getElementById('btnImportSelected');
+    const btnConfirm = document.getElementById('btnConfirmImport');
+
+    if (!selectAll) return; // no missing deps
+
+    function getChecked() {
+        return Array.from(document.querySelectorAll('.missing-dep-check:checked'));
+    }
+
+    function updateUI() {
+        const n = getChecked().length;
+        countBadge.textContent = n;
+        importCountEl.textContent = n;
+        btnImport.disabled = n === 0;
+        const all = document.querySelectorAll('.missing-dep-check');
+        selectAll.indeterminate = n > 0 && n < all.length;
+        selectAll.checked = n > 0 && n === all.length;
+    }
+
+    selectAll.addEventListener('change', function () {
+        document.querySelectorAll('.missing-dep-check').forEach(cb => { cb.checked = this.checked; });
+        updateUI();
+    });
+
+    document.querySelectorAll('.missing-dep-check').forEach(cb => {
+        cb.addEventListener('change', updateUI);
+    });
+
+    btnConfirm.addEventListener('click', function () {
+        const modal = bootstrap.Modal.getInstance(document.getElementById('importSelectedModal'));
+        modal.hide();
+        getChecked().forEach(cb => window.open(cb.dataset.url, '_blank'));
+    });
+})();
+</script>
+{% endblock %}
 {% endblock %}
 
