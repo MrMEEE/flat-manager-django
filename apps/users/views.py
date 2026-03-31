@@ -65,6 +65,7 @@ class DashboardView(LoginRequiredMixin, View):
         packages_outdated  = Package.objects.filter(
             upstream_version__isnull=False
         ).exclude(upstream_version='').exclude(upstream_version=F('version')).count()
+        packages_deps_outdated = Package.objects.filter(deps_need_rebuild=True).count()
 
         recent_builds = (
             Build.objects
@@ -92,6 +93,7 @@ class DashboardView(LoginRequiredMixin, View):
             'packages_failed':     packages_failed,
             'packages_published':  packages_published,
             'packages_outdated':   packages_outdated,
+            'packages_deps_outdated': packages_deps_outdated,
             'recent_builds':       recent_builds,
             'clients_online':      clients_online,
             'clients_offline':     clients_offline,

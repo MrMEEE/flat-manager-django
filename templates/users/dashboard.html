@@ -104,6 +104,19 @@
                 </div>
             </div>
         </a>
+    </div>
+    <div class="col-6 col-md-3">
+        <a href="{% url 'flatpak:package_list' %}?status=deps_outdated" class="text-decoration-none">
+            <div class="card {% if packages_deps_outdated %}border-warning{% else %}border-secondary{% endif %} h-100">
+                <div class="card-body d-flex align-items-center gap-3">
+                    <i class="bi bi-box-seam fs-2 {% if packages_deps_outdated %}text-warning{% else %}text-secondary opacity-75{% endif %}"></i>
+                    <div>
+                        <div class="display-6 fw-bold lh-1">{{ packages_deps_outdated }}</div>
+                        <div class="small text-muted">Outdated Deps</div>
+                    </div>
+                </div>
+            </div>
+        </a>
     </div></div>
 
 <h5 class="text-muted fw-semibold mt-4 mb-2">Clients</h5>
