@@ -51,6 +51,8 @@
                     <span class="badge bg-success">SDK</span>
                     {% elif dep.type == 'Runtime' %}
                     <span class="badge bg-info text-dark">Runtime</span>
+                    {% elif dep.type == 'BaseApp' %}
+                    <span class="badge bg-secondary">BaseApp</span>
                     {% else %}
                     <span class="badge bg-warning text-dark">Extension</span>
                     {% endif %}
@@ -126,6 +128,7 @@
                     <td>
                         {% if dep.type == 'SDK' %}<span class="badge bg-success">SDK</span>
                         {% elif dep.type == 'Runtime' %}<span class="badge bg-info text-dark">Runtime</span>
+                        {% elif dep.type == 'BaseApp' %}<span class="badge bg-secondary">BaseApp</span>
                         {% else %}<span class="badge bg-warning text-dark">Extension</span>{% endif %}
                     </td>
                     <td><code class="small">{{ dep.branch }}</code></td>
@@ -193,6 +196,7 @@
                     <td>
                         {% if dep.type == 'SDK' %}<span class="badge bg-success">SDK</span>
                         {% elif dep.type == 'Runtime' %}<span class="badge bg-info text-dark">Runtime</span>
+                        {% elif dep.type == 'BaseApp' %}<span class="badge bg-secondary">BaseApp</span>
                         {% else %}<span class="badge bg-warning text-dark">Extension</span>{% endif %}
                     </td>
                     <td><code class="small">{{ dep.branch }}</code></td>

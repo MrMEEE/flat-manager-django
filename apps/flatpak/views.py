@@ -2140,9 +2140,10 @@ def dependencies_list(request):
                         'SDK'       if 'Sdk'       in parts[1] else
                         'Runtime'   if 'Platform'  in parts[1] or 'runtime' in parts[1].lower() else
                         'Extension' if 'Extension' in parts[1] else
+                        'BaseApp'   if 'BaseApp'   in parts[1] else
                         'App'
                     )
-                    if app_type in ('SDK', 'Runtime', 'Extension'):
+                    if app_type in ('SDK', 'Runtime', 'Extension', 'BaseApp'):
                         dependencies[scope].append({
                             'name': parts[0], 'id': parts[1], 'version': parts[2],
                             'branch': parts[3], 'origin': parts[4], 'type': app_type,
@@ -2186,7 +2187,7 @@ def dependencies_list(request):
             dep['add_pkg_url'] = pkg_create_url + '?' + urlencode(pkg_params)
 
             # Import as External ref (pre-fill the ref using installed branch)
-            ref_type = 'runtime' if dep['type'] in ('SDK', 'Runtime', 'Extension') else 'app'
+            ref_type = 'runtime' if dep['type'] in ('SDK', 'Runtime', 'Extension', 'BaseApp') else 'app'
             ext_ref_str = f"{ref_type}/{app_id}/x86_64/{dep['branch']}"
             dep['add_external_url'] = external_create_url + '?' + urlencode({'ref': ext_ref_str})
 

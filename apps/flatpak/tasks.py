@@ -2497,9 +2497,22 @@ def install_flatpak_dependencies(package, dependencies, build=None):
             )
             
             if check_result.returncode == 0:
-                log_build(build, 'info', f"✓ {ref} is already installed ({scope_name})")
+                log_build(build, 'info', f"✓ {ref} is already installed ({scope_name}), checking for updates...")
+                update_result = subprocess.run(
+                    ['flatpak', 'update', '-y', '--noninteractive', install_scope, ref],
+                    capture_output=True,
+                    text=True,
+                    timeout=600
+                )
+                if update_result.returncode == 0:
+                    if 'Nothing to do' in update_result.stdout or 'is up to date' in update_result.stdout:
+                        log_build(build, 'info', f"  {ref} is up to date")
+                    else:
+                        log_build(build, 'info', f"  Updated {ref}")
+                else:
+                    log_build(build, 'warning', f"  Could not update {ref}: {update_result.stderr.strip()}")
                 continue
-            
+
             # If not in target scope, check the other scope
             other_scope = '--user' if scope_name == 'system' else '--system'
             other_scope_name = 'user' if scope_name == 'system' else 'system'
@@ -2509,9 +2522,22 @@ def install_flatpak_dependencies(package, dependencies, build=None):
                 text=True,
                 timeout=30
             )
-            
+
             if check_other.returncode == 0:
-                log_build(build, 'info', f"✓ {ref} is already installed in {other_scope_name} (will use that)")
+                log_build(build, 'info', f"✓ {ref} is already installed in {other_scope_name}, checking for updates...")
+                update_result = subprocess.run(
+                    ['flatpak', 'update', '-y', '--noninteractive', other_scope, ref],
+                    capture_output=True,
+                    text=True,
+                    timeout=600
+                )
+                if update_result.returncode == 0:
+                    if 'Nothing to do' in update_result.stdout or 'is up to date' in update_result.stdout:
+                        log_build(build, 'info', f"  {ref} is up to date")
+                    else:
+                        log_build(build, 'info', f"  Updated {ref}")
+                else:
+                    log_build(build, 'warning', f"  Could not update {ref}: {update_result.stderr.strip()}")
                 continue
             
             # Install to the specified scope — try each active remote in order
