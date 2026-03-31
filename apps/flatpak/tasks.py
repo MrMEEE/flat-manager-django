@@ -2146,7 +2146,9 @@ def _snapshot_build_external_refs(build, package):
             ref=ext.ref,
             defaults={
                 'external_ref': ext,
-                'upstream_commit_at_build': ext.upstream_commit,
+                # Prefer upstream_commit (set by periodic check), but fall back
+                # to commit_hash (the last pulled/published commit, always set).
+                'upstream_commit_at_build': ext.upstream_commit or ext.commit_hash,
             }
         )
 

@@ -47,6 +47,7 @@ urlpatterns = [
     path('promotions/<int:pk>/retry/', views.PromotionRetryView.as_view(), name='promotion_retry'),
     path('config/', views.ConfigView.as_view(), name='config'),
     path('config/run-cleanup/', views.RunCleanupNowView.as_view(), name='run_cleanup'),
+    path('config/check-external-ref-updates/', views.RunCheckExternalRefUpdatesView.as_view(), name='check_external_ref_updates'),
     path('config/scan-available-versions/', views.RunAvailableVersionScanView.as_view(), name='scan_available_versions'),
     path('config/scan-upstream-versions/', views.RunUpstreamVersionScanView.as_view(), name='scan_upstream_versions'),
     path('config/scan-orphaned-refs/', views.ScanOrphanedRefsView.as_view(), name='scan_orphaned_refs'),

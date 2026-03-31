@@ -223,15 +223,22 @@
                                             <span class="text-muted">—</span>
                                         {% endif %}
                                     </td>
-                                    <td class="text-center">
+                                    <td class="text-center" style="white-space:nowrap;">
                                         {% if snap.external_ref and snap.external_ref.upstream_commit and snap.upstream_commit_at_build %}
                                             {% if snap.external_ref.upstream_commit != snap.upstream_commit_at_build %}
                                                 <span class="badge bg-warning text-dark" title="Newer upstream commit available"><i class="bi bi-arrow-up-circle-fill"></i> New</span>
                                             {% else %}
                                                 <span class="badge bg-success"><i class="bi bi-check-circle-fill"></i></span>
                                             {% endif %}
-                                        {% elif snap.upstream_commit_at_build %}
-                                            <span class="text-muted" title="Not tracked as an External Ref — upstream comparison unavailable">—</span>
+                                        {% elif snap.external_ref %}
+                                            <span class="text-muted" title="Tracked — upstream commit not yet checked">—</span>
+                                        {% else %}
+                                            <a href="{% url 'flatpak:external_create' %}?ref={{ snap.ref|urlencode }}&repository={{ package.repository.pk }}"
+                                               target="_blank"
+                                               class="btn btn-outline-secondary btn-sm py-0 px-1"
+                                               title="Track this dep as an External Ref (opens in new tab)">
+                                                <i class="bi bi-plus-circle"></i> Add as External
+                                            </a>
                                         {% endif %}
                                     </td>
                                 </tr>

@@ -1844,6 +1844,15 @@ class RunCleanupNowView(LoginRequiredMixin, View):
         return JsonResponse({'status': 'ok', 'message': result})
 
 
+class RunCheckExternalRefUpdatesView(LoginRequiredMixin, View):
+    """Immediately run the upstream commit check for all tracked ExternalRefs."""
+
+    def post(self, request):
+        from apps.flatpak.tasks import check_external_ref_updates
+        result = check_external_ref_updates()  # run synchronously
+        return JsonResponse({'status': 'ok', 'message': result})
+
+
 class RunAvailableVersionScanView(LoginRequiredMixin, View):
     """Queue an available-version check for every git-based package immediately."""
 
