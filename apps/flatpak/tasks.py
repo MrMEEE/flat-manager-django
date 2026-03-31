@@ -1555,22 +1555,30 @@ def _fixup_upstream_appstream(build_repo_path, target_repo_path, gpg_key, log_fn
         )
 
 
-def _get_flatpak_remote_commit(remote_name, ref):
-    """Resolve the current commit hash for a Flatpak remote ref.
+def _resolve_remote_ref(remote_name, ref):
+    """Resolve the current commit hash and *correct* OSTree ref path for a
+    Flatpak remote ref.
 
-    Tries default, system, and user flatpak scopes, and also tries alternative
-    OSTree type prefixes (Flathub stores some BaseApps/Extensions under 'app/'
-    even though their logical type is 'runtime'/'BaseApp').
+    Returns (commit_hash, resolved_ref) where resolved_ref is the actual path
+    used by the OSTree repository (which may differ from *ref* in the leading
+    type prefix).  Flathub stores some BaseApps/Extensions under 'app/' even
+    though they look like 'runtime/' refs at the flatpak level.
+
+    Tries:
+      1. ref as-is
+      2. swapped prefix (runtime/ <-> app/)
+      3. no leading prefix (name/arch/branch only)
+    across '', --system, and --user flatpak scopes.
+
+    Returns ('', ref) when nothing could be resolved.
     """
-    # Build a list of ref forms to attempt, preserving the original first.
-    ref_forms = [ref]
     parts = ref.split('/')
+    ref_forms = [ref]
     if parts[0] in ('runtime', 'app'):
         alt = 'app' if parts[0] == 'runtime' else 'runtime'
-        ref_forms.append('/'.join([alt] + parts[1:]))   # swap prefix
-        ref_forms.append('/'.join(parts[1:]))            # no prefix at all
+        ref_forms.append('/'.join([alt] + parts[1:]))
+        ref_forms.append('/'.join(parts[1:]))
     elif len(parts) >= 3:
-        # No prefix present — also try with both type prefixes
         ref_forms.extend([f'runtime/{ref}', f'app/{ref}'])
 
     for ref_form in ref_forms:
@@ -1581,12 +1589,18 @@ def _get_flatpak_remote_commit(remote_name, ref):
             cmd.extend(['--show-commit', remote_name, ref_form])
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
             if result.returncode == 0:
-                commit = (result.stdout or '').strip().splitlines()
-                if commit:
-                    value = commit[-1].strip()
+                lines = (result.stdout or '').strip().splitlines()
+                if lines:
+                    value = lines[-1].strip()
                     if re.fullmatch(r'[0-9a-f]{64}', value):
-                        return value
-    return ''
+                        return value, ref_form
+    return '', ref
+
+
+def _get_flatpak_remote_commit(remote_name, ref):
+    """Convenience wrapper — returns only the commit hash (backwards compat)."""
+    commit, _ = _resolve_remote_ref(remote_name, ref)
+    return commit
 
 
 @shared_task
@@ -1663,9 +1677,14 @@ def pull_external_ref_task(external_ref_id):
         )
         _log_external(ext, 'info', f"Remote '{remote_name}' configured in build-repo")
 
-        upstream_commit = _get_flatpak_remote_commit(remote_name, ref)
+        upstream_commit, resolved_ref = _resolve_remote_ref(remote_name, ref)
         if upstream_commit:
             _log_external(ext, 'info', f"Upstream commit: {upstream_commit[:12]}")
+            if resolved_ref != ref:
+                _log_external(ext, 'info',
+                              f"Ref corrected: {ref} → {resolved_ref} (remote uses different prefix)")
+                ref = resolved_ref
+                ext.ref = resolved_ref
         else:
             _log_external(ext, 'warning',
                           f"Could not determine upstream commit for {ref} via flatpak remote-info")
@@ -1680,39 +1699,7 @@ def pull_external_ref_task(external_ref_id):
 
         if pull_result.returncode != 0:
             pull_err = pull_result.stderr.strip() or pull_result.stdout.strip()
-            # Flathub stores some BaseApps / Extensions under 'app/' even though
-            # they look like 'runtime/' refs (and vice-versa). If the OSTree repo
-            # summary doesn't have the ref under the guessed prefix, try the
-            # alternative prefix automatically.
-            swapped_ref = None
-            ref_parts = ref.split('/')
-            if 'No such branch' in pull_err or 'not in repository summary' in pull_err:
-                if ref_parts[0] in ('runtime', 'app'):
-                    alt_prefix = 'app' if ref_parts[0] == 'runtime' else 'runtime'
-                    swapped_ref = '/'.join([alt_prefix] + ref_parts[1:])
-                    alt_target = f'{swapped_ref}@{upstream_commit}' if upstream_commit else swapped_ref
-                    _log_external(ext, 'info',
-                                  f"Retrying with alternative prefix: {swapped_ref}")
-                    pull_result = subprocess.run(
-                        ['ostree', 'pull', f'--repo={build_repo_path}', remote_name, alt_target],
-                        capture_output=True, text=True, timeout=1800
-                    )
-                    if pull_result.returncode == 0:
-                        # The swapped ref works — update the stored ref so future
-                        # operations (publish, re-pull) use the correct path.
-                        _log_external(ext, 'info',
-                                      f"Ref corrected: {ref} → {swapped_ref}")
-                        ref = swapped_ref
-                        ext.ref = swapped_ref
-                    else:
-                        raise RuntimeError(
-                            f"ostree pull failed (tried both '{ref_parts[0]}/' and '{alt_prefix}/' prefixes): "
-                            f"{pull_result.stderr.strip() or pull_result.stdout.strip()}"
-                        )
-                else:
-                    raise RuntimeError(f"ostree pull failed: {pull_err}")
-            else:
-                raise RuntimeError(f"ostree pull failed: {pull_err}")
+            raise RuntimeError(f"ostree pull failed: {pull_err}")
 
         _log_external(ext, 'info', f"ostree pull succeeded")
 
