@@ -1898,6 +1898,84 @@ def publish_external_ref_task(external_ref_id):
             pass
 
 
+@shared_task
+def check_external_ref_updates():
+    """
+    Periodic task: query each published/pulled ExternalRef's remote for its
+    current commit hash and flag update_available when it differs from the
+    last-pulled commit_hash.  Interval is read from SiteConfig.
+    """
+    from apps.flatpak.models import ExternalRef, SiteConfig
+
+    config = SiteConfig.get_solo()
+    interval_hours = config.external_ref_check_interval_hours
+
+    # Sync the beat schedule
+    try:
+        from django_celery_beat.models import PeriodicTask, IntervalSchedule
+        if interval_hours > 0:
+            schedule, _ = IntervalSchedule.objects.get_or_create(
+                every=interval_hours,
+                period=IntervalSchedule.HOURS,
+            )
+            PeriodicTask.objects.filter(name='check-external-ref-updates').update(
+                interval=schedule, enabled=True
+            )
+        else:
+            PeriodicTask.objects.filter(name='check-external-ref-updates').update(enabled=False)
+            logger.info('External ref update check is disabled (interval=0)')
+            return 'External ref update check disabled'
+    except Exception as e:
+        logger.warning(f'Failed to sync external ref check schedule: {e}')
+
+    if interval_hours == 0:
+        return 'Disabled'
+
+    # Check all refs that have a remote and are in a terminal state
+    refs = ExternalRef.objects.select_related('remote').filter(
+        remote__isnull=False,
+        status__in=['published', 'pulled', 'failed'],
+    )
+
+    checked = 0
+    updates_found = 0
+    now = timezone.now()
+
+    for ext in refs:
+        try:
+            upstream = _get_flatpak_remote_commit(ext.remote.name, ext.ref)
+            if not upstream:
+                continue
+
+            changed = False
+            if ext.upstream_commit != upstream:
+                ext.upstream_commit = upstream
+                changed = True
+
+            # update_available: upstream differs from what was last pulled
+            new_update_available = bool(upstream and upstream != ext.commit_hash)
+            if ext.update_available != new_update_available:
+                ext.update_available = new_update_available
+                changed = True
+
+            ext.upstream_checked_at = now
+            if changed or True:  # always save the checked_at timestamp
+                ext.save(update_fields=['upstream_commit', 'upstream_checked_at', 'update_available'])
+
+            checked += 1
+            if ext.update_available:
+                updates_found += 1
+                logger.info(
+                    f"External ref {ext.ref}: update available "
+                    f"(local={ext.commit_hash[:12] if ext.commit_hash else 'none'!r}, "
+                    f"upstream={upstream[:12]})"
+                )
+        except Exception as e:
+            logger.warning(f"check_external_ref_updates: error checking {ext.ref}: {e}")
+
+    return f"Checked {checked} external refs; {updates_found} update(s) available"
+
+
 def log_build(build, level, message):
     """Helper to create build log entries and broadcast via WebSocket."""
     from apps.flatpak.models import BuildLog

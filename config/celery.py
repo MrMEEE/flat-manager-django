@@ -62,6 +62,14 @@ app.conf.beat_schedule = {
             'queue': 'ops',
         }
     },
+    'check-external-ref-updates': {
+        'task': 'apps.flatpak.tasks.check_external_ref_updates',
+        'schedule': 21600.0,  # Default 6 hours; overridden at runtime by SiteConfig
+        'options': {
+            'expires': 3600.0,
+            'queue': 'ops',
+        }
+    },
 }
 
 

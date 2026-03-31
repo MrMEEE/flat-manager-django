@@ -61,6 +61,7 @@
                     <th>Remote</th>
                     <th>Repository</th>
                     <th>Status</th>
+                    <th>Commit</th>
                     <th>Organisations</th>
                     <th>Last Pulled</th>
                     <th></th>
@@ -86,12 +87,40 @@
                             </span>
                         {% elif ext.status == 'published' %}
                             <span class="badge bg-primary">Published</span>
+                            {% if ext.update_available %}
+                            <span class="badge bg-warning text-dark ms-1" title="Upstream commit: {{ ext.upstream_commit|slice:':12' }}">
+                                <i class="bi bi-arrow-up-circle-fill"></i> Update available
+                            </span>
+                            {% endif %}
                         {% elif ext.status == 'pulled' %}
                             <span class="badge bg-success">Pulled</span>
+                            {% if ext.update_available %}
+                            <span class="badge bg-warning text-dark ms-1" title="Upstream commit: {{ ext.upstream_commit|slice:':12' }}">
+                                <i class="bi bi-arrow-up-circle-fill"></i> Update available
+                            </span>
+                            {% endif %}
                         {% elif ext.status == 'failed' %}
                             <span class="badge bg-danger">Failed</span>
                         {% else %}
                             <span class="badge bg-secondary">{{ ext.status|capfirst }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="font-monospace small text-muted">
+                        {% if ext.commit_hash %}
+                            <span title="{{ ext.commit_hash }}">{{ ext.commit_hash|slice:':12' }}</span>
+                            {% if ext.update_available and ext.upstream_commit %}
+                            <br>
+                            <span class="text-warning" title="New upstream commit">
+                                &#8594; {{ ext.upstream_commit|slice:':12' }}
+                            </span>
+                            {% endif %}
+                        {% else %}
+                            —
+                        {% endif %}
+                        {% if ext.upstream_checked_at %}
+                        <br><small class="text-muted" title="Last checked {{ ext.upstream_checked_at|date:'Y-m-d H:i' }}">
+                            <i class="bi bi-clock"></i> {{ ext.upstream_checked_at|timesince }} ago
+                        </small>
                         {% endif %}
                     </td>
                     <td>

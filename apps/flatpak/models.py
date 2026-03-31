@@ -470,6 +470,10 @@ class SiteConfig(models.Model):
         default=24,
         help_text="Hours without a client check-in before the client is shown as stale/red."
     )
+    external_ref_check_interval_hours = models.PositiveIntegerField(
+        default=6,
+        help_text="How often (in hours) to check external refs for upstream commit changes. Set to 0 to disable."
+    )
     bst1_venv_path = models.CharField(
         max_length=500,
         blank=True,
@@ -648,6 +652,19 @@ class ExternalRef(models.Model):
     display_name = models.CharField(max_length=255, blank=True)
 
     commit_hash = models.CharField(max_length=64, blank=True)
+    # Upstream tracking: the latest commit seen on the remote, checked periodically
+    upstream_commit = models.CharField(
+        max_length=64, blank=True,
+        help_text="Latest commit hash seen on the upstream remote (populated by periodic check)"
+    )
+    upstream_checked_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="When we last queried the upstream remote for a new commit"
+    )
+    update_available = models.BooleanField(
+        default=False,
+        help_text="True when upstream_commit differs from the last pulled commit_hash"
+    )
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     error_message = models.TextField(blank=True)
     log = models.TextField(blank=True, help_text="Pull/publish log output")
