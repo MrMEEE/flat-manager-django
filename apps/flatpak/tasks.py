@@ -2106,6 +2106,9 @@ def _snapshot_build_external_refs(build, package):
     logger.info(
         f"Snapshotted external ref deps for {package.package_name} build #{build.build_number}"
     )
+
+
+def log_build(build, level, message):
     """Helper to create build log entries and broadcast via WebSocket."""
     from apps.flatpak.models import BuildLog
 
