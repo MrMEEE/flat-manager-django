@@ -465,8 +465,11 @@ class PackageListView(LoginRequiredMixin, ListView):
     paginate_by = 20
 
     def get_queryset(self):
-        from django.db.models import Q, F
-        qs = Package.objects.select_related('repository').order_by('-created_at')
+        from django.db.models import Q, F, Exists, OuterRef
+        from apps.flatpak.models import BuildExternalRef
+        qs = Package.objects.select_related('repository').annotate(
+            has_dep_data=Exists(BuildExternalRef.objects.filter(build__package=OuterRef('pk')))
+        ).order_by('-created_at')
         q = self.request.GET.get('q', '').strip()
         status = self.request.GET.get('status', '').strip()
         repo = self.request.GET.get('repo', '').strip()

@@ -756,6 +756,10 @@ def package_from_git_task(self, package_id):
                 package.produced_refs = '\n'.join(all_package_refs)
                 log_build(build, 'info', f"Captured {len(all_package_refs)} produced ref(s): {', '.join(all_package_refs)}")
 
+        # Snapshot which ExternalRefs this build depended on (at build time, so
+        # the dep table is visible immediately without waiting for publish)
+        _snapshot_build_external_refs(build, package)
+
         package.status = 'built'
         package.save()
         send_build_status_update(package_id, 'built', 'Build completed, ready to publish')
@@ -1419,9 +1423,6 @@ def publish_package_task(package_id, generate_deltas=False):
                       f"{meta_result.get('detail', meta_result.get('error', ''))}")
             logger.warning("update_repo_metadata warning for %s: %s", target_repo_path, meta_result)
         
-        # Snapshot which ExternalRefs (and their upstream commits) this build depended on
-        _snapshot_build_external_refs(build, package)
-
         # Mark as published
         package.status = 'published'
         package.save()
