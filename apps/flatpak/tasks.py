@@ -2055,11 +2055,49 @@ def evaluate_dependency_staleness():
     return f"Evaluated {packages.count()} packages; {stale} need rebuild, {updated} status change(s)"
 
 
+def _get_installed_flatpak_commit(ref_str, installation_type=None):
+    """
+    Query the locally installed commit for a dep ref like
+    'org.freedesktop.Sdk/x86_64/25.08'.  Returns a 64-char hex string or ''.
+
+    Tries the package's own installation scope first, then system and user.
+    """
+    scopes = []
+    if installation_type:
+        scopes.append(f'--{installation_type}')
+    for s in ('--system', '--user', ''):
+        if s not in scopes:
+            scopes.append(s)
+
+    for scope in scopes:
+        cmd = ['flatpak', 'info', '--show-commit']
+        if scope:
+            cmd.append(scope)
+        cmd.append(ref_str)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            if result.returncode == 0:
+                value = result.stdout.strip()
+                if re.fullmatch(r'[0-9a-f]{64}', value):
+                    return value
+        except Exception:
+            pass
+    return ''
+
+
 def _snapshot_build_external_refs(build, package):
     """
-    Called at build publish time.  Creates BuildExternalRef records linking
-    this build to every ExternalRef that matches a dependency in
-    package.dependencies, storing the current upstream_commit as the baseline.
+    Called at build time.  Creates BuildExternalRef records for every
+    dependency listed in package.dependencies.
+
+    Priority:
+    1. If the dep matches a tracked ExternalRef, use that object and its
+       upstream_commit as the baseline.
+    2. For deps that are only installed locally (e.g. org.freedesktop.Sdk
+       pulled via flatpak but not tracked as an ExternalRef), fall back to
+       `flatpak info --show-commit` to capture the installed commit hash.
+       These records have external_ref=None so they show the commit but
+       can't track future upstream changes until an ExternalRef is added.
     """
     from apps.flatpak.models import BuildExternalRef, ExternalRef
 
@@ -2067,12 +2105,11 @@ def _snapshot_build_external_refs(build, package):
     if not deps:
         return
 
-    # Collect the full OSTree ref strings for all deps
+    # Collect the full OSTree ref strings for all deps (name/arch/branch)
     dep_refs = []
     for key in ('sdk_full', 'runtime_full', 'base_full'):
         val = deps.get(key)
         if val:
-            # stored as "org.kde.Sdk/x86_64/6.8" — normalise to "runtime/..." if needed
             dep_refs.append(val)
     for ext_entry in deps.get('sdk_extensions', []):
         full = ext_entry.get('full')
@@ -2082,19 +2119,21 @@ def _snapshot_build_external_refs(build, package):
     if not dep_refs:
         return
 
-    # Match against ExternalRef objects (matching on the last 3 parts of the ref:
-    # name/arch/branch, regardless of the leading "runtime"/"app"/"sdk" segment)
+    # Match on the last 3 path components (name/arch/branch), ignoring any
+    # leading "runtime"/"app"/"sdk" segment present in ExternalRef.ref values.
     def _ref_tail(ref_str):
         parts = ref_str.split('/')
         return '/'.join(parts[-3:]) if len(parts) >= 3 else ref_str
 
     dep_tails = {_ref_tail(r): r for r in dep_refs}
+    matched_tails = set()
 
     all_ext = ExternalRef.objects.only('ref', 'upstream_commit')
     for ext in all_ext:
         tail = _ref_tail(ext.ref)
         if tail not in dep_tails:
             continue
+        matched_tails.add(tail)
         BuildExternalRef.objects.update_or_create(
             build=build,
             ref=ext.ref,
@@ -2104,8 +2143,29 @@ def _snapshot_build_external_refs(build, package):
             }
         )
 
+    # For deps with no matching ExternalRef, query the locally installed commit
+    installation_type = getattr(package, 'installation_type', None)
+    for tail, full_ref in dep_tails.items():
+        if tail in matched_tails:
+            continue
+        commit = _get_installed_flatpak_commit(full_ref, installation_type)
+        BuildExternalRef.objects.update_or_create(
+            build=build,
+            ref=full_ref,
+            defaults={
+                'external_ref': None,
+                'upstream_commit_at_build': commit,
+            }
+        )
+        logger.info(
+            f"Snapshotted untracked dep {full_ref} for build #{build.build_number}"
+            f" (installed commit: {commit[:12] if commit else 'unknown'})"
+        )
+
     logger.info(
-        f"Snapshotted external ref deps for {package.package_name} build #{build.build_number}"
+        f"Snapshotted {len(dep_tails)} dep ref(s) for {package.package_name}"
+        f" build #{build.build_number}"
+        f" ({len(matched_tails)} via ExternalRef, {len(dep_tails) - len(matched_tails)} via flatpak info)"
     )
 
 

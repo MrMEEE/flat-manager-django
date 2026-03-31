@@ -224,10 +224,14 @@
                                         {% endif %}
                                     </td>
                                     <td class="text-center">
-                                        {% if snap.external_ref and snap.external_ref.upstream_commit and snap.upstream_commit_at_build and snap.external_ref.upstream_commit != snap.upstream_commit_at_build %}
-                                            <span class="badge bg-warning text-dark" title="Newer upstream commit available"><i class="bi bi-arrow-up-circle-fill"></i> New</span>
+                                        {% if snap.external_ref and snap.external_ref.upstream_commit and snap.upstream_commit_at_build %}
+                                            {% if snap.external_ref.upstream_commit != snap.upstream_commit_at_build %}
+                                                <span class="badge bg-warning text-dark" title="Newer upstream commit available"><i class="bi bi-arrow-up-circle-fill"></i> New</span>
+                                            {% else %}
+                                                <span class="badge bg-success"><i class="bi bi-check-circle-fill"></i></span>
+                                            {% endif %}
                                         {% elif snap.upstream_commit_at_build %}
-                                            <span class="badge bg-success"><i class="bi bi-check-circle-fill"></i></span>
+                                            <span class="text-muted" title="Not tracked as an External Ref — upstream comparison unavailable">—</span>
                                         {% endif %}
                                     </td>
                                 </tr>
