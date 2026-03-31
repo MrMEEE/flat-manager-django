@@ -1988,9 +1988,10 @@ class BulkPruneOrphanedRefsView(LoginRequiredMixin, View):
 
 @login_required
 def dependencies_list(request):
-    """List known common Flatpak dependencies and installed Flatpak runtimes/SDKs/extensions."""
+    """List missing dependency refs and installed Flatpak runtimes/SDKs/extensions."""
     import subprocess
     from urllib.parse import urlencode
+    from apps.flatpak.models import ExternalRef
 
     # ------------------------------------------------------------------ #
     # Curated catalog of well-known common Flatpak runtime dependencies.  #
@@ -2100,9 +2101,20 @@ def dependencies_list(request):
         },
     ]
 
+    # Helper: strip leading type segment, keep last 3 path components (name/arch/branch)
+    def _ref_tail(ref_str):
+        parts = ref_str.split('/')
+        return '/'.join(parts[-3:]) if len(parts) >= 3 else ref_str
+
     # For each known dep, check managed status against flat-manager DB
     all_bst = list(BuildStreamSource.objects.only('pk', 'name', 'produced_refs'))
     all_pkg = list(Package.objects.only('pk', 'package_id', 'package_name'))
+    all_ext = list(ExternalRef.objects.only('pk', 'ref', 'display_name', 'status'))
+
+    # ExternalRef lookup by tail (name/arch/branch, stripping leading type prefix)
+    ext_by_tail = {}
+    for _e in all_ext:
+        ext_by_tail[_ref_tail(_e.ref)] = _e
 
     bst_create_url = reverse('flatpak:bst_source_create')
     pkg_create_url = reverse('flatpak:package_create')
@@ -2135,6 +2147,45 @@ def dependencies_list(request):
         # Pre-build the "Import as External" URL with a best-guess ref.
         ref_type = 'runtime' if dep['type'] in ('SDK', 'Runtime', 'Extension') else 'app'
         dep['add_external_url'] = external_create_url + '?' + urlencode({'ref': f"{ref_type}/{dep['id']}/x86_64/stable"})
+
+    # ------------------------------------------------------------------ #
+    # Missing Dependencies: deps required by built packages but not yet  #
+    # tracked as an ExternalRef.                                          #
+    # ------------------------------------------------------------------ #
+    _missing = {}  # key: tail (name/arch/branch)
+    for _pkg in Package.objects.only('pk', 'package_id', 'package_name', 'dependencies'):
+        _deps = _pkg.dependencies
+        if not _deps:
+            continue
+        _items = []
+        for _key, _dtype in (('sdk_full', 'SDK'), ('runtime_full', 'Runtime'), ('base_full', 'BaseApp')):
+            _v = _deps.get(_key)
+            if _v:
+                _items.append((_v, _dtype))
+        for _ext_entry in (_deps.get('sdk_extensions') or []):
+            _f = _ext_entry.get('full')
+            if _f:
+                _items.append((_f, 'Extension'))
+        for _full_ref, _dtype in _items:
+            _tail = _ref_tail(_full_ref)
+            if _tail in ext_by_tail:
+                continue  # already tracked as ExternalRef
+            if _tail not in _missing:
+                _parts = _full_ref.split('/')
+                _missing[_tail] = {
+                    'full_ref': _full_ref,
+                    'app_id': _parts[0] if _parts else _full_ref,
+                    'type': _dtype,
+                    'branch': _parts[-1] if len(_parts) >= 1 else '',
+                    'required_by': [],
+                    'add_external_url': (
+                        external_create_url + '?' + urlencode({'ref': f"runtime/{_full_ref}"})
+                    ),
+                }
+            _rb = _missing[_tail]['required_by']
+            if not any(_r['pk'] == _pkg.pk for _r in _rb):
+                _rb.append({'pk': _pkg.pk, 'name': _pkg.package_name or _pkg.package_id})
+    missing_deps = sorted(_missing.values(), key=lambda d: (d['type'], d['app_id']))
 
     # ------------------------------------------------------------------ #
     # Also list locally-installed Flatpak runtimes/SDKs/extensions       #
@@ -2183,7 +2234,14 @@ def dependencies_list(request):
                 None,
             )
             dep['managed_pkg'] = next((p for p in all_pkg if p.package_id == app_id), None)
-            dep['is_managed'] = dep['managed_bst'] is not None or dep['managed_pkg'] is not None
+            # Check ExternalRef by tail match (name/arch/branch)
+            _etail = f"{app_id}/x86_64/{dep['branch']}"
+            dep['managed_external'] = ext_by_tail.get(_etail)
+            dep['is_managed'] = (
+                dep['managed_bst'] is not None
+                or dep['managed_pkg'] is not None
+                or dep['managed_external'] is not None
+            )
 
             known = known_deps_by_id.get(app_id, {})
 
@@ -2210,7 +2268,7 @@ def dependencies_list(request):
             dep['add_external_url'] = external_create_url + '?' + urlencode({'ref': ext_ref_str})
 
     context = {
-        'known_deps': KNOWN_DEPS,
+        'missing_deps': missing_deps,
         'dependencies': dependencies,
         'total_system': len(dependencies['system']),
         'total_user': len(dependencies['user']),

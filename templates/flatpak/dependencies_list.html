@@ -15,84 +15,50 @@
 {% endif %}
 
 <!-- ====================================================== -->
-<!-- Common Dependencies catalog                           -->
+<!-- Missing Dependencies                                  -->
 <!-- ====================================================== -->
 <div class="card mb-4">
     <div class="card-header d-flex justify-content-between align-items-center">
-        <h5 class="mb-0"><i class="bi bi-collection"></i> Common Dependencies</h5>
-        <small class="text-muted">Runtimes, SDKs and extensions commonly needed by Flatpak apps</small>
+        <h5 class="mb-0"><i class="bi bi-exclamation-circle"></i> Missing Dependencies
+            {% if missing_deps %}
+            <span class="badge bg-danger ms-1">{{ missing_deps|length }}</span>
+            {% endif %}
+        </h5>
+        <small class="text-muted">Dependencies required by built packages not yet tracked as External Refs</small>
     </div>
+    {% if missing_deps %}
     <div class="table-responsive">
         <table class="table table-hover align-middle mb-0">
             <thead class="table-light">
                 <tr>
-                    <th>Name / ID</th>
+                    <th>Ref</th>
                     <th>Type</th>
-                    <th>Build system</th>
-                    <th>Status in flat-manager</th>
+                    <th>Branch</th>
+                    <th>Required by</th>
                     <th class="text-end">Actions</th>
                 </tr>
             </thead>
             <tbody>
-            {% for dep in known_deps %}
+            {% for dep in missing_deps %}
             <tr>
+                <td><code class="small">{{ dep.app_id }}</code></td>
                 <td>
-                    <strong>{{ dep.name }}</strong>
-                    {% if dep.warning %}
-                    <i class="bi bi-exclamation-triangle-fill text-warning ms-1" title="{{ dep.warning }}"></i>
-                    {% endif %}
-                    <br>
-                    <code class="small text-muted">{{ dep.id }}</code>
-                    <br>
-                    <small class="text-muted">{{ dep.description }}</small>
+                    {% if dep.type == 'SDK' %}<span class="badge bg-success">SDK</span>
+                    {% elif dep.type == 'Runtime' %}<span class="badge bg-info text-dark">Runtime</span>
+                    {% elif dep.type == 'BaseApp' %}<span class="badge bg-secondary">BaseApp</span>
+                    {% else %}<span class="badge bg-warning text-dark">Extension</span>{% endif %}
                 </td>
+                <td><code class="small">{{ dep.branch }}</code></td>
                 <td>
-                    {% if dep.type == 'SDK' %}
-                    <span class="badge bg-success">SDK</span>
-                    {% elif dep.type == 'Runtime' %}
-                    <span class="badge bg-info text-dark">Runtime</span>
-                    {% elif dep.type == 'BaseApp' %}
-                    <span class="badge bg-secondary">BaseApp</span>
-                    {% else %}
-                    <span class="badge bg-warning text-dark">Extension</span>
-                    {% endif %}
-                </td>
-                <td>
-                    {% if dep.build_type == 'bst' %}
-                    <span class="badge bg-primary"><i class="bi bi-layers"></i> BuildStream</span>
-                    {% else %}
-                    <span class="badge bg-secondary"><i class="bi bi-box"></i> flatpak-builder</span>
-                    {% endif %}
-                </td>
-                <td>
-                    {% if dep.managed_bst %}
-                    <a href="{% url 'flatpak:bst_source_detail' dep.managed_bst.pk %}" class="badge bg-success text-decoration-none">
-                        <i class="bi bi-layers"></i> BST: {{ dep.managed_bst.name }}
-                    </a>
-                    {% elif dep.managed_pkg %}
-                    <a href="{% url 'flatpak:package_detail' dep.managed_pkg.pk %}" class="badge bg-primary text-decoration-none">
-                        <i class="bi bi-box"></i> Package: {{ dep.managed_pkg.package_name|default:dep.managed_pkg.package_id }}
-                    </a>
-                    {% else %}
-                    <span class="text-muted small"><i class="bi bi-dash-circle"></i> Not managed</span>
-                    {% endif %}
+                    {% for pkg in dep.required_by %}
+                    <a href="{% url 'flatpak:package_detail' pkg.pk %}" class="badge bg-primary text-decoration-none me-1">{{ pkg.name }}</a>
+                    {% endfor %}
                 </td>
                 <td class="text-end">
-                    {% if not dep.managed_bst and not dep.managed_pkg %}
-                    {% if dep.build_type == 'bst' %}
-                    <a href="{{ dep.add_bst_url }}" class="btn btn-sm btn-outline-primary">
-                        <i class="bi bi-plus-circle"></i> Add as BST
-                    </a>
-                    {% else %}
-                    <a href="{{ dep.add_pkg_url }}" class="btn btn-sm btn-outline-success">
-                        <i class="bi bi-plus-circle"></i> Add as Package
-                    </a>
-                    {% endif %}
-                    {% else %}
-                    <span class="text-success small"><i class="bi bi-check-circle-fill"></i> Managed</span>
-                    {% endif %}
-                    <a href="{{ dep.add_external_url }}" class="btn btn-sm btn-outline-secondary ms-1" title="Import from a remote as an External ref">
-                        <i class="bi bi-cloud-download"></i> Import
+                    <a href="{{ dep.add_external_url }}" target="_blank"
+                       class="btn btn-sm btn-outline-secondary"
+                       title="Track as External Ref — opens create form in new tab">
+                        <i class="bi bi-cloud-download"></i> Import as External
                     </a>
                 </td>
             </tr>
@@ -100,6 +66,13 @@
             </tbody>
         </table>
     </div>
+    {% else %}
+    <div class="card-body">
+        <p class="text-muted mb-0 text-center py-2">
+            <i class="bi bi-check-circle-fill text-success"></i> All package dependencies are tracked as External Refs.
+        </p>
+    </div>
+    {% endif %}
 </div>
 
 <!-- ====================================================== -->
@@ -141,11 +114,18 @@
                         <a href="{% url 'flatpak:package_detail' dep.managed_pkg.pk %}" class="badge bg-primary text-decoration-none">
                             <i class="bi bi-box"></i> Package: {{ dep.managed_pkg.package_name|default:dep.managed_pkg.package_id }}
                         </a>
+                        {% elif dep.managed_external %}
+                        <a href="{% url 'flatpak:external_detail' dep.managed_external.pk %}" class="badge bg-info text-dark text-decoration-none">
+                            <i class="bi bi-cloud-download"></i> External: {{ dep.managed_external.display_name|default:dep.id }}
+                        </a>
                         {% else %}
                         <span class="text-muted small"><i class="bi bi-dash-circle"></i> Not managed</span>
                         {% endif %}
                     </td>
                     <td class="text-end">
+                        {% if dep.managed_external %}
+                        <span class="text-success small"><i class="bi bi-check-circle-fill"></i> Managed</span>
+                        {% else %}
                         {% if not dep.is_managed %}
                         {% if dep.has_bst_info %}
                         <a href="{{ dep.add_bst_url }}" class="btn btn-sm btn-outline-primary">
@@ -161,6 +141,7 @@
                         <a href="{{ dep.add_external_url }}" class="btn btn-sm btn-outline-secondary ms-1" title="Import from a remote as an External ref">
                             <i class="bi bi-cloud-download"></i> Import
                         </a>
+                        {% endif %}
                     </td>
                 </tr>
                 {% endfor %}
@@ -209,11 +190,18 @@
                         <a href="{% url 'flatpak:package_detail' dep.managed_pkg.pk %}" class="badge bg-primary text-decoration-none">
                             <i class="bi bi-box"></i> Package: {{ dep.managed_pkg.package_name|default:dep.managed_pkg.package_id }}
                         </a>
+                        {% elif dep.managed_external %}
+                        <a href="{% url 'flatpak:external_detail' dep.managed_external.pk %}" class="badge bg-info text-dark text-decoration-none">
+                            <i class="bi bi-cloud-download"></i> External: {{ dep.managed_external.display_name|default:dep.id }}
+                        </a>
                         {% else %}
                         <span class="text-muted small"><i class="bi bi-dash-circle"></i> Not managed</span>
                         {% endif %}
                     </td>
                     <td class="text-end">
+                        {% if dep.managed_external %}
+                        <span class="text-success small"><i class="bi bi-check-circle-fill"></i> Managed</span>
+                        {% else %}
                         {% if not dep.is_managed %}
                         {% if dep.has_bst_info %}
                         <a href="{{ dep.add_bst_url }}" class="btn btn-sm btn-outline-primary">
@@ -229,6 +217,7 @@
                         <a href="{{ dep.add_external_url }}" class="btn btn-sm btn-outline-secondary ms-1" title="Import from a remote as an External ref">
                             <i class="bi bi-cloud-download"></i> Import
                         </a>
+                        {% endif %}
                     </td>
                 </tr>
                 {% endfor %}
