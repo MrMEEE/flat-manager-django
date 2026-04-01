@@ -2633,6 +2633,7 @@ def parse_manifest_dependencies(package, manifest_file, build=None):
                                 for pattern in [
                                     r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)',
                                     r'/(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/',
+                                    r'/(\d{4}-\d{2})(?:/|$)',  # YYYY-MM style (e.g. Eclipse)
                                 ]:
                                     match = re.search(pattern, url)
                                     if match:
