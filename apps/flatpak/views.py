@@ -2177,6 +2177,7 @@ def dependencies_list(request):
                     'app_id': _parts[0] if _parts else _full_ref,
                     'type': _dtype,
                     'branch': _parts[-1] if len(_parts) >= 1 else '',
+                    'ostree_ref': f"runtime/{_full_ref}",
                     'required_by': [],
                     'add_external_url': (
                         external_create_url + '?' + urlencode({'ref': f"runtime/{_full_ref}"})
@@ -2267,11 +2268,14 @@ def dependencies_list(request):
             ext_ref_str = f"{ref_type}/{app_id}/x86_64/{dep['branch']}"
             dep['add_external_url'] = external_create_url + '?' + urlencode({'ref': ext_ref_str})
 
+    from .models import FlatpakRemote as _FR
     context = {
         'missing_deps': missing_deps,
         'dependencies': dependencies,
         'total_system': len(dependencies['system']),
         'total_user': len(dependencies['user']),
+        'repositories': Repository.objects.filter(parent_repos__isnull=True, is_active=True).order_by('name'),
+        'remotes': _FR.objects.filter(is_active=True).order_by('priority', 'name'),
     }
     return render(request, 'flatpak/dependencies_list.html', context)
 
@@ -2407,6 +2411,78 @@ class ExternalRefBulkActionView(LoginRequiredMixin, View):
             return JsonResponse({'status': 'success', 'updated': qs.count()})
 
         return JsonResponse({'error': f'Unknown action: {action}'}, status=400)
+
+
+class ExternalRefBulkImportView(LoginRequiredMixin, View):
+    """Create and immediately pull multiple ExternalRefs sharing a common repository and remote.
+
+    POST body (JSON): { repository_id, remote_id, refs: [str, ...] }
+    Returns: { created, skipped, redirect_url }
+    """
+
+    def post(self, request):
+        import json
+        from .models import ExternalRef, FlatpakRemote
+        from apps.flatpak.tasks import pull_external_ref_task
+
+        try:
+            data = json.loads(request.body)
+        except (json.JSONDecodeError, ValueError):
+            return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+        repository_id = data.get('repository_id')
+        remote_id = data.get('remote_id')
+        refs = data.get('refs', [])
+
+        if not repository_id or not remote_id:
+            return JsonResponse({'error': 'repository_id and remote_id are required'}, status=400)
+        if not refs or not isinstance(refs, list):
+            return JsonResponse({'error': 'refs list is required'}, status=400)
+
+        try:
+            repository = Repository.objects.get(pk=repository_id, parent_repos__isnull=True, is_active=True)
+        except Repository.DoesNotExist:
+            return JsonResponse({'error': 'Invalid repository'}, status=400)
+
+        try:
+            remote = FlatpakRemote.objects.get(pk=remote_id, is_active=True)
+        except FlatpakRemote.DoesNotExist:
+            return JsonResponse({'error': 'Invalid remote'}, status=400)
+
+        created = skipped = 0
+        for ref in refs:
+            ref = str(ref).strip()
+            if not ref:
+                continue
+            parts = ref.split('/')
+            if len(parts) >= 4:
+                display_name = f"{parts[1]}/{parts[3]}"
+            elif len(parts) >= 2:
+                display_name = parts[1]
+            else:
+                display_name = ref
+
+            ext, was_created = ExternalRef.objects.get_or_create(
+                repository=repository,
+                ref=ref,
+                defaults={
+                    'remote': remote,
+                    'display_name': display_name,
+                    'created_by': request.user,
+                    'status': 'pending',
+                },
+            )
+            if was_created:
+                pull_external_ref_task.delay(ext.pk)
+                created += 1
+            else:
+                skipped += 1
+
+        return JsonResponse({
+            'created': created,
+            'skipped': skipped,
+            'redirect_url': reverse('flatpak:external_list'),
+        })
 
 
 class ExternalRefDetailView(LoginRequiredMixin, DetailView):

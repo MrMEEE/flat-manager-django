@@ -59,6 +59,7 @@ urlpatterns = [
     path('dependencies/', views.dependencies_list, name='dependencies_list'),
     path('externals/', views.ExternalRefListView.as_view(), name='external_list'),
     path('externals/bulk-action/', views.ExternalRefBulkActionView.as_view(), name='external_bulk_action'),
+    path('externals/bulk-import/', views.ExternalRefBulkImportView.as_view(), name='external_bulk_import'),
     path('externals/create/', views.ExternalRefCreateView.as_view(), name='external_create'),
     path('externals/<int:pk>/', views.ExternalRefDetailView.as_view(), name='external_detail'),
     path('externals/<int:pk>/delete/', views.ExternalRefDeleteView.as_view(), name='external_delete'),

@@ -50,7 +50,7 @@
             <tbody>
             {% for dep in missing_deps %}
             <tr>
-                <td><input type="checkbox" class="form-check-input missing-dep-check" data-url="{{ dep.add_external_url }}"></td>
+                <td><input type="checkbox" class="form-check-input missing-dep-check" data-ref="{{ dep.ostree_ref }}"></td>
                 <td><code class="small">{{ dep.app_id }}</code></td>
                 <td>
                     {% if dep.type == 'SDK' %}<span class="badge bg-success">SDK</span>
@@ -240,23 +240,65 @@
     </div>
 </div>
 
-<!-- Import Selected confirmation modal -->
+<!-- Import Selected — repository/remote picker modal -->
 <div class="modal fade" id="importSelectedModal" tabindex="-1" aria-labelledby="importSelectedModalLabel" aria-hidden="true">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="importSelectedModalLabel"><i class="bi bi-cloud-download"></i> Import Selected</h5>
+                <h5 class="modal-title" id="importSelectedModalLabel">
+                    <i class="bi bi-cloud-download"></i> Import Selected
+                    (<span id="importCountLabel">0</span>)
+                </h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
-                <p>This will open <strong id="importCount">0</strong> create form(s) in new tabs — one per selected dependency.</p>
-                <p class="mb-0 text-muted small">Your browser may block pop-ups. If tabs don't appear, allow pop-ups for this site.</p>
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold" for="importRepository">Destination Repository</label>
+                        <select id="importRepository" class="form-select">
+                            <option value="">— select repository —</option>
+                            {% for repo in repositories %}
+                            <option value="{{ repo.pk }}">{{ repo.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold" for="importRemote">Remote</label>
+                        <select id="importRemote" class="form-select">
+                            <option value="">— select remote —</option>
+                            {% for remote in remotes %}
+                            <option value="{{ remote.pk }}">{{ remote.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <p class="mb-1 text-muted small">Refs to import:</p>
+                    <ul id="importRefList" class="list-unstyled small font-monospace mb-0 ps-2"
+                        style="max-height:140px;overflow-y:auto;"></ul>
+                </div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-primary" id="btnConfirmImport">
-                    <i class="bi bi-cloud-download"></i> Open Forms
+                <button type="button" class="btn btn-primary" id="btnConfirmImport" disabled>
+                    <i class="bi bi-cloud-download"></i> Import
                 </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Error modal -->
+<div class="modal fade" id="importErrorModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="importErrorTitle">Error</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="importErrorBody"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
             </div>
         </div>
     </div>
@@ -265,11 +307,17 @@
 {% block extra_js %}
 <script>
 (function () {
-    const selectAll = document.getElementById('selectAllMissing');
-    const countBadge = document.getElementById('selectedCount');
-    const importCountEl = document.getElementById('importCount');
-    const btnImport = document.getElementById('btnImportSelected');
-    const btnConfirm = document.getElementById('btnConfirmImport');
+    const IMPORT_URL = "{% url 'flatpak:external_bulk_import' %}";
+    const _csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] || '';
+
+    const selectAll    = document.getElementById('selectAllMissing');
+    const countBadge   = document.getElementById('selectedCount');
+    const countLabel   = document.getElementById('importCountLabel');
+    const btnImport    = document.getElementById('btnImportSelected');
+    const btnConfirm   = document.getElementById('btnConfirmImport');
+    const repoSel      = document.getElementById('importRepository');
+    const remoteSel    = document.getElementById('importRemote');
+    const refList      = document.getElementById('importRefList');
 
     if (!selectAll) return; // no missing deps
 
@@ -277,30 +325,69 @@
         return Array.from(document.querySelectorAll('.missing-dep-check:checked'));
     }
 
+    function checkConfirmReady() {
+        btnConfirm.disabled = !(getChecked().length > 0 && repoSel.value && remoteSel.value);
+    }
+
     function updateUI() {
-        const n = getChecked().length;
+        const checked = getChecked();
+        const n = checked.length;
         countBadge.textContent = n;
-        importCountEl.textContent = n;
+        if (countLabel) countLabel.textContent = n;
         btnImport.disabled = n === 0;
         const all = document.querySelectorAll('.missing-dep-check');
         selectAll.indeterminate = n > 0 && n < all.length;
         selectAll.checked = n > 0 && n === all.length;
+        if (refList) refList.innerHTML = checked.map(cb =>
+            `<li><code>${cb.dataset.ref}</code></li>`
+        ).join('');
+        checkConfirmReady();
     }
 
     selectAll.addEventListener('change', function () {
         document.querySelectorAll('.missing-dep-check').forEach(cb => { cb.checked = this.checked; });
         updateUI();
     });
+    document.querySelectorAll('.missing-dep-check').forEach(cb => cb.addEventListener('change', updateUI));
+    repoSel.addEventListener('change', checkConfirmReady);
+    remoteSel.addEventListener('change', checkConfirmReady);
 
-    document.querySelectorAll('.missing-dep-check').forEach(cb => {
-        cb.addEventListener('change', updateUI);
+    // Refresh ref list each time the modal opens
+    document.getElementById('importSelectedModal').addEventListener('show.bs.modal', updateUI);
+
+    btnConfirm.addEventListener('click', async function () {
+        const refs = getChecked().map(cb => cb.dataset.ref);
+        const repository_id = parseInt(repoSel.value);
+        const remote_id = parseInt(remoteSel.value);
+
+        btnConfirm.disabled = true;
+        btnConfirm.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Importing…';
+
+        try {
+            const r = await fetch(IMPORT_URL, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': _csrf, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ repository_id, remote_id, refs }),
+                credentials: 'same-origin',
+            });
+            const d = await r.json().catch(() => ({}));
+            bootstrap.Modal.getInstance(document.getElementById('importSelectedModal')).hide();
+            if (r.ok) {
+                window.location.href = d.redirect_url || '/externals/';
+            } else {
+                showImportError('Import Failed', d.error || r.statusText);
+            }
+        } catch (e) {
+            bootstrap.Modal.getInstance(document.getElementById('importSelectedModal')).hide();
+            showImportError('Import Error', e.message);
+        }
     });
 
-    btnConfirm.addEventListener('click', function () {
-        const modal = bootstrap.Modal.getInstance(document.getElementById('importSelectedModal'));
-        modal.hide();
-        getChecked().forEach(cb => window.open(cb.dataset.url, '_blank'));
-    });
+    function showImportError(title, message) {
+        document.getElementById('importErrorTitle').textContent = title;
+        document.getElementById('importErrorBody').textContent = message;
+        new bootstrap.Modal(document.getElementById('importErrorModal')).show();
+    }
 })();
 </script>
 {% endblock %}
