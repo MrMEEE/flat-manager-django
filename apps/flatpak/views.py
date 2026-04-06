@@ -2831,15 +2831,66 @@ class ClientCheckinView(View):
         remotes = data.get('remotes', [])
         managed_remote_names = data.get('managed_remotes', [])
         installed = data.get('installed', [])
-        updates_available = data.get('updates_available', [])
         user_flatpaks = data.get('user_flatpaks', [])
 
-        # Compute derived fields
+        # Compute foreign flatpaks
+        managed_set = set(managed_remote_names)
         foreign_flatpaks = [
             pkg for pkg in installed
-            if pkg.get('origin') not in managed_remote_names
+            if pkg.get('origin') not in managed_set
         ]
-        outdated_flatpaks = updates_available
+
+        # Compute outdated flatpaks server-side: compare each installed package
+        # from a managed remote against the latest published version in our DB.
+        managed_app_ids = list({
+            p['app_id'] for p in installed if p.get('origin') in managed_set
+        })
+        latest_versions = {}
+        if managed_app_ids:
+            from .models import Package as _Package
+            for p in _Package.objects.filter(
+                package_id__in=managed_app_ids,
+                status='published',
+            ).only('package_id', 'version'):
+                existing = latest_versions.get(p.package_id)
+                if existing is None:
+                    latest_versions[p.package_id] = p.version
+                else:
+                    try:
+                        from packaging.version import Version as _PV
+                        if _PV(p.version) > _PV(existing):
+                            latest_versions[p.package_id] = p.version
+                    except Exception:
+                        pass
+
+        try:
+            from packaging.version import Version as _PkgVer, InvalidVersion as _BadVer
+            def _ver_lt(a, b):
+                try:
+                    return _PkgVer(a) < _PkgVer(b)
+                except _BadVer:
+                    return a != b
+        except ImportError:
+            def _ver_lt(a, b):
+                return a != b
+
+        outdated_flatpaks = []
+        for pkg in installed:
+            if pkg.get('origin') not in managed_set:
+                continue
+            app_id = pkg['app_id']
+            inst_ver = pkg.get('version', '')
+            latest_ver = latest_versions.get(app_id, '')
+            if not inst_ver or not latest_ver:
+                continue
+            if _ver_lt(inst_ver, latest_ver):
+                outdated_flatpaks.append({
+                    'app_id':          app_id,
+                    'current_version': inst_ver,
+                    'new_version':     latest_ver,
+                    'origin':          pkg.get('origin', ''),
+                    'name':            pkg.get('name', ''),
+                })
 
         client, _ = Client.objects.get_or_create(hostname=hostname)
         client.last_checkin = timezone.now()

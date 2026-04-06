@@ -832,7 +832,7 @@ class Client(models.Model):
     )
     user_flatpaks = models.JSONField(
         default=list,
-        help_text="Per-user installed flatpaks: [{username, installed: [...], updates_available: [...]}]."
+        help_text="Per-user installed flatpaks: [{username, installed: [...]}]."
     )
     organisations = models.ManyToManyField(
         'Organisation',

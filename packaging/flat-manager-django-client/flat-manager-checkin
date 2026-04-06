@@ -15,6 +15,7 @@ exec python3 "$0" "$@"
 
 import argparse
 import configparser
+import grp
 import json
 import os
 import pwd
@@ -78,7 +79,7 @@ def get_user_remotes(username):
     return remotes
 
 
-def get_all_remotes():
+def get_all_remotes(users=None):
     """
     Return combined list of system remotes plus any user remotes not already
     present (by name) in the system list.  User remotes are collected via
@@ -86,8 +87,10 @@ def get_all_remotes():
     """
     remotes = get_remotes()
     if os.geteuid() == 0:
+        if users is None:
+            users = get_local_users()
         seen = {r['name'] for r in remotes}
-        for username, _ in get_local_users():
+        for username, _ in users:
             for r in get_user_remotes(username):
                 if r['name'] not in seen:
                     remotes.append(r)
@@ -111,23 +114,7 @@ def parse_installed(output):
     return result
 
 
-def parse_updates(output):
-    """Parse flatpak remote-ls --updates output into [{app_id, new_version, origin, name, branch}]."""
-    result = []
-    for line in output.splitlines():
-        parts = line.split('\t')
-        if len(parts) >= 3:
-            result.append({
-                'app_id':      parts[0].strip(),
-                'new_version': parts[1].strip(),
-                'origin':      parts[2].strip(),
-                'name':        parts[3].strip() if len(parts) > 3 else '',
-                'branch':      parts[4].strip() if len(parts) > 4 else '',
-            })
-    return result
-
-
-def refresh_appstream():
+def refresh_appstream(users=None):
     """
     Refresh appstream metadata so version info is current before collecting data.
     Runs ``flatpak update --appstream`` for the system installation and for
@@ -148,7 +135,9 @@ def refresh_appstream():
 
     # Per-user appstream refresh (requires root via runuser)
     if os.geteuid() == 0:
-        for username, _ in get_local_users():
+        if users is None:
+            users = get_local_users()
+        for username, _ in users:
             res = subprocess.run(
                 ['runuser', '-u', username, '--',
                  'flatpak', 'update', '--appstream', '--user', '--noninteractive'],
@@ -166,47 +155,83 @@ def get_system_installed():
     return parse_installed(out)
 
 
-def get_system_updates():
-    out = run(['flatpak', 'remote-ls', '--system', '--updates',
-               '--columns=application,version,origin,name,branch'])
-    return parse_updates(out)
+def get_local_users(ad_groups=None):
+    """
+    Return list of (username, home) for human accounts.
 
-
-def get_local_users():
-    """Return list of (username, home) for human accounts: UID >= 1000, home exists."""
+    Includes local accounts with UID >= 1000 that have an existing home
+    directory.  If *ad_groups* is a non-empty list of group names, members of
+    those groups (resolved via NSS/SSSD) whose home directories exist on the
+    local filesystem are also included.
+    """
+    seen = set()
     users = []
     for entry in pwd.getpwall():
         if entry.pw_uid >= 1000 and os.path.isdir(entry.pw_dir):
             users.append((entry.pw_name, entry.pw_dir))
+            seen.add(entry.pw_name)
+    if ad_groups:
+        for username, home in get_ad_group_users(ad_groups):
+            if username not in seen:
+                users.append((username, home))
+                seen.add(username)
     return users
 
 
-def collect_user_flatpaks():
+def get_ad_group_users(group_names):
+    """
+    Return list of (username, home) for members of the given AD/SSSD groups
+    whose home directories exist on the local filesystem.
+
+    Group membership is resolved via NSS (getent), so this works transparently
+    with SSSD, winbind, or any other NSS provider.  Members whose accounts
+    cannot be resolved or who have no local home directory are silently skipped.
+    """
+    seen = set()
+    users = []
+    for group_name in group_names:
+        try:
+            grp_entry = grp.getgrnam(group_name)
+        except KeyError:
+            print(f'WARNING: AD group {group_name!r} not found via NSS — skipping.',
+                  file=sys.stderr)
+            continue
+        for username in grp_entry.gr_mem:
+            if username in seen:
+                continue
+            seen.add(username)
+            try:
+                pw = pwd.getpwnam(username)
+            except KeyError:
+                continue  # Account listed in group but not resolvable
+            if os.path.isdir(pw.pw_dir):
+                users.append((username, pw.pw_dir))
+    return users
+
+
+def collect_user_flatpaks(users=None):
     """
     Collect per-user flatpak data (requires root).
-    Returns list of {username, installed, updates_available} for users
-    that have at least one flatpak installed or an update pending.
+    Returns list of {username, installed} for users that have at least one
+    flatpak installed.  Update detection is handled server-side.
     """
     if os.geteuid() != 0:
         print('WARNING: not running as root — per-user flatpak data will not be collected.',
               file=sys.stderr)
         return []
 
+    if users is None:
+        users = get_local_users()
     result = []
-    for username, _ in get_local_users():
+    for username, _ in users:
         installed = parse_installed(
             run_as_user(username, ['flatpak', 'list', '--user',
                                    '--columns=application,version,origin,name,branch'])
         )
-        updates = parse_updates(
-            run_as_user(username, ['flatpak', 'remote-ls', '--user', '--updates',
-                                   '--columns=application,version,origin,name,branch'])
-        )
-        if installed or updates:
+        if installed:
             result.append({
-                'username':          username,
-                'installed':         installed,
-                'updates_available': updates,
+                'username': username,
+                'installed': installed,
             })
     return result
 
@@ -217,17 +242,15 @@ def identify_managed_remotes(remotes, server_url):
     return [r['name'] for r in remotes if r['url'].rstrip('/').startswith(server_url)]
 
 
-def checkin(server_url, hostname, remotes, managed_remotes, installed, updates,
-            user_flatpaks):
+def checkin(server_url, hostname, remotes, managed_remotes, installed, user_flatpaks):
     """POST the check-in payload to the server."""
     payload = {
-        'hostname':          hostname,
-        'server_url':        server_url,
-        'remotes':           remotes,
-        'managed_remotes':   managed_remotes,
-        'installed':         installed,
-        'updates_available': updates,
-        'user_flatpaks':     user_flatpaks,
+        'hostname':        hostname,
+        'server_url':      server_url,
+        'remotes':         remotes,
+        'managed_remotes': managed_remotes,
+        'installed':       installed,
+        'user_flatpaks':   user_flatpaks,
     }
     data = json.dumps(payload).encode('utf-8')
     url = server_url.rstrip('/') + '/api/client-checkin/'
@@ -259,6 +282,7 @@ def main():
             '  url = https://flat-manager.example.com\n\n'
             '  [client]\n'
             '  # hostname = my-custom-name\n'
+            '  # ad_groups = domain users, flatpak-managed\n'
         ),
     )
     parser.add_argument(
@@ -285,14 +309,20 @@ def main():
         or socket.gethostname()
     )
 
-    remotes         = get_all_remotes()
+    ad_groups_raw = cfg.get('client', 'ad_groups', fallback='').strip()
+    ad_groups = [g.strip() for g in ad_groups_raw.split(',') if g.strip()] if ad_groups_raw else []
+
+    # Build the full user list once; shared by remotes, appstream refresh, and
+    # per-user flatpak collection so that AD/SSSD users are consistently included.
+    users = get_local_users(ad_groups=ad_groups or None)
+
+    remotes         = get_all_remotes(users=users)
     managed_remotes = identify_managed_remotes(remotes, server_url)
-    refresh_appstream()
+    refresh_appstream(users=users)
 
     # System-wide data
     sys_installed = get_system_installed()
-    sys_updates   = get_system_updates()
-    user_flatpaks = collect_user_flatpaks()
+    user_flatpaks = collect_user_flatpaks(users=users)
 
     # Merge user installs into the main list (deduplicate by app_id so runtimes
     # that appear in both system and user scopes are counted only once).
@@ -309,17 +339,8 @@ def main():
                 installed.append(tagged)
                 seen_ids.add(pkg['app_id'])
 
-    # Merge user updates the same way
-    updates = list(sys_updates)
-    seen_update_ids = {pkg['app_id'] for pkg in updates}
-    for uf in user_flatpaks:
-        for pkg in uf.get('updates_available', []):
-            if pkg['app_id'] not in seen_update_ids:
-                updates.append(pkg)
-                seen_update_ids.add(pkg['app_id'])
-
     status, body = checkin(server_url, hostname, remotes, managed_remotes,
-                           installed, updates, user_flatpaks)
+                           installed, user_flatpaks)
 
     if status == 200:
         print(f'Check-in successful: {hostname} → {server_url}')

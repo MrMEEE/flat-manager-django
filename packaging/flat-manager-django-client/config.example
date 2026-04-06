@@ -6,3 +6,10 @@ url = https://flat-manager.example.com
 # Override the hostname reported to the server.
 # Defaults to the system hostname (socket.gethostname()).
 # hostname = my-custom-name
+
+# Comma-separated list of AD/SSSD group names whose members should be
+# included in per-user flatpak collection, in addition to local accounts
+# (UID >= 1000).  Group membership is resolved via NSS, so this works with
+# SSSD, winbind, or any other NSS provider.  Only members whose home
+# directories exist on the local filesystem are included.
+# ad_groups = domain users, flatpak-managed
