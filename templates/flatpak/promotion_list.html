@@ -58,15 +58,20 @@
 
 <!-- ═══ Ready to Commit ══════════════════════════════════════════════════════ -->
 <div class="card mb-4 border-warning">
-    <div class="card-header d-flex justify-content-between align-items-center bg-warning bg-opacity-10">
+    <div class="card-header d-flex justify-content-between align-items-center bg-warning bg-opacity-10"
+         style="cursor:pointer" data-bs-toggle="collapse" data-bs-target="#section-commit" aria-expanded="false">
         <h5 class="mb-0"><i class="bi bi-box-arrow-in-down-right text-warning"></i> Ready to Commit
             {% if ready_to_commit %}<span class="badge bg-warning text-dark ms-2">{{ ready_to_commit|length }}</span>{% endif %}
         </h5>
-        <button class="btn btn-sm btn-warning d-none" id="commit-selected-btn"
-                onclick="bulkAction('commit')">
-            <i class="bi bi-box-arrow-in-down-right"></i> Commit Selected
-        </button>
+        <div class="d-flex align-items-center gap-2" onclick="event.stopPropagation()">
+            <button class="btn btn-sm btn-warning d-none" id="commit-selected-btn"
+                    onclick="bulkAction('commit')">
+                <i class="bi bi-box-arrow-in-down-right"></i> Commit Selected
+            </button>
+            <i class="bi bi-chevron-down ms-2 section-chevron"></i>
+        </div>
     </div>
+    <div class="collapse" id="section-commit">
     <div class="card-body p-0">
         {% if ready_to_commit %}
         <div class="table-responsive">
@@ -111,19 +116,25 @@
         <div class="p-3 text-muted">No builds waiting to be committed.</div>
         {% endif %}
     </div>
+    </div><!-- /#section-commit -->
 </div>
 
 <!-- ═══ Ready to Publish ═════════════════════════════════════════════════════ -->
 <div class="card mb-4 border-success">
-    <div class="card-header d-flex justify-content-between align-items-center bg-success bg-opacity-10">
+    <div class="card-header d-flex justify-content-between align-items-center bg-success bg-opacity-10"
+         style="cursor:pointer" data-bs-toggle="collapse" data-bs-target="#section-publish" aria-expanded="false">
         <h5 class="mb-0"><i class="bi bi-cloud-upload text-success"></i> Ready to Publish
             {% if ready_to_publish %}<span class="badge bg-success ms-2">{{ ready_to_publish|length }}</span>{% endif %}
         </h5>
-        <button class="btn btn-sm btn-success d-none" id="publish-selected-btn"
-                onclick="bulkAction('publish')">
-            <i class="bi bi-cloud-upload"></i> Publish Selected
-        </button>
+        <div class="d-flex align-items-center gap-2" onclick="event.stopPropagation()">
+            <button class="btn btn-sm btn-success d-none" id="publish-selected-btn"
+                    onclick="bulkAction('publish')">
+                <i class="bi bi-cloud-upload"></i> Publish Selected
+            </button>
+            <i class="bi bi-chevron-down ms-2 section-chevron"></i>
+        </div>
     </div>
+    <div class="collapse" id="section-publish">
     <div class="card-body p-0">
         {% if ready_to_publish %}
         <div class="table-responsive">
@@ -168,19 +179,25 @@
         <div class="p-3 text-muted">No builds waiting to be published.</div>
         {% endif %}
     </div>
+    </div><!-- /#section-publish -->
 </div>
 
 <!-- ═══ Ready to Promote ═════════════════════════════════════════════════════ -->
 <div class="card mb-4 border-primary">
-    <div class="card-header d-flex justify-content-between align-items-center bg-primary bg-opacity-10">
+    <div class="card-header d-flex justify-content-between align-items-center bg-primary bg-opacity-10"
+         style="cursor:pointer" data-bs-toggle="collapse" data-bs-target="#section-promote" aria-expanded="false">
         <h5 class="mb-0"><i class="bi bi-arrow-up-right text-primary"></i> Ready to Promote
             {% if ready_to_promote %}<span class="badge bg-primary ms-2">{{ ready_to_promote|length }}</span>{% endif %}
         </h5>
-        <button class="btn btn-sm btn-primary d-none" id="promote-selected-btn"
-                onclick="bulkPromote()">
-            <i class="bi bi-arrow-up-right"></i> Promote Selected
-        </button>
+        <div class="d-flex align-items-center gap-2" onclick="event.stopPropagation()">
+            <button class="btn btn-sm btn-primary d-none" id="promote-selected-btn"
+                    onclick="bulkPromote()">
+                <i class="bi bi-arrow-up-right"></i> Promote Selected
+            </button>
+            <i class="bi bi-chevron-down ms-2 section-chevron"></i>
+        </div>
     </div>
+    <div class="collapse" id="section-promote">
     <div class="card-body p-0">
         {% if ready_to_promote %}
         <div class="table-responsive">
@@ -196,10 +213,26 @@
                     </tr>
                 </thead>
                 <tbody>
-                    {% for item in ready_to_promote %}
-                    <tr id="promote-row-{{ item.build.pk }}">
+                    {% regroup ready_to_promote by build.package.package_name as promote_groups %}
+                    {% for group in promote_groups %}
+                    {% if group.list|length > 1 %}
+                    <tr class="table-light promote-group-header" style="cursor:pointer"
+                        data-bs-toggle="collapse" data-bs-target=".promote-group-{{ forloop.counter }}"
+                        aria-expanded="false">
+                        <td></td>
+                        <td colspan="4">
+                            <i class="bi bi-folder2 text-primary me-1"></i>
+                            <strong>{{ group.grouper }}</strong>
+                            <span class="badge bg-primary ms-2">{{ group.list|length }}</span>
+                            <i class="bi bi-chevron-down ms-1 small"></i>
+                        </td>
+                        <td></td>
+                    </tr>
+                    {% for item in group.list %}
+                    <tr id="promote-row-{{ item.build.pk }}" class="collapse promote-group-{{ forloop.parentloop.counter }}">
                         <td><input type="checkbox" class="form-check-input promote-chk"
                                    value="{{ item.build.pk }}"
+                                   data-pkg-name="{{ item.build.package.package_name|escapejs }}"
                                    data-targets="[{% for repo in item.targets %}{&quot;id&quot;:{{ repo.pk }},&quot;name&quot;:&quot;{{ repo.name|escapejs }}&quot;}{% if not forloop.last %},{% endif %}{% endfor %}]"></td>
                         <td>
                             <a href="{% url 'flatpak:package_detail' item.build.package.pk %}">{{ item.build.package.package_name }}</a>
@@ -209,14 +242,78 @@
                         <td><a href="{% url 'flatpak:repo_detail' item.build.package.repository.pk %}">{{ item.build.package.repository.name }}</a></td>
                         <td><a href="{% url 'flatpak:build_detail' item.build.pk %}">#{{ item.build.build_number }}</a></td>
                         <td>
-                            {% for repo in item.targets %}
-                            <button class="btn btn-sm btn-primary me-1"
+                            {% if item.targets|length == 1 %}
+                            {% with repo=item.targets.0 %}
+                            <button class="btn btn-sm btn-primary"
                                     onclick="promoteFromList({{ item.build.pk }}, {{ repo.pk }}, '{{ repo.name|escapejs }}', '{{ item.build.package.package_name|escapejs }}')">
-                                <i class="bi bi-arrow-up-right"></i> Promote to {{ repo.name }}
+                                <i class="bi bi-arrow-up-right"></i> Promote
                             </button>
-                            {% endfor %}
+                            {% endwith %}
+                            {% else %}
+                            <div class="dropdown">
+                                <button class="btn btn-sm btn-primary dropdown-toggle" type="button"
+                                        data-bs-toggle="dropdown" aria-expanded="false">
+                                    <i class="bi bi-arrow-up-right"></i> Promote
+                                </button>
+                                <ul class="dropdown-menu">
+                                    {% for repo in item.targets %}
+                                    <li>
+                                        <a class="dropdown-item" href="#"
+                                           onclick="event.preventDefault(); promoteFromList({{ item.build.pk }}, {{ repo.pk }}, '{{ repo.name|escapejs }}', '{{ item.build.package.package_name|escapejs }}')">
+                                            {{ repo.name }}
+                                        </a>
+                                    </li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
                         </td>
                     </tr>
+                    {% endfor %}
+                    {% else %}
+                    {% for item in group.list %}
+                    <tr id="promote-row-{{ item.build.pk }}">
+                        <td><input type="checkbox" class="form-check-input promote-chk"
+                                   value="{{ item.build.pk }}"
+                                   data-pkg-name="{{ item.build.package.package_name|escapejs }}"
+                                   data-targets="[{% for repo in item.targets %}{&quot;id&quot;:{{ repo.pk }},&quot;name&quot;:&quot;{{ repo.name|escapejs }}&quot;}{% if not forloop.last %},{% endif %}{% endfor %}]"></td>
+                        <td>
+                            <a href="{% url 'flatpak:package_detail' item.build.package.pk %}">{{ item.build.package.package_name }}</a>
+                            <br><small class="text-muted"><code>{{ item.build.package.package_id }}</code></small>
+                        </td>
+                        <td>{{ item.build.version|default:"-" }}</td>
+                        <td><a href="{% url 'flatpak:repo_detail' item.build.package.repository.pk %}">{{ item.build.package.repository.name }}</a></td>
+                        <td><a href="{% url 'flatpak:build_detail' item.build.pk %}">#{{ item.build.build_number }}</a></td>
+                        <td>
+                            {% if item.targets|length == 1 %}
+                            {% with repo=item.targets.0 %}
+                            <button class="btn btn-sm btn-primary"
+                                    onclick="promoteFromList({{ item.build.pk }}, {{ repo.pk }}, '{{ repo.name|escapejs }}', '{{ item.build.package.package_name|escapejs }}')">
+                                <i class="bi bi-arrow-up-right"></i> Promote
+                            </button>
+                            {% endwith %}
+                            {% else %}
+                            <div class="dropdown">
+                                <button class="btn btn-sm btn-primary dropdown-toggle" type="button"
+                                        data-bs-toggle="dropdown" aria-expanded="false">
+                                    <i class="bi bi-arrow-up-right"></i> Promote
+                                </button>
+                                <ul class="dropdown-menu">
+                                    {% for repo in item.targets %}
+                                    <li>
+                                        <a class="dropdown-item" href="#"
+                                           onclick="event.preventDefault(); promoteFromList({{ item.build.pk }}, {{ repo.pk }}, '{{ repo.name|escapejs }}', '{{ item.build.package.package_name|escapejs }}')">
+                                            {{ repo.name }}
+                                        </a>
+                                    </li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% endif %}
                     {% endfor %}
                 </tbody>
             </table>
@@ -225,53 +322,152 @@
         <div class="p-3 text-muted">No published builds waiting to be promoted.</div>
         {% endif %}
     </div>
+    </div><!-- /#section-promote -->
 </div>
 
 {% if ready_to_promote_bst or bst_promotions %}
 <!-- ═══ Ready to Promote (BuildStream) ══════════════════════════════════════ -->
 {% if ready_to_promote_bst %}
 <div class="card mb-4 border-info">
-    <div class="card-header bg-info bg-opacity-10">
+    <div class="card-header bg-info bg-opacity-10 d-flex justify-content-between align-items-center"
+         style="cursor:pointer" data-bs-toggle="collapse" data-bs-target="#section-bst-promote" aria-expanded="false">
         <h5 class="mb-0"><i class="bi bi-layers text-info"></i> BST Builds Ready to Promote
             <span class="badge bg-info ms-2">{{ ready_to_promote_bst|length }}</span>
         </h5>
+        <div class="d-flex align-items-center gap-2" onclick="event.stopPropagation()">
+            <button class="btn btn-sm btn-info d-none" id="bst-promote-selected-btn"
+                    onclick="bulkBstPromote()">
+                <i class="bi bi-arrow-up-right"></i> Promote Selected
+            </button>
+            <i class="bi bi-chevron-down ms-2 section-chevron"></i>
+        </div>
     </div>
+    <div class="collapse" id="section-bst-promote">
     <div class="card-body p-0">
         <div class="table-responsive">
             <table class="table table-hover mb-0">
                 <thead class="table-light">
-                    <tr><th>Source</th><th>Version</th><th>Source Repo</th><th>Build</th><th>Actions</th></tr>
+                    <tr>
+                        <th style="width:2.5rem"><input type="checkbox" class="form-check-input" id="bst-promote-select-all" title="Select all"></th>
+                        <th>Source</th><th>Version</th><th>Source Repo</th><th>Build</th><th>Actions</th>
+                    </tr>
                 </thead>
                 <tbody>
-                    {% for item in ready_to_promote_bst %}
-                    <tr>
+                    {% regroup ready_to_promote_bst by build.bst_source.name as bst_promote_groups %}
+                    {% for group in bst_promote_groups %}
+                    {% if group.list|length > 1 %}
+                    <tr class="table-light bst-promote-group-header" style="cursor:pointer"
+                        data-bs-toggle="collapse" data-bs-target=".bst-promote-group-{{ forloop.counter }}"
+                        aria-expanded="false">
+                        <td></td>
+                        <td colspan="4">
+                            <i class="bi bi-folder2 text-info me-1"></i>
+                            <strong>{{ group.grouper }}</strong>
+                            <span class="badge bg-info ms-2">{{ group.list|length }}</span>
+                            <i class="bi bi-chevron-down ms-1 small"></i>
+                        </td>
+                        <td></td>
+                    </tr>
+                    {% for item in group.list %}
+                    <tr class="collapse bst-promote-group-{{ forloop.parentloop.counter }}">
+                        <td><input type="checkbox" class="form-check-input bst-promote-chk"
+                                   value="{{ item.build.pk }}"
+                                   data-source-name="{{ item.build.bst_source.name|escapejs }}"
+                                   data-targets="[{% for repo in item.targets %}{&quot;id&quot;:{{ repo.pk }},&quot;name&quot;:&quot;{{ repo.name|escapejs }}&quot;}{% if not forloop.last %},{% endif %}{% endfor %}]"></td>
                         <td><a href="{% url 'flatpak:bst_source_detail' item.build.bst_source.pk %}">{{ item.build.bst_source.name }}</a></td>
                         <td>{{ item.build.version|default:"—" }}</td>
                         <td>{{ item.build.bst_source.repository.name }}</td>
                         <td><a href="{% url 'flatpak:build_detail' item.build.pk %}">#{{ item.build.build_number }}</a></td>
                         <td>
-                            {% for repo in item.targets %}
-                            <button class="btn btn-sm btn-info me-1"
+                            {% if item.targets|length == 1 %}
+                            {% with repo=item.targets.0 %}
+                            <button class="btn btn-sm btn-info"
                                     onclick="bstPromoteFromList({{ item.build.pk }}, {{ repo.pk }}, '{{ repo.name|escapejs }}', '{{ item.build.bst_source.name|escapejs }}')">
-                                <i class="bi bi-arrow-up-right"></i> → {{ repo.name }}
+                                <i class="bi bi-arrow-up-right"></i> Promote
                             </button>
-                            {% endfor %}
+                            {% endwith %}
+                            {% else %}
+                            <div class="dropdown">
+                                <button class="btn btn-sm btn-info dropdown-toggle" type="button"
+                                        data-bs-toggle="dropdown" aria-expanded="false">
+                                    <i class="bi bi-arrow-up-right"></i> Promote
+                                </button>
+                                <ul class="dropdown-menu">
+                                    {% for repo in item.targets %}
+                                    <li>
+                                        <a class="dropdown-item" href="#"
+                                           onclick="event.preventDefault(); bstPromoteFromList({{ item.build.pk }}, {{ repo.pk }}, '{{ repo.name|escapejs }}', '{{ item.build.bst_source.name|escapejs }}')">
+                                            {{ repo.name }}
+                                        </a>
+                                    </li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
                         </td>
                     </tr>
+                    {% endfor %}
+                    {% else %}
+                    {% for item in group.list %}
+                    <tr>
+                        <td><input type="checkbox" class="form-check-input bst-promote-chk"
+                                   value="{{ item.build.pk }}"
+                                   data-source-name="{{ item.build.bst_source.name|escapejs }}"
+                                   data-targets="[{% for repo in item.targets %}{&quot;id&quot;:{{ repo.pk }},&quot;name&quot;:&quot;{{ repo.name|escapejs }}&quot;}{% if not forloop.last %},{% endif %}{% endfor %}]"></td>
+                        <td><a href="{% url 'flatpak:bst_source_detail' item.build.bst_source.pk %}">{{ item.build.bst_source.name }}</a></td>
+                        <td>{{ item.build.version|default:"—" }}</td>
+                        <td>{{ item.build.bst_source.repository.name }}</td>
+                        <td><a href="{% url 'flatpak:build_detail' item.build.pk %}">#{{ item.build.build_number }}</a></td>
+                        <td>
+                            {% if item.targets|length == 1 %}
+                            {% with repo=item.targets.0 %}
+                            <button class="btn btn-sm btn-info"
+                                    onclick="bstPromoteFromList({{ item.build.pk }}, {{ repo.pk }}, '{{ repo.name|escapejs }}', '{{ item.build.bst_source.name|escapejs }}')">
+                                <i class="bi bi-arrow-up-right"></i> Promote
+                            </button>
+                            {% endwith %}
+                            {% else %}
+                            <div class="dropdown">
+                                <button class="btn btn-sm btn-info dropdown-toggle" type="button"
+                                        data-bs-toggle="dropdown" aria-expanded="false">
+                                    <i class="bi bi-arrow-up-right"></i> Promote
+                                </button>
+                                <ul class="dropdown-menu">
+                                    {% for repo in item.targets %}
+                                    <li>
+                                        <a class="dropdown-item" href="#"
+                                           onclick="event.preventDefault(); bstPromoteFromList({{ item.build.pk }}, {{ repo.pk }}, '{{ repo.name|escapejs }}', '{{ item.build.bst_source.name|escapejs }}')">
+                                            {{ repo.name }}
+                                        </a>
+                                    </li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% endif %}
                     {% endfor %}
                 </tbody>
             </table>
         </div>
     </div>
+    </div><!-- /#section-bst-promote -->
 </div>
 {% endif %}
 
 <!-- ═══ BST Promotions History ═══════════════════════════════════════════════ -->
 {% if bst_promotions %}
 <div class="card mb-4">
-    <div class="card-header">
-        <h5 class="mb-0"><i class="bi bi-layers"></i> BST Promotions</h5>
+    <div class="card-header d-flex justify-content-between align-items-center"
+         style="cursor:pointer" data-bs-toggle="collapse" data-bs-target="#section-bst-history" aria-expanded="false">
+        <h5 class="mb-0"><i class="bi bi-layers"></i> BST Promotions
+            <span class="badge bg-secondary ms-2">{{ bst_promotions|length }}</span>
+        </h5>
+        <i class="bi bi-chevron-down section-chevron"></i>
     </div>
+    <div class="collapse" id="section-bst-history">
     <div class="card-body p-0">
         <div class="table-responsive">
             <table class="table table-hover mb-0">
@@ -310,6 +506,7 @@
             </table>
         </div>
     </div>
+    </div><!-- /#section-bst-history -->
 </div>
 {% endif %}
 {% endif %}
@@ -318,20 +515,51 @@
 <!-- ═══ Ready to Promote (Externals) ═══════════════════════════════════════ -->
 {% if ready_to_promote_externals %}
 <div class="card mb-4 border-secondary">
-    <div class="card-header bg-secondary bg-opacity-10">
+    <div class="card-header bg-secondary bg-opacity-10 d-flex justify-content-between align-items-center"
+         style="cursor:pointer" data-bs-toggle="collapse" data-bs-target="#section-ext-promote" aria-expanded="false">
         <h5 class="mb-0"><i class="bi bi-cloud-download text-secondary"></i> External Refs Ready to Promote
             <span class="badge bg-secondary ms-2">{{ ready_to_promote_externals|length }}</span>
         </h5>
+        <div class="d-flex align-items-center gap-2" onclick="event.stopPropagation()">
+            <button class="btn btn-sm btn-secondary d-none" id="ext-promote-selected-btn"
+                    onclick="bulkExtPromote()">
+                <i class="bi bi-arrow-up-right"></i> Promote Selected
+            </button>
+            <i class="bi bi-chevron-down ms-2 section-chevron"></i>
+        </div>
     </div>
+    <div class="collapse" id="section-ext-promote">
     <div class="card-body p-0">
         <div class="table-responsive">
             <table class="table table-hover mb-0">
                 <thead class="table-light">
-                    <tr><th>Ref</th><th>Source Repo</th><th>Remote</th><th>Commit</th><th>Actions</th></tr>
+                    <tr>
+                        <th style="width:2.5rem"><input type="checkbox" class="form-check-input" id="ext-promote-select-all" title="Select all"></th>
+                        <th>Ref</th><th>Source Repo</th><th>Remote</th><th>Commit</th><th>Actions</th>
+                    </tr>
                 </thead>
                 <tbody>
-                    {% for item in ready_to_promote_externals %}
-                    <tr>
+                    {% regroup ready_to_promote_externals by external_ref.display_name as ext_promote_groups %}
+                    {% for group in ext_promote_groups %}
+                    {% if group.list|length > 1 %}
+                    <tr class="table-light ext-promote-group-header" style="cursor:pointer"
+                        data-bs-toggle="collapse" data-bs-target=".ext-promote-group-{{ forloop.counter }}"
+                        aria-expanded="false">
+                        <td></td>
+                        <td colspan="4">
+                            <i class="bi bi-folder2 text-secondary me-1"></i>
+                            <strong>{{ group.grouper }}</strong>
+                            <span class="badge bg-secondary ms-2">{{ group.list|length }}</span>
+                            <i class="bi bi-chevron-down ms-1 small"></i>
+                        </td>
+                        <td></td>
+                    </tr>
+                    {% for item in group.list %}
+                    <tr class="collapse ext-promote-group-{{ forloop.parentloop.counter }}">
+                        <td><input type="checkbox" class="form-check-input ext-promote-chk"
+                                   value="{{ item.external_ref.pk }}"
+                                   data-ref-name="{{ item.external_ref.display_name|default:item.external_ref.ref|escapejs }}"
+                                   data-targets="[{% for repo in item.targets %}{&quot;id&quot;:{{ repo.pk }},&quot;name&quot;:&quot;{{ repo.name|escapejs }}&quot;}{% if not forloop.last %},{% endif %}{% endfor %}]"></td>
                         <td>
                             <a href="{% url 'flatpak:external_detail' item.external_ref.pk %}">{{ item.external_ref.display_name|default:item.external_ref.ref }}</a>
                             <br><small class="text-muted"><code>{{ item.external_ref.ref }}</code></small>
@@ -340,28 +568,98 @@
                         <td>{{ item.external_ref.remote.name|default:"—" }}</td>
                         <td><code>{{ item.external_ref.commit_hash|slice:":12"|default:"—" }}</code></td>
                         <td>
-                            {% for repo in item.targets %}
-                            <button class="btn btn-sm btn-secondary me-1"
+                            {% if item.targets|length == 1 %}
+                            {% with repo=item.targets.0 %}
+                            <button class="btn btn-sm btn-secondary"
                                     onclick="externalPromoteFromList({{ item.external_ref.pk }}, {{ repo.pk }}, '{{ repo.name|escapejs }}', '{{ item.external_ref.display_name|default:item.external_ref.ref|escapejs }}')">
-                                <i class="bi bi-arrow-up-right"></i> → {{ repo.name }}
+                                <i class="bi bi-arrow-up-right"></i> Promote
                             </button>
-                            {% endfor %}
+                            {% endwith %}
+                            {% else %}
+                            <div class="dropdown">
+                                <button class="btn btn-sm btn-secondary dropdown-toggle" type="button"
+                                        data-bs-toggle="dropdown" aria-expanded="false">
+                                    <i class="bi bi-arrow-up-right"></i> Promote
+                                </button>
+                                <ul class="dropdown-menu">
+                                    {% for repo in item.targets %}
+                                    <li>
+                                        <a class="dropdown-item" href="#"
+                                           onclick="event.preventDefault(); externalPromoteFromList({{ item.external_ref.pk }}, {{ repo.pk }}, '{{ repo.name|escapejs }}', '{{ item.external_ref.display_name|default:item.external_ref.ref|escapejs }}')">
+                                            {{ repo.name }}
+                                        </a>
+                                    </li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
                         </td>
                     </tr>
+                    {% endfor %}
+                    {% else %}
+                    {% for item in group.list %}
+                    <tr>
+                        <td><input type="checkbox" class="form-check-input ext-promote-chk"
+                                   value="{{ item.external_ref.pk }}"
+                                   data-ref-name="{{ item.external_ref.display_name|default:item.external_ref.ref|escapejs }}"
+                                   data-targets="[{% for repo in item.targets %}{&quot;id&quot;:{{ repo.pk }},&quot;name&quot;:&quot;{{ repo.name|escapejs }}&quot;}{% if not forloop.last %},{% endif %}{% endfor %}]"></td>
+                        <td>
+                            <a href="{% url 'flatpak:external_detail' item.external_ref.pk %}">{{ item.external_ref.display_name|default:item.external_ref.ref }}</a>
+                            <br><small class="text-muted"><code>{{ item.external_ref.ref }}</code></small>
+                        </td>
+                        <td>{{ item.external_ref.repository.name }}</td>
+                        <td>{{ item.external_ref.remote.name|default:"—" }}</td>
+                        <td><code>{{ item.external_ref.commit_hash|slice:":12"|default:"—" }}</code></td>
+                        <td>
+                            {% if item.targets|length == 1 %}
+                            {% with repo=item.targets.0 %}
+                            <button class="btn btn-sm btn-secondary"
+                                    onclick="externalPromoteFromList({{ item.external_ref.pk }}, {{ repo.pk }}, '{{ repo.name|escapejs }}', '{{ item.external_ref.display_name|default:item.external_ref.ref|escapejs }}')">
+                                <i class="bi bi-arrow-up-right"></i> Promote
+                            </button>
+                            {% endwith %}
+                            {% else %}
+                            <div class="dropdown">
+                                <button class="btn btn-sm btn-secondary dropdown-toggle" type="button"
+                                        data-bs-toggle="dropdown" aria-expanded="false">
+                                    <i class="bi bi-arrow-up-right"></i> Promote
+                                </button>
+                                <ul class="dropdown-menu">
+                                    {% for repo in item.targets %}
+                                    <li>
+                                        <a class="dropdown-item" href="#"
+                                           onclick="event.preventDefault(); externalPromoteFromList({{ item.external_ref.pk }}, {{ repo.pk }}, '{{ repo.name|escapejs }}', '{{ item.external_ref.display_name|default:item.external_ref.ref|escapejs }}')">
+                                            {{ repo.name }}
+                                        </a>
+                                    </li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% endif %}
                     {% endfor %}
                 </tbody>
             </table>
         </div>
     </div>
+    </div><!-- /#section-ext-promote -->
 </div>
 {% endif %}
 
 <!-- ═══ External Ref Promotions History ════════════════════════════════════ -->
 {% if external_ref_promotions %}
 <div class="card mb-4">
-    <div class="card-header">
-        <h5 class="mb-0"><i class="bi bi-cloud-download"></i> External Ref Promotions</h5>
+    <div class="card-header d-flex justify-content-between align-items-center"
+         style="cursor:pointer" data-bs-toggle="collapse" data-bs-target="#section-ext-history" aria-expanded="false">
+        <h5 class="mb-0"><i class="bi bi-cloud-download"></i> External Ref Promotions
+            <span class="badge bg-secondary ms-2">{{ external_ref_promotions|length }}</span>
+        </h5>
+        <i class="bi bi-chevron-down section-chevron"></i>
     </div>
+    <div class="collapse" id="section-ext-history">
     <div class="card-body p-0">
         <div class="table-responsive">
             <table class="table table-hover mb-0">
@@ -409,14 +707,20 @@
             </table>
         </div>
     </div>
+    </div><!-- /#section-ext-history -->
 </div>
 {% endif %}
 {% endif %}
 
 <div class="card mb-4">
-    <div class="card-header">
-        <h5 class="mb-0"><i class="bi bi-cloud-download"></i> Published Externals</h5>
+    <div class="card-header d-flex justify-content-between align-items-center"
+         style="cursor:pointer" data-bs-toggle="collapse" data-bs-target="#section-pub-ext" aria-expanded="false">
+        <h5 class="mb-0"><i class="bi bi-cloud-download"></i> Published Externals
+            {% if published_externals %}<span class="badge bg-secondary ms-2">{{ published_externals|length }}</span>{% endif %}
+        </h5>
+        <i class="bi bi-chevron-down section-chevron"></i>
     </div>
+    <div class="collapse" id="section-pub-ext">
     <div class="card-body p-0">
         {% if published_externals %}
         <div class="table-responsive">
@@ -432,7 +736,39 @@
                     </tr>
                 </thead>
                 <tbody>
-                    {% for ext in published_externals %}
+                    {% regroup published_externals by display_name as pub_ext_groups %}
+                    {% for group in pub_ext_groups %}
+                    {% if group.list|length > 1 %}
+                    <tr class="table-light pub-ext-group-header" style="cursor:pointer"
+                        data-bs-toggle="collapse" data-bs-target=".pub-ext-group-{{ forloop.counter }}"
+                        aria-expanded="false">
+                        <td colspan="5">
+                            <i class="bi bi-folder2 text-secondary me-1"></i>
+                            <strong>{{ group.grouper }}</strong>
+                            <span class="badge bg-secondary ms-2">{{ group.list|length }}</span>
+                            <i class="bi bi-chevron-down ms-1 small"></i>
+                        </td>
+                        <td></td>
+                    </tr>
+                    {% for ext in group.list %}
+                    <tr class="collapse pub-ext-group-{{ forloop.parentloop.counter }}">
+                        <td>
+                            <a href="{% url 'flatpak:external_detail' ext.pk %}">{{ ext.display_name|default:ext.ref }}</a>
+                            <br><small class="text-muted"><code>{{ ext.ref }}</code></small>
+                        </td>
+                        <td><a href="{% url 'flatpak:repo_detail' ext.repository.pk %}">{{ ext.repository.name }}</a></td>
+                        <td>{{ ext.remote.name|default:"—" }}</td>
+                        <td><span class="badge bg-success">Published</span></td>
+                        <td>{{ ext.updated_at|date:"M d, H:i" }}</td>
+                        <td>
+                            <a href="{% url 'flatpak:external_detail' ext.pk %}" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-eye"></i>
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% else %}
+                    {% for ext in group.list %}
                     <tr>
                         <td>
                             <a href="{% url 'flatpak:external_detail' ext.pk %}">{{ ext.display_name|default:ext.ref }}</a>
@@ -449,6 +785,8 @@
                         </td>
                     </tr>
                     {% endfor %}
+                    {% endif %}
+                    {% endfor %}
                 </tbody>
             </table>
         </div>
@@ -456,11 +794,18 @@
         <div class="p-3 text-muted">No published external refs yet.</div>
         {% endif %}
     </div>
+    </div><!-- /#section-pub-ext -->
 </div>
 
-    <div class="card-header">
-        <h5 class="mb-0"><i class="bi bi-cloud-upload"></i> Published to Build Repository</h5>
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center"
+         style="cursor:pointer" data-bs-toggle="collapse" data-bs-target="#section-pub-builds" aria-expanded="false">
+        <h5 class="mb-0"><i class="bi bi-cloud-upload"></i> Published to Build Repository
+            {% if published_builds %}<span class="badge bg-secondary ms-2">{{ published_builds|length }}</span>{% endif %}
+        </h5>
+        <i class="bi bi-chevron-down section-chevron"></i>
     </div>
+    <div class="collapse" id="section-pub-builds">
     <div class="card-body p-0">
         {% if published_builds %}
         <div class="table-responsive">
@@ -477,7 +822,46 @@
                     </tr>
                 </thead>
                 <tbody>
-                    {% for build in published_builds %}
+                    {% regroup published_builds by package.package_name as pub_build_groups %}
+                    {% for group in pub_build_groups %}
+                    {% if group.list|length > 1 %}
+                    <tr class="table-light pub-build-group-header" style="cursor:pointer"
+                        data-bs-toggle="collapse" data-bs-target=".pub-build-group-{{ forloop.counter }}"
+                        aria-expanded="false">
+                        <td colspan="6">
+                            <i class="bi bi-folder2 text-primary me-1"></i>
+                            <strong>{{ group.grouper }}</strong>
+                            <span class="badge bg-secondary ms-2">{{ group.list|length }}</span>
+                            <i class="bi bi-chevron-down ms-1 small"></i>
+                        </td>
+                        <td></td>
+                    </tr>
+                    {% for build in group.list %}
+                    <tr class="collapse pub-build-group-{{ forloop.parentloop.counter }}">
+                        <td><a href="{% url 'flatpak:build_detail' build.pk %}">#{{ build.build_number }}</a></td>
+                        <td>
+                            <a href="{% url 'flatpak:package_detail' build.package.pk %}">{{ build.package.package_name }}</a>
+                            <br><small class="text-muted"><code>{{ build.package.package_id }}</code></small>
+                        </td>
+                        <td>{{ build.version|default:"-" }}</td>
+                        <td>
+                            <a href="{% url 'flatpak:repo_detail' build.package.repository.pk %}">{{ build.package.repository.name }}</a>
+                        </td>
+                        <td><span class="badge bg-success">Published</span></td>
+                        <td>{{ build.completed_at|date:"M d, H:i"|default:"-" }}</td>
+                        <td>
+                            <a href="{% url 'flatpak:build_detail' build.pk %}" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-eye"></i>
+                            </a>
+                            <button class="btn btn-sm btn-outline-danger ms-1"
+                                    onclick="confirmUnpublish({{ build.pk }}, '{{ build.package.package_name|escapejs }}', '#{{ build.build_number }}')">
+                                <i class="bi bi-trash3"></i> Unpublish
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% else %}
+                    {% for build in group.list %}
                     <tr>
                         <td><a href="{% url 'flatpak:build_detail' build.pk %}">#{{ build.build_number }}</a></td>
                         <td>
@@ -501,6 +885,8 @@
                         </td>
                     </tr>
                     {% endfor %}
+                    {% endif %}
+                    {% endfor %}
                 </tbody>
             </table>
         </div>
@@ -508,12 +894,18 @@
         <div class="p-3 text-muted">No published builds yet.</div>
         {% endif %}
     </div>
+    </div><!-- /#section-pub-builds -->
 </div>
 
 <div class="card">
-    <div class="card-header">
-        <h5 class="mb-0"><i class="bi bi-arrow-up-right"></i> Promotions to Child Repositories</h5>
+    <div class="card-header d-flex justify-content-between align-items-center"
+         style="cursor:pointer" data-bs-toggle="collapse" data-bs-target="#section-promotions" aria-expanded="false">
+        <h5 class="mb-0"><i class="bi bi-arrow-up-right"></i> Promotions to Child Repositories
+            {% if promotions %}<span class="badge bg-secondary ms-2">{{ promotions|length }}</span>{% endif %}
+        </h5>
+        <i class="bi bi-chevron-down section-chevron"></i>
     </div>
+    <div class="collapse" id="section-promotions">
     <div class="card-body p-0">
         {% if promotions %}
         <div class="table-responsive">
@@ -634,8 +1026,9 @@
         <div class="p-3 text-muted">No promotions yet. Publish a build and promote it to a child repository.</div>
         {% endif %}
     </div>
+    </div><!-- /#section-promotions -->
 </div>
-</div>
+</div><!-- /#results-container -->
 <script>
 (function () {
     var form = document.getElementById('filter-form');
@@ -872,16 +1265,87 @@ function onWebSocketReconnect() {
     </div>
 </div>
 
+<!-- Bulk promote repo-picker modal -->
+<div class="modal fade" id="bulkPromoteModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="bulkPromoteTitle">Promote Selected</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p id="bulkPromoteSummary"></p>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Target repository</label>
+                    <div id="bulkPromoteRepoList"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="bulkPromoteOk" disabled>
+                    <i class="bi bi-arrow-up-right"></i> Promote
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.section-chevron { transition: transform 0.2s; }
+.card-header[aria-expanded="true"] .section-chevron { transform: rotate(180deg); }
+/* Sync chevrons when collapsed by BS */
+.collapse.show ~ * .section-chevron,
+.card-header[data-bs-toggle="collapse"].collapsed .section-chevron { transform: rotate(0deg); }
+</style>
+
 <script>
 const _csrf = '{{ csrf_token }}';
 const _promotionChildRepos = {{ promotion_child_repos_json|safe }};
 
 // Persist multiselect across AJAX history-table pagination.
 var _commitSel = new Set(), _publishSel = new Set(), _promoteSel = new Set();
+var _bstPromoteSel = new Set(), _extPromoteSel = new Set();
 
-// ── Ready-to-commit / ready-to-publish checkbox + bulk action logic ──────────
+// ── Chevron rotation on Bootstrap collapse toggle ────────────────────────────
+document.addEventListener('show.bs.collapse', function (e) {
+    var trigger = document.querySelector('[data-bs-target="#' + e.target.id + '"]');
+    if (trigger) { trigger.setAttribute('aria-expanded', 'true'); }
+});
+document.addEventListener('hide.bs.collapse', function (e) {
+    var trigger = document.querySelector('[data-bs-target="#' + e.target.id + '"]');
+    if (trigger) { trigger.setAttribute('aria-expanded', 'false'); }
+});
+
+// ── Promote checkbox target-intersection constraint ──────────────────────────
+function _computeCommonTargets(chkClass) {
+    var checked = Array.from(document.querySelectorAll('.' + chkClass + ':checked'));
+    if (checked.length === 0) return null; // null means no constraint
+    var sets = checked.map(function (c) {
+        return new Set(JSON.parse(c.dataset.targets || '[]').map(function (t) { return t.id; }));
+    });
+    var common = Array.from(sets[0]).filter(function (id) {
+        return sets.every(function (s) { return s.has(id); });
+    });
+    return new Set(common);
+}
+
+function _updatePromoteConstraints(chkClass) {
+    var common = _computeCommonTargets(chkClass);
+    document.querySelectorAll('.' + chkClass).forEach(function (c) {
+        if (c.checked) { c.disabled = false; return; }
+        if (common === null) { c.disabled = false; return; }
+        // Disable if this item shares no target with the common set
+        var targets = new Set(JSON.parse(c.dataset.targets || '[]').map(function (t) { return t.id; }));
+        var hasOverlap = Array.from(common).some(function (id) { return targets.has(id); });
+        c.disabled = !hasOverlap;
+        var row = c.closest('tr');
+        if (row) row.classList.toggle('opacity-50', !hasOverlap);
+    });
+}
+
+// ── Checkbox + bulk action setup ─────────────────────────────────────────────
 (function () {
-    function setupTable(selectAllId, chkClass, bulkBtnId, selSet) {
+    function setupTable(selectAllId, chkClass, bulkBtnId, selSet, constrainTargets) {
         var selectAll = document.getElementById(selectAllId);
         var bulkBtn  = document.getElementById(bulkBtnId);
         if (!selectAll) return;
@@ -895,7 +1359,7 @@ var _commitSel = new Set(), _publishSel = new Set(), _promoteSel = new Set();
 
         function syncBulkBtn() {
             var checked = document.querySelectorAll('.' + chkClass + ':checked').length;
-            bulkBtn.classList.toggle('d-none', checked === 0);
+            if (bulkBtn) bulkBtn.classList.toggle('d-none', checked === 0);
         }
 
         // Sync initial select-all state.
@@ -908,29 +1372,33 @@ var _commitSel = new Set(), _publishSel = new Set(), _promoteSel = new Set();
         })();
 
         selectAll.addEventListener('change', function () {
-            document.querySelectorAll('.' + chkClass).forEach(function (c) {
+            document.querySelectorAll('.' + chkClass + ':not(:disabled)').forEach(function (c) {
                 c.checked = selectAll.checked;
                 if (selSet) { if (selectAll.checked) { selSet.add(c.value); } else { selSet.delete(c.value); } }
             });
+            if (constrainTargets) _updatePromoteConstraints(chkClass);
             syncBulkBtn();
         });
 
         document.querySelectorAll('.' + chkClass).forEach(function (c) {
             c.addEventListener('change', function () {
                 if (selSet) { if (c.checked) { selSet.add(c.value); } else { selSet.delete(c.value); } }
-                var all = document.querySelectorAll('.' + chkClass);
+                var all = document.querySelectorAll('.' + chkClass + ':not(:disabled)');
                 var checked = document.querySelectorAll('.' + chkClass + ':checked');
                 selectAll.indeterminate = checked.length > 0 && checked.length < all.length;
-                selectAll.checked = checked.length === all.length;
+                selectAll.checked = all.length > 0 && checked.length === all.length;
+                if (constrainTargets) _updatePromoteConstraints(chkClass);
                 syncBulkBtn();
             });
         });
     }
 
     function rebindAll() {
-        setupTable('commit-select-all',  'commit-chk',  'commit-selected-btn',  _commitSel);
-        setupTable('publish-select-all', 'publish-chk', 'publish-selected-btn', _publishSel);
-        setupTable('promote-select-all', 'promote-chk', 'promote-selected-btn', _promoteSel);
+        setupTable('commit-select-all',      'commit-chk',       'commit-selected-btn',      _commitSel,      false);
+        setupTable('publish-select-all',     'publish-chk',      'publish-selected-btn',     _publishSel,     false);
+        setupTable('promote-select-all',     'promote-chk',      'promote-selected-btn',     _promoteSel,     true);
+        setupTable('bst-promote-select-all', 'bst-promote-chk',  'bst-promote-selected-btn', _bstPromoteSel,  true);
+        setupTable('ext-promote-select-all', 'ext-promote-chk',  'ext-promote-selected-btn', _extPromoteSel,  true);
     }
 
     rebindAll();
@@ -1116,55 +1584,181 @@ function promoteFromList(buildPk, repoId, repoName, pkgName) {
     );
 }
 
+// ── Generic repo-picker bulk promote ─────────────────────────────────────────
+function _showBulkPromoteModal(title, summary, commonTargets, onConfirm) {
+    document.getElementById('bulkPromoteTitle').textContent = title;
+    document.getElementById('bulkPromoteSummary').innerHTML = summary;
+
+    var listEl = document.getElementById('bulkPromoteRepoList');
+    listEl.innerHTML = '';
+    commonTargets.forEach(function (t) {
+        var id = 'bpr-' + t.id;
+        var div = document.createElement('div');
+        div.className = 'form-check';
+        div.innerHTML = '<input class="form-check-input bulk-promote-repo-radio" type="radio"' +
+            ' name="bulkPromoteRepo" id="' + id + '" value="' + t.id + '" data-name="' + t.name.replace(/"/g, '&quot;') + '">' +
+            '<label class="form-check-label" for="' + id + '">' + t.name + '</label>';
+        listEl.appendChild(div);
+    });
+
+    var okBtn = document.getElementById('bulkPromoteOk');
+    okBtn.disabled = true;
+    listEl.addEventListener('change', function () {
+        okBtn.disabled = !listEl.querySelector('.bulk-promote-repo-radio:checked');
+    }, { once: false });
+
+    var modal = new bootstrap.Modal(document.getElementById('bulkPromoteModal'));
+    okBtn.onclick = function () {
+        var chosen = listEl.querySelector('.bulk-promote-repo-radio:checked');
+        if (!chosen) return;
+        modal.hide();
+        onConfirm(parseInt(chosen.value, 10), chosen.dataset.name);
+    };
+    modal.show();
+}
+
 async function bulkPromote() {
     var selected = Array.from(document.querySelectorAll('.promote-chk:checked'));
     if (selected.length === 0) return;
 
-    // Collect a flat list of {buildPk, repoId, repoName} from checked rows
-    var actions = [];
-    selected.forEach(function (chk) {
-        var buildPk = parseInt(chk.value, 10);
-        var targets = JSON.parse(chk.dataset.targets || '[]');
-        targets.forEach(function (t) {
-            actions.push({ buildPk: buildPk, repoId: t.id, repoName: t.name });
-        });
+    // Compute intersection of all selected items' targets
+    var targetSets = selected.map(function (c) {
+        return new Set(JSON.parse(c.dataset.targets || '[]').map(function (t) { return t.id; }));
+    });
+    var firstTargets = JSON.parse(selected[0].dataset.targets || '[]');
+    var commonTargets = firstTargets.filter(function (t) {
+        return targetSets.every(function (s) { return s.has(t.id); });
     });
 
-    // Build a summary of what will happen
-    var lines = selected.map(function (chk) {
-        var targets = JSON.parse(chk.dataset.targets || '[]').map(function(t){ return t.name; }).join(', ');
-        var row = document.getElementById('promote-row-' + chk.value);
-        var pkg = row ? row.querySelector('a') ? row.querySelector('a').textContent.trim() : chk.value : chk.value;
-        return '<li><strong>' + pkg + '</strong> → ' + targets + '</li>';
-    }).join('');
+    if (commonTargets.length === 0) {
+        showErrorModal('No Common Target', 'The selected builds have no target repository in common. Please select builds that share at least one promotion target.');
+        return;
+    }
 
-    showDeleteConfirm(
-        'Promote ' + selected.length + ' build' + (selected.length > 1 ? 's' : ''),
-        '<ul class="mb-0">' + lines + '</ul>',
-        'Promote All',
-        async function () {
-            selected.forEach(function (chk) {
-                var row = document.getElementById('promote-row-' + chk.value);
-                if (row) { row.style.opacity = '0.4'; row.querySelectorAll('button, input[type=checkbox]').forEach(function(b){b.disabled=true;}); }
+    var pkgNames = selected.map(function (c) {
+        var row = document.getElementById('promote-row-' + c.value);
+        return row ? (row.querySelector('a') ? row.querySelector('a').textContent.trim() : c.value) : c.value;
+    });
+    var summary = '<strong>' + selected.length + ' build' + (selected.length > 1 ? 's' : '') + '</strong> will be promoted: ' +
+        '<ul class="mb-0 mt-1">' + pkgNames.map(function (n) { return '<li>' + n + '</li>'; }).join('') + '</ul>';
+
+    _showBulkPromoteModal('Promote ' + selected.length + ' Build' + (selected.length > 1 ? 's' : ''),
+        summary, commonTargets,
+        async function (repoId, repoName) {
+            selected.forEach(function (c) {
+                var row = document.getElementById('promote-row-' + c.value);
+                if (row) { row.style.opacity = '0.4'; row.querySelectorAll('button, input[type=checkbox]').forEach(function (b) { b.disabled = true; }); }
             });
             var errors = [];
-            for (var i = 0; i < actions.length; i++) {
+            for (var i = 0; i < selected.length; i++) {
                 try {
-                    var r = await _doPromote(actions[i].buildPk, actions[i].repoId);
+                    var r = await _doPromote(parseInt(selected[i].value, 10), repoId);
                     if (!r.ok) {
-                        var d = await r.json().catch(function(){ return {}; });
-                        errors.push((d.error || r.statusText) + ' (' + actions[i].repoName + ')');
+                        var d = await r.json().catch(function () { return {}; });
+                        errors.push((d.error || r.statusText) + ' (' + repoName + ')');
                     }
                 } catch (e) { errors.push(e.message); }
             }
             if (errors.length) {
-                showErrorModal('Promote Errors', errors.map(function(e){ return '<div>' + e + '</div>'; }).join(''));
+                showErrorModal('Promote Errors', errors.map(function (e) { return '<div>' + e + '</div>'; }).join(''));
             }
             if (typeof window._reloadPromotionsTable === 'function') {
                 window._reloadPromotionsTable();
             } else {
                 location.reload();
             }
+        }
+    );
+}
+
+async function bulkBstPromote() {
+    var selected = Array.from(document.querySelectorAll('.bst-promote-chk:checked'));
+    if (selected.length === 0) return;
+
+    var targetSets = selected.map(function (c) {
+        return new Set(JSON.parse(c.dataset.targets || '[]').map(function (t) { return t.id; }));
+    });
+    var firstTargets = JSON.parse(selected[0].dataset.targets || '[]');
+    var commonTargets = firstTargets.filter(function (t) {
+        return targetSets.every(function (s) { return s.has(t.id); });
+    });
+
+    if (commonTargets.length === 0) {
+        showErrorModal('No Common Target', 'The selected BST builds have no target repository in common.');
+        return;
+    }
+
+    var names = selected.map(function (c) { return c.dataset.sourceName || c.value; });
+    var summary = '<strong>' + selected.length + ' BST build' + (selected.length > 1 ? 's' : '') + '</strong>: ' +
+        '<ul class="mb-0 mt-1">' + names.map(function (n) { return '<li>' + n + '</li>'; }).join('') + '</ul>';
+
+    _showBulkPromoteModal('Promote BST Builds', summary, commonTargets,
+        async function (repoId, repoName) {
+            var errors = [];
+            for (var i = 0; i < selected.length; i++) {
+                try {
+                    var r = await fetch('/builds/' + selected[i].value + '/bst-promote/', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': _csrf },
+                        body: JSON.stringify({ target_repo_id: repoId }),
+                        credentials: 'same-origin'
+                    });
+                    if (!r.ok) {
+                        var d = await r.json().catch(function () { return {}; });
+                        errors.push((d.error || r.statusText) + ' (' + repoName + ')');
+                    }
+                } catch (e) { errors.push(e.message); }
+            }
+            if (errors.length) {
+                showErrorModal('Promote Errors', errors.map(function (e) { return '<div>' + e + '</div>'; }).join(''));
+            }
+            location.reload();
+        }
+    );
+}
+
+async function bulkExtPromote() {
+    var selected = Array.from(document.querySelectorAll('.ext-promote-chk:checked'));
+    if (selected.length === 0) return;
+
+    var targetSets = selected.map(function (c) {
+        return new Set(JSON.parse(c.dataset.targets || '[]').map(function (t) { return t.id; }));
+    });
+    var firstTargets = JSON.parse(selected[0].dataset.targets || '[]');
+    var commonTargets = firstTargets.filter(function (t) {
+        return targetSets.every(function (s) { return s.has(t.id); });
+    });
+
+    if (commonTargets.length === 0) {
+        showErrorModal('No Common Target', 'The selected external refs have no target repository in common.');
+        return;
+    }
+
+    var names = selected.map(function (c) { return c.dataset.refName || c.value; });
+    var summary = '<strong>' + selected.length + ' external ref' + (selected.length > 1 ? 's' : '') + '</strong>: ' +
+        '<ul class="mb-0 mt-1">' + names.map(function (n) { return '<li>' + n + '</li>'; }).join('') + '</ul>';
+
+    _showBulkPromoteModal('Promote External Refs', summary, commonTargets,
+        async function (repoId, repoName) {
+            var errors = [];
+            for (var i = 0; i < selected.length; i++) {
+                try {
+                    var r = await fetch('/externals/' + selected[i].value + '/promote/', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': _csrf },
+                        body: JSON.stringify({ target_repo_id: repoId }),
+                        credentials: 'same-origin'
+                    });
+                    if (!r.ok) {
+                        var d = await r.json().catch(function () { return {}; });
+                        errors.push((d.error || r.statusText) + ' (' + repoName + ')');
+                    }
+                } catch (e) { errors.push(e.message); }
+            }
+            if (errors.length) {
+                showErrorModal('Promote Errors', errors.map(function (e) { return '<div>' + e + '</div>'; }).join(''));
+            }
+            location.reload();
         }
     );
 }
