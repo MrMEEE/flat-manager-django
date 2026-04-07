@@ -411,6 +411,174 @@ def run_cancellable(cmd, cwd, build, timeout_seconds):
     )
 
 
+def _patch_build_dir_versions(build_dir, package_id, version, log_fn=None):
+    """Ensure the built artifact has the correct version in its appstream metadata.
+
+    flatpak-builder already committed the build to the OSTree repo, but many
+    apps ship no <releases> element (or omit it altogether), so 'flatpak list'
+    shows a blank version column.
+
+    This function patches TWO things inside *build_dir* (which still exists
+    on-disk after flatpak-builder returns):
+
+    1. ``files/share/metainfo/{package_id}.metainfo.xml``
+       (or the fallback appdata variants) — the canonical metainfo source.
+       Created from scratch if absent.
+
+    2. ``export/share/app-info/xmls/{package_id}.xml.gz``
+       The gzip-compressed AppStream XML that flatpak build-export commits
+       into the OSTree ref and that flatpak build-update-repo later reads to
+       build the repository's appstream summary.  Patching here is what
+       actually makes 'flatpak list' show the version.
+
+    After calling this function the caller MUST re-export the build_dir with
+    ``flatpak build-export`` so the patched files replace the earlier commit.
+
+    Returns True if any file was modified.
+    """
+    import gzip
+    import datetime
+    import xml.etree.ElementTree as ET
+
+    def _log(msg):
+        if log_fn:
+            log_fn(msg)
+
+    if not version:
+        return False
+
+    today = datetime.date.today().isoformat()
+    patched_any = False
+
+    # ── helpers ──────────────────────────────────────────────────────────────
+
+    def _ensure_releases_in_tree(root, version, date):
+        """Add / update a <release> with *version* inside <releases> of *root*."""
+        releases = root.find('releases')
+        if releases is None:
+            releases = ET.SubElement(root, 'releases')
+        # Check whether this exact version is already present.
+        for rel in releases.findall('release'):
+            if rel.attrib.get('version') == version:
+                return False  # nothing to do
+        # Remove any release that has an empty or missing version (broken entry).
+        for rel in list(releases.findall('release')):
+            if not rel.attrib.get('version'):
+                releases.remove(rel)
+        # Prepend the new release so it's the first (= most recent) entry.
+        new_rel = ET.Element('release', {'version': version, 'date': date})
+        releases.insert(0, new_rel)
+        return True
+
+    def _patch_xml_file(path, version, date):
+        """Parse path as XML, inject release, write back. Returns True on change."""
+        try:
+            ET.register_namespace('', 'https://www.freedesktop.org/software/appstream/docs/')
+            tree = ET.parse(path)
+            root = tree.getroot()
+            if _ensure_releases_in_tree(root, version, date):
+                # Preserve the original encoding declaration if present.
+                ET.indent(tree, space='  ')
+                tree.write(path, xml_declaration=True, encoding='utf-8')
+                return True
+        except Exception as exc:
+            _log(f"Warning: could not patch {path}: {exc}")
+        return False
+
+    def _patch_gz_appstream(gz_path, version, date):
+        """Read a gzipped AppStream XML, inject <release>, write back. Returns True on change."""
+        try:
+            with gzip.open(gz_path, 'rb') as fh:
+                raw = fh.read()
+            # AppStream XMLs from flatpak-builder use a <components> root.
+            root = ET.fromstring(raw)
+            changed = False
+            # Find the matching <component> by id.
+            for comp in root.iter('component'):
+                id_el = comp.find('id')
+                if id_el is not None and (id_el.text or '').strip() == package_id:
+                    if _ensure_releases_in_tree(comp, version, date):
+                        changed = True
+                    break
+            else:
+                # No matching component — patch first component as fallback.
+                for comp in root.iter('component'):
+                    if _ensure_releases_in_tree(comp, version, date):
+                        changed = True
+                    break
+            if changed:
+                patched_xml = ET.tostring(root, encoding='utf-8', xml_declaration=True)
+                with gzip.open(gz_path, 'wb') as fh:
+                    fh.write(patched_xml)
+                return True
+        except Exception as exc:
+            _log(f"Warning: could not patch appstream gz {gz_path}: {exc}")
+        return False
+
+    # ── 1. Source metainfo ───────────────────────────────────────────────────
+
+    metainfo_path = None
+    for d in [
+        os.path.join(build_dir, 'files', 'share', 'metainfo'),
+        os.path.join(build_dir, 'files', 'share', 'appdata'),
+    ]:
+        if not os.path.isdir(d):
+            continue
+        for name in (
+            f'{package_id}.metainfo.xml',
+            f'{package_id}.appdata.xml',
+        ):
+            c = os.path.join(d, name)
+            if os.path.exists(c):
+                metainfo_path = c
+                break
+        if metainfo_path:
+            break
+
+    if metainfo_path:
+        if _patch_xml_file(metainfo_path, version, today):
+            _log(f"Patched metainfo version → {version} in {os.path.relpath(metainfo_path, build_dir)}")
+            patched_any = True
+        else:
+            _log(f"Metainfo already has version {version}")
+    else:
+        # Create a minimal metainfo so appstream tools have something to work with.
+        meta_dir = os.path.join(build_dir, 'files', 'share', 'metainfo')
+        os.makedirs(meta_dir, exist_ok=True)
+        metainfo_path = os.path.join(meta_dir, f'{package_id}.metainfo.xml')
+        minimal_xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<component type="desktop-application">\n'
+            f'  <id>{package_id}</id>\n'
+            '  <metadata_license>FSFAP</metadata_license>\n'
+            '  <project_license>LicenseRef-proprietary</project_license>\n'
+            f'  <name>{package_id.split(".")[-1]}</name>\n'
+            '  <summary>Flatpak application</summary>\n'
+            '  <releases>\n'
+            f'    <release version="{version}" date="{today}"/>\n'
+            '  </releases>\n'
+            '</component>\n'
+        )
+        with open(metainfo_path, 'w', encoding='utf-8') as fh:
+            fh.write(minimal_xml)
+        _log(f"Created minimal metainfo with version {version}")
+        patched_any = True
+
+    # ── 2. Gzipped appstream blob (export/share/app-info/xmls/) ─────────────
+
+    gz_path = os.path.join(
+        build_dir, 'export', 'share', 'app-info', 'xmls', f'{package_id}.xml.gz'
+    )
+    if os.path.exists(gz_path):
+        if _patch_gz_appstream(gz_path, version, today):
+            _log(f"Patched appstream gz with version {version}")
+            patched_any = True
+    else:
+        _log("No appstream gz found in export/ — version will appear after build-update-repo")
+
+    return patched_any
+
+
 @shared_task(bind=True, queue='build')
 def package_from_git_task(self, package_id):
     """
@@ -735,6 +903,30 @@ def package_from_git_task(self, package_id):
             else:
                 raise RuntimeError(f"flatpak-builder failed: {error_msg}")
         
+        # Patch metainfo/appstream version so 'flatpak list' shows a version.
+        # This runs after flatpak-builder has already committed the build, so
+        # we need to re-export with the patched files to update the OSTree ref.
+        _version_for_patch = getattr(package, 'version', '') or ''
+        if _version_for_patch:
+            _patched = _patch_build_dir_versions(
+                build_dir, package.package_id, _version_for_patch,
+                log_fn=lambda m: log_build(build, 'info', m),
+            )
+            if _patched:
+                log_build(build, 'info', "Re-exporting build with patched appstream metadata...")
+                reexport_result = subprocess.run(
+                    ['flatpak', 'build-export', build_repo_path, build_dir, package.branch],
+                    capture_output=True, text=True, cwd=source_dir,
+                )
+                if reexport_result.returncode == 0:
+                    log_build(build, 'info', "Re-export succeeded — version will appear in flatpak list")
+                else:
+                    log_build(build, 'warning',
+                              f"Re-export after metainfo patch failed (non-fatal): "
+                              f"{reexport_result.stderr.strip() or reexport_result.stdout.strip()}")
+        else:
+            log_build(build, 'info', "No version detected — skipping metainfo version patch")
+
         # Success - update Build history record
         build.status = 'built'
         build.completed_at = timezone.now()
@@ -760,6 +952,10 @@ def package_from_git_task(self, package_id):
         # the dep table is visible immediately without waiting for publish)
         _snapshot_build_external_refs(build, package)
 
+        # The new snapshots were taken against the current upstream commits, so
+        # the package is no longer stale — clear the flag immediately rather
+        # than waiting for the next evaluate_dependency_staleness periodic run.
+        package.deps_need_rebuild = False
         package.status = 'built'
         package.save()
         send_build_status_update(package_id, 'built', 'Build completed, ready to publish')
