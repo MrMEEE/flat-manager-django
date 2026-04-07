@@ -188,6 +188,13 @@
                             <a href="{% url 'flatpak:package_edit' package.pk %}" class="btn btn-sm btn-outline-secondary">
                                 <i class="bi bi-pencil"></i>
                             </a>
+                            <button type="button" class="btn btn-sm btn-outline-info rebuild-btn"
+                                    data-pk="{{ package.pk }}"
+                                    data-name="{{ package.package_name|escapejs }}"
+                                    data-url="{% url 'flatpak:package_retry' package.pk %}"
+                                    title="Rebuild">
+                                <i class="bi bi-arrow-clockwise"></i>
+                            </button>
                         </td>
                     </tr>
                     {% endfor %}
@@ -531,6 +538,47 @@ var _pkgSel = new Set();
     }
 
     connectWs();
+})();
+
+// ── Per-row rebuild ──────────────────────────────────────────────────────
+(function () {
+    var _csrf = '{{ csrf_token }}';
+    document.addEventListener('click', function (e) {
+        var btn = e.target.closest('.rebuild-btn');
+        if (!btn) return;
+        var pk = btn.dataset.pk;
+        var name = btn.dataset.name;
+        var url = btn.dataset.url;
+        showConfirmModal(
+            'Rebuild Package',
+            '<p>Start a new build for <strong>' + name + '</strong>?</p>',
+            'Rebuild',
+            function () {
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+                fetch(url, {
+                    method: 'POST',
+                    headers: { 'X-CSRFToken': _csrf, 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                })
+                .then(function (r) { return r.json(); })
+                .then(function (d) {
+                    if (d.status === 'success') {
+                        location.reload();
+                    } else {
+                        showErrorModal('Rebuild Failed', d.error || 'Unknown error');
+                        btn.disabled = false;
+                        btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i>';
+                    }
+                })
+                .catch(function (e) {
+                    showErrorModal('Rebuild Error', e.message);
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i>';
+                });
+            }
+        );
+    });
 })();
 
 function showConfirmModal(title, body, okLabel, onOk) {

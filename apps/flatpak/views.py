@@ -2677,6 +2677,7 @@ class ClientListView(LoginRequiredMixin, ListView):
                 client.status = 'green'
 
     def get_queryset(self):
+        import json as _json
         from .models import Client, SiteConfig
         from django.utils import timezone
         from datetime import timedelta
@@ -2684,6 +2685,13 @@ class ClientListView(LoginRequiredMixin, ListView):
         threshold = timezone.now() - timedelta(hours=stale_hours)
         qs = list(Client.objects.prefetch_related('organisations').all())
         self._annotate_status(qs, threshold)
+        # Pre-serialize JSON so the template emits valid JSON strings.
+        # Django's template renders Python lists/dicts with repr() (single
+        # quotes) which JSON.parse() cannot parse.
+        for client in qs:
+            client.installed_json = _json.dumps(client.installed_flatpaks or [])
+            client.foreign_json   = _json.dumps(client.foreign_flatpaks   or [])
+            client.outdated_json  = _json.dumps(client.outdated_flatpaks  or [])
         return qs
 
     def get_context_data(self, **kwargs):
@@ -2904,6 +2912,31 @@ class ClientCheckinView(View):
         client.outdated_count = len(outdated_flatpaks)
         client.user_flatpaks = user_flatpaks
         client.save()
+
+        # Notify the clients page in real-time so it can update without reload.
+        try:
+            from channels.layers import get_channel_layer
+            from asgiref.sync import async_to_sync
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                async_to_sync(channel_layer.group_send)(
+                    'notifications',
+                    {
+                        'type': 'notification_message',
+                        'notification_type': 'client_updated',
+                        'pk': client.pk,
+                        'hostname': hostname,
+                        'installed_count': client.installed_count,
+                        'foreign_count': client.foreign_count,
+                        'outdated_count': client.outdated_count,
+                        'installed_flatpaks': installed,
+                        'foreign_flatpaks': foreign_flatpaks,
+                        'outdated_flatpaks': outdated_flatpaks,
+                        'last_checkin': client.last_checkin.strftime('%b %d, %H:%M') if client.last_checkin else '',
+                    }
+                )
+        except Exception:
+            pass  # WS push is best-effort; checkin must still succeed
 
         return JsonResponse({'status': 'ok', 'hostname': hostname})
 

@@ -1160,9 +1160,21 @@
         return btns;
     }
 
+    // Debounced table reload — coalesces multiple simultaneous WS terminal updates.
+    var _reloadScheduled = false;
+    function _scheduleTableReload() {
+        if (_reloadScheduled) return;
+        _reloadScheduled = true;
+        setTimeout(function () {
+            _reloadScheduled = false;
+            window._reloadPromotionsTable();
+        }, 1200);
+    }
+
     function _applyPromotionUpdate(id, status, errorMessage) {
         var tr = document.querySelector('tr[data-promotion-id="' + id + '"]');
         if (!tr || tr.dataset.promotionStatus === status) return;
+        var prevStatus = tr.dataset.promotionStatus;
         tr.dataset.promotionStatus = status;
         var statusCell = tr.querySelector('[data-role="status-cell"]');
         if (statusCell) statusCell.innerHTML = renderStatusBadge(status, errorMessage);
@@ -1173,6 +1185,12 @@
             } else {
                 actionsCell.innerHTML = renderActionButtons(id, status, tr.dataset.pkgName, tr.dataset.repoName, actionsCell.dataset.buildPk);
             }
+        }
+        // When a promotion reaches a terminal state from an active one, do an
+        // AJAX table reload so "Ready to Promote" is refreshed as well.
+        if ((status === 'promoted' || status === 'failed') &&
+            (prevStatus === 'promoting' || prevStatus === 'pending')) {
+            _scheduleTableReload();
         }
     }
 
@@ -1301,6 +1319,15 @@ function onWebSocketReconnect() {
 <script>
 const _csrf = '{{ csrf_token }}';
 const _promotionChildRepos = {{ promotion_child_repos_json|safe }};
+
+// Use AJAX table reload instead of full page reload whenever possible.
+function _reload() {
+    if (typeof window._reloadPromotionsTable === 'function') {
+        window._reloadPromotionsTable();
+    } else {
+        location.reload();
+    }
+}
 
 // Persist multiselect across AJAX history-table pagination.
 var _commitSel = new Set(), _publishSel = new Set(), _promoteSel = new Set();
@@ -1441,7 +1468,7 @@ async function _pollAllUntilDone(pkgPks, activeStatuses, maxWait) {
             await new Promise(function (resolve) { setTimeout(resolve, 1500); });
         }
     }
-    location.reload();
+    _reload();
 }
 
 function _markRowProcessing(type, pkgPk) {
@@ -1543,7 +1570,7 @@ function confirmUnpublish(buildPk, pkgName, buildRef) {
                     credentials: 'same-origin'
                 });
                 const d = await r.json();
-                if (r.ok) { location.reload(); }
+                if (r.ok) { _reload(); }
                 else { showErrorModal('Unpublish Failed', d.error || r.statusText); }
             } catch (e) { showErrorModal('Unpublish Error', e.message); }
         }
@@ -1712,7 +1739,7 @@ async function bulkBstPromote() {
             if (errors.length) {
                 showErrorModal('Promote Errors', errors.map(function (e) { return '<div>' + e + '</div>'; }).join(''));
             }
-            location.reload();
+            _reload();
         }
     );
 }
@@ -1758,7 +1785,7 @@ async function bulkExtPromote() {
             if (errors.length) {
                 showErrorModal('Promote Errors', errors.map(function (e) { return '<div>' + e + '</div>'; }).join(''));
             }
-            location.reload();
+            _reload();
         }
     );
 }
@@ -1776,7 +1803,7 @@ function retryPromotion(promotionPk, pkgName, repoName) {
                     credentials: 'same-origin'
                 });
                 const d = await r.json();
-                if (r.ok) { location.reload(); }
+                if (r.ok) { _reload(); }
                 else { showErrorModal('Retry Failed', d.error || r.statusText); }
             } catch (e) { showErrorModal('Retry Error', e.message); }
         }
@@ -1809,7 +1836,7 @@ function confirmDeletePromotion(promotionPk, pkgName, repoName) {
                     credentials: 'same-origin'
                 });
                 const d = await r.json();
-                if (r.ok) { location.reload(); }
+                if (r.ok) { _reload(); }
                 else { showErrorModal('Delete Failed', d.error || r.statusText); }
             } catch (e) { showErrorModal('Delete Error', e.message); }
         }
@@ -1830,7 +1857,7 @@ async function bstPromoteFromList(buildPk, repoPk, repoName, sourceName) {
                     credentials: 'same-origin',
                 });
                 const d = await r.json().catch(() => ({}));
-                if (r.ok) { location.reload(); }
+                if (r.ok) { _reload(); }
                 else { showErrorModal('Promote Failed', d.error || r.statusText); }
             } catch (e) { showErrorModal('Promote Error', e.message); }
         }
@@ -1842,7 +1869,7 @@ async function bstPromoRetry(promoPk) {
         const r = await fetch(`/bst-promotions/${promoPk}/retry/`, {
             method: 'POST', headers: { 'X-CSRFToken': _csrf }, credentials: 'same-origin',
         });
-        if (r.ok) { location.reload(); }
+        if (r.ok) { _reload(); }
         else { const d = await r.json().catch(() => ({})); showErrorModal('Retry Failed', d.error || r.statusText); }
     } catch (e) { showErrorModal('Retry Error', e.message); }
 }
@@ -1857,7 +1884,7 @@ async function bstPromoDelete(promoPk, repoName) {
                 const r = await fetch(`/bst-promotions/${promoPk}/delete/`, {
                     method: 'POST', headers: { 'X-CSRFToken': _csrf }, credentials: 'same-origin',
                 });
-                if (r.ok) { location.reload(); }
+                if (r.ok) { _reload(); }
                 else { const d = await r.json().catch(() => ({})); showErrorModal('Delete Failed', d.error || r.statusText); }
             } catch (e) { showErrorModal('Delete Error', e.message); }
         }
@@ -1878,7 +1905,7 @@ async function externalPromoteFromList(externalPk, repoPk, repoName, refName) {
                     credentials: 'same-origin',
                 });
                 const d = await r.json().catch(() => ({}));
-                if (r.ok) { location.reload(); }
+                if (r.ok) { _reload(); }
                 else { showErrorModal('Promote Failed', d.error || r.statusText); }
             } catch (e) { showErrorModal('Promote Error', e.message); }
         }
@@ -1896,7 +1923,7 @@ async function externalPromoRetry(promoPk, refName, repoName) {
                     method: 'POST', headers: { 'X-CSRFToken': _csrf }, credentials: 'same-origin',
                 });
                 const d = await r.json().catch(() => ({}));
-                if (r.ok) { location.reload(); }
+                if (r.ok) { _reload(); }
                 else { showErrorModal('Retry Failed', d.error || r.statusText); }
             } catch (e) { showErrorModal('Retry Error', e.message); }
         }
@@ -1914,7 +1941,7 @@ async function externalPromoDelete(promoPk, repoName) {
                     method: 'POST', headers: { 'X-CSRFToken': _csrf }, credentials: 'same-origin',
                 });
                 const d = await r.json().catch(() => ({}));
-                if (r.ok) { location.reload(); }
+                if (r.ok) { _reload(); }
                 else { showErrorModal('Delete Failed', d.error || r.statusText); }
             } catch (e) { showErrorModal('Delete Error', e.message); }
         }
