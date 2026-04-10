@@ -43,16 +43,46 @@ class GPGKeyGenerateForm(forms.Form):
         initial=4096,
         widget=forms.Select(attrs={'class': 'form-select'})
     )
-    
+    key_lifetime = forms.ChoiceField(
+        label='Key Lifetime',
+        choices=[
+            ('0',   'Never expires'),
+            ('1y',  '1 year'),
+            ('2y',  '2 years'),
+            ('5y',  '5 years'),
+            ('10y', '10 years'),
+        ],
+        initial='0',
+        widget=forms.Select(attrs={'class': 'form-select'}),
+        help_text='How long before this key expires'
+    )
+
     def clean(self):
         cleaned_data = super().clean()
         passphrase = cleaned_data.get('passphrase')
         passphrase_confirm = cleaned_data.get('passphrase_confirm')
-        
+
         if passphrase and passphrase != passphrase_confirm:
             raise forms.ValidationError("Passphrases do not match")
-        
+
         return cleaned_data
+
+
+class GPGKeyRenewForm(forms.Form):
+    """Form for renewing (extending) a GPG key's expiry date."""
+    key_lifetime = forms.ChoiceField(
+        label='New Key Lifetime (from today)',
+        choices=[
+            ('0',   'Never expires'),
+            ('1y',  '1 year'),
+            ('2y',  '2 years'),
+            ('5y',  '5 years'),
+            ('10y', '10 years'),
+        ],
+        initial='1y',
+        widget=forms.Select(attrs={'class': 'form-select'}),
+        help_text='The expiry date is recalculated from today'
+    )
 
 
 class GPGKeyImportForm(forms.Form):

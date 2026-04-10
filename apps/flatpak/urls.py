@@ -10,6 +10,7 @@ urlpatterns = [
     path('gpg-keys/<int:pk>/', views.GPGKeyDetailView.as_view(), name='gpgkey_detail'),
     path('gpg-keys/<int:pk>/delete/', views.GPGKeyDeleteView.as_view(), name='gpgkey_delete'),
     path('gpg-keys/<int:pk>/download/', views.GPGKeyDownloadView.as_view(), name='gpgkey_download'),
+    path('gpg-keys/<int:pk>/renew/', views.gpgkey_renew, name='gpgkey_renew'),
     path('repos/', views.RepositoryListView.as_view(), name='repo_list'),
     path('repos/<int:pk>/', views.RepositoryDetailView.as_view(), name='repo_detail'),
     path('repos/create/', views.RepositoryCreateView.as_view(), name='repo_create'),

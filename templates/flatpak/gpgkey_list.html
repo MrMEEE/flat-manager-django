@@ -27,6 +27,7 @@
                         <th>Key ID</th>
                         <th>Fingerprint</th>
                         <th>Status</th>
+                        <th>Expires</th>
                         <th>Created</th>
                         <th>Actions</th>
                     </tr>
@@ -49,10 +50,25 @@
                             <span class="badge bg-secondary">Inactive</span>
                             {% endif %}
                         </td>
+                        <td>
+                            {% if key.expires_at %}
+                                {% now "Y-m-d" as today_str %}
+                                {% if key.expires_at|date:"Y-m-d" < today_str %}
+                                    <span class="badge bg-danger" title="Expired">{{ key.expires_at|date:"M d, Y" }}</span>
+                                {% else %}
+                                    {{ key.expires_at|date:"M d, Y" }}
+                                {% endif %}
+                            {% else %}
+                                <span class="text-muted">Never</span>
+                            {% endif %}
+                        </td>
                         <td>{{ key.created_at|date:"M d, Y" }}</td>
                         <td>
                             <a href="{% url 'flatpak:gpgkey_detail' key.pk %}" class="btn btn-sm btn-outline-primary" title="View">
                                 <i class="bi bi-eye"></i>
+                            </a>
+                            <a href="{% url 'flatpak:gpgkey_renew' key.pk %}" class="btn btn-sm btn-outline-warning" title="Renew">
+                                <i class="bi bi-arrow-clockwise"></i>
                             </a>
                             <a href="{% url 'flatpak:gpgkey_download' key.pk %}" class="btn btn-sm btn-outline-success" title="Download Public Key">
                                 <i class="bi bi-download"></i>

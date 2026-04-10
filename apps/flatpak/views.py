@@ -11,8 +11,8 @@ from django.contrib import messages
 from django.shortcuts import render, redirect, get_object_or_404
 from django.conf import settings
 from .models import GPGKey, Repository, RepositorySubset, Package, Build, Promotion, BuildStreamSource, Client, ExternalRef, ExternalRefPromotion, Organisation
-from .forms import GPGKeyGenerateForm, GPGKeyImportForm
-from .utils.gpg import generate_gpg_key, import_gpg_key
+from .forms import GPGKeyGenerateForm, GPGKeyImportForm, GPGKeyRenewForm
+from .utils.gpg import generate_gpg_key, import_gpg_key, renew_gpg_key
 from .utils.ostree import init_ostree_repo, sign_repo_summary, delete_ostree_repo, temp_gpg_homedir, update_repo_metadata
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,8 @@ def gpgkey_generate(request):
                     email=form.cleaned_data['email'],
                     passphrase=None,
                     key_length=int(form.cleaned_data['key_length']),
-                    comment=form.cleaned_data.get('comment', '')
+                    comment=form.cleaned_data.get('comment', ''),
+                    expires=form.cleaned_data.get('key_lifetime', '0'),
                 )
                 
                 # Create GPG key in database
@@ -57,6 +58,7 @@ def gpgkey_generate(request):
                     public_key=key_data['public_key'],
                     private_key=key_data['private_key'],
                     passphrase_hint='',
+                    expires_at=key_data.get('expires_at'),
                     created_by=request.user
                 )
                 messages.success(request, f'GPG key "{gpgkey.name}" generated successfully.')
@@ -102,6 +104,44 @@ def gpgkey_import(request):
         form = GPGKeyImportForm()
     
     return render(request, 'flatpak/gpgkey_import.html', {'form': form})
+
+
+@login_required
+def gpgkey_renew(request, pk):
+    """Extend the expiry date of an existing GPG key."""
+    gpg_key = get_object_or_404(GPGKey, pk=pk)
+
+    if request.method == 'POST':
+        form = GPGKeyRenewForm(request.POST)
+        if form.is_valid():
+            try:
+                duration = form.cleaned_data['key_lifetime']
+                result = renew_gpg_key(gpg_key, duration)
+
+                # Persist updated public key and new expiry
+                gpg_key.public_key = result['public_key']
+                gpg_key.expires_at = result['expires_at']
+                gpg_key.save(update_fields=['public_key', 'expires_at', 'updated_at'])
+
+                # Refresh the .gpg file for every repo that uses this key
+                for repo in gpg_key.repositories.all():
+                    gpg_file = os.path.join(settings.REPOS_BASE_PATH,
+                                            f'{repo.folder_name}.gpg')
+                    try:
+                        with open(gpg_file, 'w') as _f:
+                            _f.write(result['public_key'])
+                    except OSError as _e:
+                        logger.warning('Could not update .gpg file for repo %s: %s',
+                                       repo.name, _e)
+
+                messages.success(request, f'GPG key "{gpg_key.name}" renewed successfully.')
+                return redirect('flatpak:gpgkey_detail', pk=gpg_key.pk)
+            except Exception as e:
+                messages.error(request, f'Failed to renew GPG key: {str(e)}')
+    else:
+        form = GPGKeyRenewForm()
+
+    return render(request, 'flatpak/gpgkey_renew.html', {'form': form, 'gpg_key': gpg_key})
 
 
 class GPGKeyCreateView(LoginRequiredMixin, CreateView):
@@ -231,8 +271,11 @@ class RepositoryUpdateView(LoginRequiredMixin, UpdateView):
         return context
     
     def form_valid(self, form):
+        # Capture old key before saving so we can detect a change
+        old_key_id = self.object.gpg_key_id
         response = super().form_valid(form)
-        
+        new_key_id = self.object.gpg_key_id
+
         # Create new subsets if provided
         subset_count = 0
         while True:
@@ -255,7 +298,57 @@ class RepositoryUpdateView(LoginRequiredMixin, UpdateView):
             messages.success(self.request, f'Repository updated with {subset_count} new subset(s).')
         else:
             messages.success(self.request, 'Repository updated successfully.')
-        
+
+        # Re-sign the repository if the GPG key changed
+        if old_key_id != new_key_id:
+            repo = self.object
+            repo_path = repo.repo_path
+            if os.path.exists(repo_path):
+                # Update the OSTree core.gpg-sign config entry
+                if repo.gpg_key:
+                    subprocess.run(
+                        ['ostree', 'config', 'set', '--repo', repo_path,
+                         'core.gpg-sign', repo.gpg_key.key_id],
+                        capture_output=True, text=True,
+                    )
+                    # Refresh the public key file used by clients
+                    gpg_file = os.path.join(settings.REPOS_BASE_PATH,
+                                            f'{repo.folder_name}.gpg')
+                    with open(gpg_file, 'w') as _f:
+                        _f.write(repo.gpg_key.public_key)
+                else:
+                    # Key removed — clear signing config and .gpg file
+                    subprocess.run(
+                        ['ostree', 'config', 'delete', '--repo', repo_path,
+                         'core.gpg-sign'],
+                        capture_output=True, text=True,
+                    )
+                    gpg_file = os.path.join(settings.REPOS_BASE_PATH,
+                                            f'{repo.folder_name}.gpg')
+                    if os.path.exists(gpg_file):
+                        os.remove(gpg_file)
+
+                # Re-sign everything (summary, commits, deltas) with the new key
+                result = update_repo_metadata(repo_path, gpg_key=repo.gpg_key,
+                                              generate_deltas=True)
+                if result['success']:
+                    messages.success(
+                        self.request,
+                        'Repository re-signed with the new GPG key successfully.'
+                    )
+                else:
+                    messages.warning(
+                        self.request,
+                        f'Repository updated but re-signing encountered an issue: '
+                        f'{result.get("detail") or result.get("error", "unknown error")}'
+                    )
+            else:
+                messages.info(
+                    self.request,
+                    'GPG key updated in database. Repository directory not found on disk '
+                    '— no re-signing performed.'
+                )
+
         return response
 
 

@@ -6,24 +6,46 @@ import os
 from django.conf import settings
 
 
-def generate_gpg_key(name, email, passphrase=None, key_type='RSA', key_length=4096, comment=''):
+def _duration_to_date(duration):
+    """
+    Convert a GPG duration string ('0', '1y', '2y', '5y', '10y') to a
+    datetime.date or None (when duration is '0' / falsy).
+    """
+    import datetime
+    if not duration or duration == '0':
+        return None
+    if duration.endswith('y'):
+        years = int(duration[:-1])
+        today = datetime.date.today()
+        try:
+            return today.replace(year=today.year + years)
+        except ValueError:
+            # Feb 29 edge case → Feb 28
+            return today.replace(year=today.year + years, day=28)
+    return None
+
+
+def generate_gpg_key(name, email, passphrase=None, key_type='RSA', key_length=4096,
+                     comment='', expires='0'):
     """
     Generate a new GPG key pair.
-    
+
     Args:
-        name: Name for the key
-        email: Email for the key
+        name:       Name for the key
+        email:      Email for the key
         passphrase: Passphrase to protect the private key (optional)
-        key_type: Key type (default: RSA)
+        key_type:   Key type (default: RSA)
         key_length: Key length in bits (default: 4096)
-        comment: Optional comment
-    
+        comment:    Optional comment
+        expires:    GPG Expire-Date value: '0' = never, '1y', '2y', '5y', '10y'
+
     Returns:
         dict with:
             - key_id: Short key ID
             - fingerprint: Full fingerprint
             - public_key: ASCII armored public key
             - private_key: ASCII armored private key
+            - expires_at: datetime.date or None
     """
     import tempfile
     import shutil
@@ -42,7 +64,7 @@ def generate_gpg_key(name, email, passphrase=None, key_type='RSA', key_length=40
             f.write(f"Name-Email: {email}\n")
             if comment:
                 f.write(f"Name-Comment: {comment}\n")
-            f.write("Expire-Date: 0\n")
+            f.write(f"Expire-Date: {expires or '0'}\n")
             f.write("%no-protection\n")  # No passphrase
             f.write("%commit\n")
         
@@ -107,7 +129,8 @@ def generate_gpg_key(name, email, passphrase=None, key_type='RSA', key_length=40
             'key_id': key_id,
             'fingerprint': fingerprint,
             'public_key': public_key,
-            'private_key': private_key
+            'private_key': private_key,
+            'expires_at': _duration_to_date(expires),
         }
     finally:
         # Clean up temporary directory
@@ -164,4 +187,87 @@ def import_gpg_key(public_key, private_key=None, passphrase=None):
         }
     finally:
         # Clean up temporary directory
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def renew_gpg_key(gpg_key, duration):
+    """
+    Extend the expiry date of an existing GPG key.
+
+    The expiry is embedded in the key material, so the public key is
+    re-exported after the change and returned so the caller can persist it.
+
+    Args:
+        gpg_key:  GPGKey model instance (needs .private_key and .fingerprint)
+        duration: GPG duration string — '0' = never, '1y', '2y', '5y', '10y'
+
+    Returns:
+        dict with:
+            - public_key:  Updated ASCII armored public key
+            - expires_at:  datetime.date or None
+    """
+    import tempfile
+    import shutil
+    import stat
+    import subprocess as _sp
+
+    temp_dir = tempfile.mkdtemp(prefix='gpg_renew_')
+    try:
+        os.chmod(temp_dir, stat.S_IRWXU)
+
+        # Import the private key so we can edit it
+        private_key_data = gpg_key.private_key
+        if isinstance(private_key_data, bytes):
+            private_key_data = private_key_data.decode('utf-8')
+
+        import_result = _sp.run(
+            ['gpg', '--homedir', temp_dir, '--batch', '--import'],
+            input=private_key_data,
+            capture_output=True,
+            text=True,
+        )
+        if import_result.returncode != 0:
+            raise Exception(f"Failed to import private key: {import_result.stderr}")
+
+        # Change the expiry date.
+        # GPG --edit-key interactive commands fed via --command-fd:
+        #   expire  → trigger expire sub-command
+        #   <dur>   → new validity period ('0' = no expiry, '1y', etc.)
+        #   y       → confirm when GPG asks "Is this correct?"
+        #   save    → write and exit
+        #
+        # NOTE: newer GPG versions do not echo a "Is this correct?" prompt
+        # when given a non-interactive input — but supplying the extra 'y'
+        # is harmless and keeps compatibility with older versions.
+        commands = f'expire\n{duration}\ny\nsave\n'
+        edit_result = _sp.run(
+            [
+                'gpg', '--homedir', temp_dir,
+                '--batch', '--yes',
+                '--pinentry-mode', 'loopback',
+                '--passphrase', '',
+                '--command-fd', '0',
+                '--edit-key', gpg_key.fingerprint,
+            ],
+            input=commands,
+            capture_output=True,
+            text=True,
+        )
+        if edit_result.returncode != 0:
+            raise Exception(f"Failed to change key expiry: {edit_result.stderr}")
+
+        # Re-export the updated public key
+        pub_result = _sp.run(
+            ['gpg', '--homedir', temp_dir, '--armor', '--export', gpg_key.fingerprint],
+            capture_output=True,
+            text=True,
+        )
+        if not pub_result.stdout:
+            raise Exception(f"Failed to re-export public key after renewal: {pub_result.stderr}")
+
+        return {
+            'public_key': pub_result.stdout,
+            'expires_at': _duration_to_date(duration),
+        }
+    finally:
         shutil.rmtree(temp_dir, ignore_errors=True)

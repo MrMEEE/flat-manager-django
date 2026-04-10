@@ -15,6 +15,7 @@ class GPGKey(models.Model):
     public_key = models.TextField(help_text="Public key (ASCII armored)")
     private_key = models.TextField(help_text="Private key (ASCII armored, encrypted)")
     passphrase_hint = models.CharField(max_length=255, blank=True, help_text="Hint for the passphrase")
+    expires_at = models.DateField(null=True, blank=True, help_text="Key expiry date (null = never expires)")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='gpg_keys')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

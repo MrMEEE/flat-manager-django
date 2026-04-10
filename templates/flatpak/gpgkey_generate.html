@@ -67,6 +67,15 @@
                         {% endif %}
                         <div class="form-text">4096 bits recommended for better security</div>
                     </div>
+
+                    <div class="mb-3">
+                        <label for="{{ form.key_lifetime.id_for_label }}" class="form-label">Key Lifetime</label>
+                        {{ form.key_lifetime }}
+                        {% if form.key_lifetime.errors %}
+                            <div class="invalid-feedback d-block">{{ form.key_lifetime.errors }}</div>
+                        {% endif %}
+                        <div class="form-text">{{ form.key_lifetime.help_text }}</div>
+                    </div>
                     
                     <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
                         <a href="{% url 'flatpak:gpgkey_list' %}" class="btn btn-outline-secondary">Cancel</a>

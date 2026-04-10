@@ -40,7 +40,22 @@
                     
                     <dt class="col-sm-3">Fingerprint:</dt>
                     <dd class="col-sm-9"><code>{{ gpg_key.fingerprint }}</code></dd>
-                    
+
+                    <dt class="col-sm-3">Expires:</dt>
+                    <dd class="col-sm-9">
+                        {% if gpg_key.expires_at %}
+                            {% now "Y-m-d" as today_str %}
+                            {% if gpg_key.expires_at|date:"Y-m-d" < today_str %}
+                                <span class="badge bg-danger">Expired</span>
+                                {{ gpg_key.expires_at|date:"M d, Y" }}
+                            {% else %}
+                                {{ gpg_key.expires_at|date:"M d, Y" }}
+                            {% endif %}
+                        {% else %}
+                            <span class="text-muted">Never expires</span>
+                        {% endif %}
+                    </dd>
+
                     <dt class="col-sm-3">Passphrase Hint:</dt>
                     <dd class="col-sm-9">{{ gpg_key.passphrase_hint|default:"None" }}</dd>
                     
@@ -78,6 +93,9 @@
                 <div class="d-grid gap-2">
                     <a href="{% url 'flatpak:gpgkey_download' gpg_key.pk %}" class="btn btn-success">
                         <i class="bi bi-download"></i> Download Public Key
+                    </a>
+                    <a href="{% url 'flatpak:gpgkey_renew' gpg_key.pk %}" class="btn btn-warning">
+                        <i class="bi bi-arrow-clockwise"></i> Renew Key
                     </a>
                     <a href="{% url 'flatpak:gpgkey_list' %}" class="btn btn-outline-secondary">
                         <i class="bi bi-arrow-left"></i> Back to List

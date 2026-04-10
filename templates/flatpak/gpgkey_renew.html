@@ -1,0 +1,123 @@
+{% extends 'base.html' %}
+
+{% block title %}Renew GPG Key - {{ gpg_key.name }}{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'flatpak:gpgkey_list' %}">GPG Keys</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'flatpak:gpgkey_detail' gpg_key.pk %}">{{ gpg_key.name }}</a></li>
+        <li class="breadcrumb-item active">Renew</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2"><i class="bi bi-arrow-clockwise"></i> Renew GPG Key</h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <a href="{% url 'flatpak:gpgkey_detail' gpg_key.pk %}" class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Key
+        </a>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">Key Being Renewed</h5>
+            </div>
+            <div class="card-body">
+                <dl class="row mb-0">
+                    <dt class="col-sm-3">Name:</dt>
+                    <dd class="col-sm-9">{{ gpg_key.name }}</dd>
+                    <dt class="col-sm-3">Key ID:</dt>
+                    <dd class="col-sm-9"><code>{{ gpg_key.key_id }}</code></dd>
+                    <dt class="col-sm-3">Current Expiry:</dt>
+                    <dd class="col-sm-9">
+                        {% if gpg_key.expires_at %}
+                            {% now "Y-m-d" as today_str %}
+                            {% if gpg_key.expires_at|date:"Y-m-d" < today_str %}
+                                <span class="badge bg-danger">Expired</span>
+                                {{ gpg_key.expires_at|date:"M d, Y" }}
+                            {% else %}
+                                {{ gpg_key.expires_at|date:"M d, Y" }}
+                            {% endif %}
+                        {% else %}
+                            <span class="text-muted">Never expires</span>
+                        {% endif %}
+                    </dd>
+                    {% if gpg_key.repositories.all %}
+                    <dt class="col-sm-3">Used by:</dt>
+                    <dd class="col-sm-9">
+                        {% for repo in gpg_key.repositories.all %}
+                            <span class="badge bg-secondary me-1">{{ repo.name }}</span>
+                        {% endfor %}
+                    </dd>
+                    {% endif %}
+                </dl>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle"></i>
+                        <strong>Renew this key.</strong>
+                        The expiry date is embedded in the GPG key itself. Renewing re-exports
+                        the updated public key and refreshes the <code>.gpg</code> file for every
+                        repository that uses it. Clients will need to re-fetch the public key.
+                    </div>
+
+                    {% if form.non_field_errors %}
+                        <div class="alert alert-danger">
+                            {{ form.non_field_errors }}
+                        </div>
+                    {% endif %}
+
+                    <div class="mb-3">
+                        <label for="{{ form.key_lifetime.id_for_label }}" class="form-label">New Key Lifetime *</label>
+                        {{ form.key_lifetime }}
+                        {% if form.key_lifetime.errors %}
+                            <div class="invalid-feedback d-block">{{ form.key_lifetime.errors }}</div>
+                        {% endif %}
+                        <div class="form-text">{{ form.key_lifetime.help_text }}</div>
+                    </div>
+
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
+                        <a href="{% url 'flatpak:gpgkey_detail' gpg_key.pk %}" class="btn btn-outline-secondary">Cancel</a>
+                        <button type="submit" class="btn btn-warning">
+                            <i class="bi bi-arrow-clockwise"></i> Renew Key
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">About Key Renewal</h5>
+                <p class="card-text text-muted">
+                    Key renewal extends the expiry date embedded in the existing key material —
+                    the key ID and fingerprint remain unchanged.
+                </p>
+                <ul class="text-muted">
+                    <li>The public key is re-exported with the new expiry</li>
+                    <li>Repository <code>.gpg</code> files are updated automatically</li>
+                    <li>Clients must re-fetch the public key to verify future downloads</li>
+                    <li>The new expiry is measured from <strong>today</strong></li>
+                </ul>
+                <div class="alert alert-warning mb-0">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    After renewal, inform users of repositories that use this key to
+                    re-add the remote so they pick up the updated public key.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
