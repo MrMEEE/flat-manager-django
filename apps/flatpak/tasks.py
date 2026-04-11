@@ -574,7 +574,34 @@ def _patch_build_dir_versions(build_dir, package_id, version, log_fn=None):
             _log(f"Patched appstream gz with version {version}")
             patched_any = True
     else:
-        _log("No appstream gz found in export/ — version will appear after build-update-repo")
+        # appstream-compose failed or was skipped (common with desktop file issues) —
+        # synthesise a minimal xml.gz from the metainfo so build-update-repo picks up
+        # the version.  Without this the appstream branch has no data for this app.
+        _log("No appstream gz found in export/ — synthesising from metainfo...")
+        try:
+            gz_dir = os.path.dirname(gz_path)
+            os.makedirs(gz_dir, exist_ok=True)
+            if metainfo_path and os.path.exists(metainfo_path):
+                meta_tree = ET.parse(metainfo_path)
+                meta_root = meta_tree.getroot()
+                meta_root.tag = 'component'
+                components_el = ET.Element('components', {'version': '0.8', 'origin': package_id})
+                components_el.append(meta_root)
+            else:
+                components_el = ET.fromstring(
+                    f'<components version="0.8" origin="{package_id}">'
+                    f'<component type="desktop-application">'
+                    f'<id>{package_id}</id>'
+                    f'<releases><release version="{version}" date="{today}"/></releases>'
+                    f'</component></components>'
+                )
+            xml_bytes = ET.tostring(components_el, encoding='utf-8', xml_declaration=True)
+            with gzip.open(gz_path, 'wb') as fh:
+                fh.write(xml_bytes)
+            _log(f"Synthesised appstream gz with version {version}")
+            patched_any = True
+        except Exception as exc:
+            _log(f"Warning: could not synthesise appstream gz: {exc}")
 
     return patched_any
 
