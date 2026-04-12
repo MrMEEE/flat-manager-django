@@ -244,6 +244,30 @@ def ensure_appstream_compose_shims(build=None):
         '    --no-net \\\n'
         '    ${OTHER_ARGS} \\\n'
         '    / || true\n'
+        '# If appstreamcli failed to produce the xml.gz (e.g. desktop file read error)\n'
+        '# synthesise a minimal one directly from the metainfo so flatpak build-update-repo\n'
+        '# can still populate the appstream branch with the app version.\n'
+        '# This fallback runs INSIDE the bwrap sandbox so the gz is committed through the\n'
+        '# normal flatpak-builder finish stage — the only reliable path into the OSTree ref.\n'
+        '_gz="${PREFIX}/share/app-info/xmls/${ORIGIN}.xml.gz"\n'
+        'if [ ! -s "${_gz}" ]; then\n'
+        '    _meta=""\n'
+        '    for _p in \\\n'
+        '        "${PREFIX}/share/metainfo/${ORIGIN}.metainfo.xml" \\\n'
+        '        "${PREFIX}/share/appdata/${ORIGIN}.appdata.xml" \\\n'
+        '        "${PREFIX}/share/metainfo/${ORIGIN}.appdata.xml" \\\n'
+        '        "${PREFIX}/share/appdata/${ORIGIN}.metainfo.xml"; do\n'
+        '        [ -f "$_p" ] && { _meta="$_p"; break; }; done\n'
+        '    if [ -n "$_meta" ]; then\n'
+        '        _tmp="$(mktemp /tmp/_asc_fallback_XXXXXX.xml)"\n'
+        '        printf '"'"'<?xml version="1.0" encoding="UTF-8"?>\\n<components version="0.8" origin="%s">\\n'"'"' "${ORIGIN}" > "${_tmp}"\n'
+        '        cat "${_meta}" >> "${_tmp}"\n'
+        '        printf '"'"'\\n</components>\\n'"'"' >> "${_tmp}"\n'
+        '        gzip -9 -c "${_tmp}" > "${_gz}"\n'
+        '        rm -f "${_tmp}"\n'
+        '        printf "appstream-compose shim: synthesised fallback xml.gz from %s\\n" "${_meta}" >&2\n'
+        '    fi\n'
+        'fi\n'
     )
     patched = []
 
@@ -574,34 +598,13 @@ def _patch_build_dir_versions(build_dir, package_id, version, log_fn=None):
             _log(f"Patched appstream gz with version {version}")
             patched_any = True
     else:
-        # appstream-compose failed or was skipped (common with desktop file issues) —
-        # synthesise a minimal xml.gz from the metainfo so build-update-repo picks up
-        # the version.  Without this the appstream branch has no data for this app.
-        _log("No appstream gz found in export/ — synthesising from metainfo...")
-        try:
-            gz_dir = os.path.dirname(gz_path)
-            os.makedirs(gz_dir, exist_ok=True)
-            if metainfo_path and os.path.exists(metainfo_path):
-                meta_tree = ET.parse(metainfo_path)
-                meta_root = meta_tree.getroot()
-                meta_root.tag = 'component'
-                components_el = ET.Element('components', {'version': '0.8', 'origin': package_id})
-                components_el.append(meta_root)
-            else:
-                components_el = ET.fromstring(
-                    f'<components version="0.8" origin="{package_id}">'
-                    f'<component type="desktop-application">'
-                    f'<id>{package_id}</id>'
-                    f'<releases><release version="{version}" date="{today}"/></releases>'
-                    f'</component></components>'
-                )
-            xml_bytes = ET.tostring(components_el, encoding='utf-8', xml_declaration=True)
-            with gzip.open(gz_path, 'wb') as fh:
-                fh.write(xml_bytes)
-            _log(f"Synthesised appstream gz with version {version}")
-            patched_any = True
-        except Exception as exc:
-            _log(f"Warning: could not synthesise appstream gz: {exc}")
+        # The appstream-compose shim should have synthesised a gz inside the bwrap sandbox
+        # (which flatpak-builder's finish stage commits into the OSTree ref).  If for some
+        # reason the gz still isn't in export/ after the build, log a warning — there is
+        # nothing useful we can do here because flatpak build-export will not pick up a
+        # file we manually place in export/share/app-info/xmls/ (it was not created through
+        # the normal finish-stage path so it gets filtered out by build-export's allowlist).
+        _log("No appstream gz found in export/ after build — shim fallback may not have run")
 
     return patched_any
 
