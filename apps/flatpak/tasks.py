@@ -590,23 +590,30 @@ def _patch_build_dir_versions(build_dir, package_id, version, log_fn=None):
         _log(f"Created minimal metainfo with version {version}")
         patched_any = True
 
-    # ── 2. Gzipped appstream blob (export/share/app-info/xmls/) ─────────────
+    # ── 2. Gzipped appstream blob (export/ or files/share/app-info/xmls/) ─────
+    # When appstreamcli succeeds, flatpak-builder's finish stage exports the gz
+    # to export/share/app-info/xmls/.  When it fails our shim fallback writes the
+    # gz to ${PREFIX}/share/app-info/xmls/ inside bwrap — that path surfaces on
+    # the host as files/share/app-info/xmls/.  flatpak build-export commits all of
+    # files/ to the OSTree ref, and flatpak build-update-repo reads appstream from
+    # files/share/app-info/xmls/ — so either location is fine.
 
     gz_path = os.path.join(
         build_dir, 'export', 'share', 'app-info', 'xmls', f'{package_id}.xml.gz'
+    )
+    gz_path_in_files = os.path.join(
+        build_dir, 'files', 'share', 'app-info', 'xmls', f'{package_id}.xml.gz'
     )
     if os.path.exists(gz_path):
         if _patch_gz_appstream(gz_path, version, today):
             _log(f"Patched appstream gz with version {version}")
             patched_any = True
+    elif os.path.exists(gz_path_in_files):
+        # Shim fallback path — gz was synthesised inside bwrap and is already
+        # built from the metainfo (which has the correct version); no patching needed.
+        _log("Appstream gz present in files/ (written by shim fallback) — version committed to OSTree")
     else:
-        # The appstream-compose shim should have synthesised a gz inside the bwrap sandbox
-        # (which flatpak-builder's finish stage commits into the OSTree ref).  If for some
-        # reason the gz still isn't in export/ after the build, log a warning — there is
-        # nothing useful we can do here because flatpak build-export will not pick up a
-        # file we manually place in export/share/app-info/xmls/ (it was not created through
-        # the normal finish-stage path so it gets filtered out by build-export's allowlist).
-        _log("No appstream gz found in export/ after build — shim fallback may not have run")
+        _log("No appstream gz found after build — shim fallback may not have run")
 
     return patched_any
 
