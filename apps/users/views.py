@@ -71,6 +71,8 @@ class DashboardView(LoginRequiredMixin, View):
         externals_importing = ExternalRef.objects.filter(status__in=['pulling', 'publishing']).count()
         externals_imported  = ExternalRef.objects.filter(status__in=['pulled', 'published']).count()
         externals_failed    = ExternalRef.objects.filter(status='failed').count()
+        externals_outdated  = ExternalRef.objects.filter(update_available=True).count()
+        externals_published = ExternalRef.objects.filter(status='published').count()
 
         recent_builds = (
             Build.objects
@@ -103,6 +105,8 @@ class DashboardView(LoginRequiredMixin, View):
             'externals_importing':  externals_importing,
             'externals_imported':   externals_imported,
             'externals_failed':     externals_failed,
+            'externals_outdated':   externals_outdated,
+            'externals_published':  externals_published,
             'recent_builds':       recent_builds,
             'clients_online':      clients_online,
             'clients_offline':     clients_offline,

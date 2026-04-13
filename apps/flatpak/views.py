@@ -2530,6 +2530,8 @@ class ExternalRefListView(LoginRequiredMixin, ListView):
             qs = qs.filter(status=status)
         if repo:
             qs = qs.filter(repository_id=repo)
+        if self.request.GET.get('update_available') == '1':
+            qs = qs.filter(update_available=True)
         return qs
 
     def get_context_data(self, **kwargs):

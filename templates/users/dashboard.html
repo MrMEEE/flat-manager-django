@@ -177,6 +177,34 @@
             </div>
         </a>
     </div>
+
+    <div class="col-6 col-md-3">
+        <a href="{% url 'flatpak:external_list' %}?status=published" class="text-decoration-none">
+            <div class="card border-primary h-100">
+                <div class="card-body d-flex align-items-center gap-3">
+                    <i class="bi bi-cloud-check fs-2 text-primary opacity-75"></i>
+                    <div>
+                        <div class="display-6 fw-bold lh-1">{{ externals_published }}</div>
+                        <div class="small text-muted">Published</div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <div class="col-6 col-md-3">
+        <a href="{% url 'flatpak:external_list' %}?update_available=1" class="text-decoration-none">
+            <div class="card border-warning h-100">
+                <div class="card-body d-flex align-items-center gap-3">
+                    <i class="bi bi-arrow-up-circle fs-2 text-warning opacity-75"></i>
+                    <div>
+                        <div class="display-6 fw-bold lh-1">{{ externals_outdated }}</div>
+                        <div class="small text-muted">Outdated</div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
 </div>
 
 <h5 class="text-muted fw-semibold mt-4 mb-2">Clients</h5>
