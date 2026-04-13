@@ -14,7 +14,7 @@
                 <div class="card-body d-flex align-items-center gap-3">
                     <i class="bi bi-archive fs-2 opacity-75"></i>
                     <div>
-                        <div class="display-6 fw-bold lh-1">{{ repo_count }}</div>
+                        <div class="display-6 fw-bold lh-1" id="stat-repo-count">{{ repo_count }}</div>
                         <div class="small opacity-75">Repositories</div>
                     </div>
                 </div>
@@ -28,7 +28,7 @@
                 <div class="card-body d-flex align-items-center gap-3">
                     <i class="bi bi-box-seam fs-2 opacity-75"></i>
                     <div>
-                        <div class="display-6 fw-bold lh-1">{{ package_count }}</div>
+                        <div class="display-6 fw-bold lh-1" id="stat-package-count">{{ package_count }}</div>
                         <div class="small opacity-75">Packages</div>
                     </div>
                 </div>
@@ -42,7 +42,7 @@
                 <div class="card-body d-flex align-items-center gap-3">
                     <i class="bi bi-check-circle fs-2 opacity-75"></i>
                     <div>
-                        <div class="display-6 fw-bold lh-1">{{ packages_built }}</div>
+                        <div class="display-6 fw-bold lh-1" id="stat-packages-built">{{ packages_built }}</div>
                         <div class="small opacity-75">Built</div>
                     </div>
                 </div>
@@ -56,7 +56,7 @@
                 <div class="card-body d-flex align-items-center gap-3">
                     <i class="bi bi-x-circle fs-2 opacity-75"></i>
                     <div>
-                        <div class="display-6 fw-bold lh-1">{{ packages_failed }}</div>
+                        <div class="display-6 fw-bold lh-1" id="stat-packages-failed">{{ packages_failed }}</div>
                         <div class="small opacity-75">Failed</div>
                     </div>
                 </div>
@@ -73,7 +73,7 @@
                 <div class="card-body d-flex align-items-center gap-3">
                     <i class="bi bi-hammer fs-2 text-warning opacity-75"></i>
                     <div>
-                        <div class="display-6 fw-bold lh-1">{{ packages_building }}</div>
+                        <div class="display-6 fw-bold lh-1" id="stat-packages-building">{{ packages_building }}</div>
                         <div class="small text-muted">Building now</div>
                     </div>
                 </div>
@@ -86,7 +86,7 @@
             <div class="card-body d-flex align-items-center gap-3">
                 <i class="bi bi-cloud-upload fs-2 text-info opacity-75"></i>
                 <div>
-                    <div class="display-6 fw-bold lh-1">{{ packages_published }}</div>
+                    <div class="display-6 fw-bold lh-1" id="stat-packages-published">{{ packages_published }}</div>
                     <div class="small text-muted">Published</div>
                 </div>
             </div>
@@ -98,7 +98,7 @@
                 <div class="card-body d-flex align-items-center gap-3">
                     <i class="bi bi-arrow-up-circle fs-2 text-secondary opacity-75"></i>
                     <div>
-                        <div class="display-6 fw-bold lh-1">{{ packages_outdated }}</div>
+                        <div class="display-6 fw-bold lh-1" id="stat-packages-outdated">{{ packages_outdated }}</div>
                         <div class="small text-muted">Outdated</div>
                     </div>
                 </div>
@@ -111,7 +111,7 @@
                 <div class="card-body d-flex align-items-center gap-3">
                     <i class="bi bi-box-seam fs-2 {% if packages_deps_outdated %}text-warning{% else %}text-secondary opacity-75{% endif %}"></i>
                     <div>
-                        <div class="display-6 fw-bold lh-1">{{ packages_deps_outdated }}</div>
+                        <div class="display-6 fw-bold lh-1" id="stat-packages-deps-outdated">{{ packages_deps_outdated }}</div>
                         <div class="small text-muted">Outdated Deps</div>
                     </div>
                 </div>
@@ -128,7 +128,7 @@
                 <div class="card-body d-flex align-items-center gap-3">
                     <i class="bi bi-box-arrow-in-down fs-2 opacity-75"></i>
                     <div>
-                        <div class="display-6 fw-bold lh-1">{{ external_count }}</div>
+                        <div class="display-6 fw-bold lh-1" id="stat-external-count">{{ external_count }}</div>
                         <div class="small opacity-75">Externals</div>
                     </div>
                 </div>
@@ -142,7 +142,7 @@
                 <div class="card-body d-flex align-items-center gap-3">
                     <i class="bi bi-check-circle fs-2 opacity-75"></i>
                     <div>
-                        <div class="display-6 fw-bold lh-1">{{ externals_imported }}</div>
+                        <div class="display-6 fw-bold lh-1" id="stat-externals-imported">{{ externals_imported }}</div>
                         <div class="small opacity-75">Imported</div>
                     </div>
                 </div>
@@ -156,7 +156,7 @@
                 <div class="card-body d-flex align-items-center gap-3">
                     <i class="bi bi-x-circle fs-2 opacity-75"></i>
                     <div>
-                        <div class="display-6 fw-bold lh-1">{{ externals_failed }}</div>
+                        <div class="display-6 fw-bold lh-1" id="stat-externals-failed">{{ externals_failed }}</div>
                         <div class="small opacity-75">Failed</div>
                     </div>
                 </div>
@@ -170,7 +170,7 @@
                 <div class="card-body d-flex align-items-center gap-3">
                     <i class="bi bi-cloud-download fs-2 text-warning opacity-75"></i>
                     <div>
-                        <div class="display-6 fw-bold lh-1">{{ externals_importing }}</div>
+                        <div class="display-6 fw-bold lh-1" id="stat-externals-importing">{{ externals_importing }}</div>
                         <div class="small text-muted">Importing now</div>
                     </div>
                 </div>
@@ -184,7 +184,7 @@
                 <div class="card-body d-flex align-items-center gap-3">
                     <i class="bi bi-cloud-check fs-2 text-primary opacity-75"></i>
                     <div>
-                        <div class="display-6 fw-bold lh-1">{{ externals_published }}</div>
+                        <div class="display-6 fw-bold lh-1" id="stat-externals-published">{{ externals_published }}</div>
                         <div class="small text-muted">Published</div>
                     </div>
                 </div>
@@ -198,7 +198,7 @@
                 <div class="card-body d-flex align-items-center gap-3">
                     <i class="bi bi-arrow-up-circle fs-2 text-warning opacity-75"></i>
                     <div>
-                        <div class="display-6 fw-bold lh-1">{{ externals_outdated }}</div>
+                        <div class="display-6 fw-bold lh-1" id="stat-externals-outdated">{{ externals_outdated }}</div>
                         <div class="small text-muted">Outdated</div>
                     </div>
                 </div>
@@ -216,7 +216,7 @@
                 <div class="card-body d-flex align-items-center gap-3">
                     <i class="bi bi-check2-all fs-2 opacity-75"></i>
                     <div>
-                        <div class="display-6 fw-bold lh-1">{{ clients_uptodate }}</div>
+                        <div class="display-6 fw-bold lh-1" id="stat-clients-uptodate">{{ clients_uptodate }}</div>
                         <div class="small opacity-75">Up to date</div>
                     </div>
                 </div>
@@ -230,7 +230,7 @@
                 <div class="card-body d-flex align-items-center gap-3">
                     <i class="bi bi-arrow-up-circle fs-2 opacity-75"></i>
                     <div>
-                        <div class="display-6 fw-bold lh-1">{{ clients_outdated }}</div>
+                        <div class="display-6 fw-bold lh-1" id="stat-clients-outdated">{{ clients_outdated }}</div>
                         <div class="small opacity-75">Outdated</div>
                     </div>
                 </div>
@@ -244,7 +244,7 @@
                 <div class="card-body d-flex align-items-center gap-3">
                     <i class="bi bi-boxes fs-2 text-info opacity-75"></i>
                     <div>
-                        <div class="display-6 fw-bold lh-1">{{ clients_foreign }}</div>
+                        <div class="display-6 fw-bold lh-1" id="stat-clients-foreign">{{ clients_foreign }}</div>
                         <div class="small text-muted">Foreign packages</div>
                     </div>
                 </div>
@@ -258,7 +258,7 @@
                 <div class="card-body d-flex align-items-center gap-3">
                     <i class="bi bi-wifi fs-2 text-success opacity-75"></i>
                     <div>
-                        <div class="display-6 fw-bold lh-1">{{ clients_online }}</div>
+                        <div class="display-6 fw-bold lh-1" id="stat-clients-online">{{ clients_online }}</div>
                         <div class="small text-muted">Online</div>
                     </div>
                 </div>
@@ -272,7 +272,7 @@
                 <div class="card-body d-flex align-items-center gap-3">
                     <i class="bi bi-wifi-off fs-2 text-secondary opacity-75"></i>
                     <div>
-                        <div class="display-6 fw-bold lh-1">{{ clients_offline }}</div>
+                        <div class="display-6 fw-bold lh-1" id="stat-clients-offline">{{ clients_offline }}</div>
                         <div class="small text-muted">Offline</div>
                     </div>
                 </div>
@@ -388,4 +388,63 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    var _refreshTimer = null;
+
+    function _set(id, val) {
+        var el = document.getElementById(id);
+        if (el && el.textContent !== String(val)) el.textContent = val;
+    }
+
+    function refreshStats() {
+        fetch('{% url "users:dashboard_stats" %}', {
+            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+            credentials: 'same-origin',
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            _set('stat-repo-count',             d.repo_count);
+            _set('stat-package-count',          d.package_count);
+            _set('stat-packages-building',      d.packages_building);
+            _set('stat-packages-built',         d.packages_built);
+            _set('stat-packages-failed',        d.packages_failed);
+            _set('stat-packages-published',     d.packages_published);
+            _set('stat-packages-outdated',      d.packages_outdated);
+            _set('stat-packages-deps-outdated', d.packages_deps_outdated);
+            _set('stat-external-count',         d.external_count);
+            _set('stat-externals-imported',     d.externals_imported);
+            _set('stat-externals-failed',       d.externals_failed);
+            _set('stat-externals-importing',    d.externals_importing);
+            _set('stat-externals-published',    d.externals_published);
+            _set('stat-externals-outdated',     d.externals_outdated);
+            _set('stat-clients-uptodate',       d.clients_uptodate);
+            _set('stat-clients-outdated',       d.clients_outdated);
+            _set('stat-clients-foreign',        d.clients_foreign);
+            _set('stat-clients-online',         d.clients_online);
+            _set('stat-clients-offline',        d.clients_offline);
+        })
+        .catch(function () {});
+    }
+
+    // Debounce: coalesce rapid WS events into one request.
+    function scheduleRefresh() {
+        clearTimeout(_refreshTimer);
+        _refreshTimer = setTimeout(refreshStats, 1200);
+    }
+
+    // Hook into the base.html WebSocket dispatcher.
+    window.onWebSocketMessage = function (data) {
+        if (data.type === 'build_status_update' || data.type === 'promotion_status_update') {
+            scheduleRefresh();
+        }
+    };
+
+    // Catch any transitions that happened while the socket was down.
+    window.onWebSocketReconnect = function () { refreshStats(); };
+})();
+</script>
 {% endblock %}

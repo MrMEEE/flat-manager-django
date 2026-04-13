@@ -117,6 +117,45 @@ class DashboardView(LoginRequiredMixin, View):
         return render(request, 'users/dashboard.html', context)
 
 
+class DashboardStatsApiView(LoginRequiredMixin, View):
+    """Lightweight JSON endpoint: returns all dashboard stat counters."""
+
+    def get(self, request):
+        from apps.flatpak.models import Repository, Package, Build, Client, SiteConfig, ExternalRef
+        from django.db.models import F
+        from django.utils import timezone
+        from datetime import timedelta
+
+        stale_hours = SiteConfig.get_solo().client_stale_hours
+        stale_threshold = timezone.now() - timedelta(hours=stale_hours)
+
+        return JsonResponse({
+            'repo_count':             Repository.objects.filter(is_active=True).count(),
+            'package_count':          Package.objects.count(),
+            'packages_building':      Package.objects.filter(status__in=['building', 'committing', 'committed', 'publishing']).count(),
+            'packages_built':         Package.objects.filter(status='built').count(),
+            'packages_failed':        Package.objects.filter(status__in=['failed', 'cancelled']).count(),
+            'packages_published':     Package.objects.filter(status='published').count(),
+            'packages_outdated':      Package.objects.filter(
+                upstream_version__isnull=False
+            ).exclude(upstream_version='').exclude(upstream_version=F('version')).count(),
+            'packages_deps_outdated': Package.objects.filter(deps_need_rebuild=True).count(),
+            'external_count':         ExternalRef.objects.count(),
+            'externals_importing':    ExternalRef.objects.filter(status__in=['pulling', 'publishing']).count(),
+            'externals_imported':     ExternalRef.objects.filter(status__in=['pulled', 'published']).count(),
+            'externals_failed':       ExternalRef.objects.filter(status='failed').count(),
+            'externals_outdated':     ExternalRef.objects.filter(update_available=True).count(),
+            'externals_published':    ExternalRef.objects.filter(status='published').count(),
+            'clients_online':         Client.objects.filter(last_checkin__gte=stale_threshold).count(),
+            'clients_offline':        Client.objects.filter(
+                models.Q(last_checkin__lt=stale_threshold) | models.Q(last_checkin__isnull=True)
+            ).count(),
+            'clients_uptodate':       Client.objects.filter(outdated_count=0).count(),
+            'clients_outdated':       Client.objects.filter(outdated_count__gt=0).count(),
+            'clients_foreign':        Client.objects.filter(foreign_count__gt=0).count(),
+        })
+
+
 class AdminRequiredMixin(UserPassesTestMixin):
     """Mixin to require staff or superuser status."""
     def test_func(self):
