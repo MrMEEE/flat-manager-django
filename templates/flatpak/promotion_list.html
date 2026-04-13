@@ -209,6 +209,7 @@
                         <th>Version</th>
                         <th>Source Repo</th>
                         <th>Build</th>
+                        <th>Current repos</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -220,7 +221,7 @@
                         data-bs-toggle="collapse" data-bs-target=".promote-group-{{ forloop.counter }}"
                         aria-expanded="false">
                         <td></td>
-                        <td colspan="4">
+                        <td colspan="5">
                             <i class="bi bi-folder2 text-primary me-1"></i>
                             <strong>{{ group.grouper }}</strong>
                             <span class="badge bg-primary ms-2">{{ group.list|length }}</span>
@@ -241,6 +242,7 @@
                         <td>{{ item.build.version|default:"-" }}</td>
                         <td><a href="{% url 'flatpak:repo_detail' item.build.package.repository.pk %}">{{ item.build.package.repository.name }}</a></td>
                         <td><a href="{% url 'flatpak:build_detail' item.build.pk %}">#{{ item.build.build_number }}</a></td>
+                        <td>{% for repo_name in item.current_repos %}<span class="badge bg-success me-1">{{ repo_name }}</span>{% empty %}<span class="text-muted">—</span>{% endfor %}</td>
                         <td>
                             {% if item.targets|length == 1 %}
                             {% with repo=item.targets.0 %}
@@ -284,6 +286,7 @@
                         <td>{{ item.build.version|default:"-" }}</td>
                         <td><a href="{% url 'flatpak:repo_detail' item.build.package.repository.pk %}">{{ item.build.package.repository.name }}</a></td>
                         <td><a href="{% url 'flatpak:build_detail' item.build.pk %}">#{{ item.build.build_number }}</a></td>
+                        <td>{% for repo_name in item.current_repos %}<span class="badge bg-success me-1">{{ repo_name }}</span>{% empty %}<span class="text-muted">—</span>{% endfor %}</td>
                         <td>
                             {% if item.targets|length == 1 %}
                             {% with repo=item.targets.0 %}
@@ -1195,8 +1198,16 @@
     }
 
     function onWebSocketMessage(data) {
-        if (data.type !== 'promotion_status_update') return;
-        _applyPromotionUpdate(String(data.promotion_id), data.status, data.error_message);
+        if (data.type === 'promotion_status_update') {
+            _applyPromotionUpdate(String(data.promotion_id), data.status, data.error_message);
+        } else if (data.type === 'build_status_update') {
+            // When a build reaches a terminal state, reload the sections
+            // (Ready to Commit / Publish / Promote may have changed).
+            var terminal = ['built', 'committed', 'published', 'failed', 'cancelled'];
+            if (terminal.indexOf(data.status) !== -1) {
+                _scheduleTableReload();
+            }
+        }
     }
 
     // Reload only the results container without dropping the WebSocket connection.
@@ -1320,13 +1331,9 @@ function onWebSocketReconnect() {
 const _csrf = '{{ csrf_token }}';
 const _promotionChildRepos = {{ promotion_child_repos_json|safe }};
 
-// Use AJAX table reload instead of full page reload whenever possible.
+// Use AJAX table reload instead of full page reload.
 function _reload() {
-    if (typeof window._reloadPromotionsTable === 'function') {
-        window._reloadPromotionsTable();
-    } else {
-        location.reload();
-    }
+    window._reloadPromotionsTable();
 }
 
 // Persist multiselect across AJAX history-table pagination.
@@ -1372,10 +1379,37 @@ function _updatePromoteConstraints(chkClass) {
 
 // ── Checkbox + bulk action setup ─────────────────────────────────────────────
 (function () {
+    // Returns true only if every non-disabled checkbox in `chkClass` shares
+    // at least one common target — i.e. a bulk-promote to a single repo is possible.
+    function _canSelectAll(chkClass) {
+        var all = Array.from(document.querySelectorAll('.' + chkClass + ':not(:disabled)'));
+        if (all.length === 0) return false;
+        var targetSets = all.map(function (c) {
+            return new Set(JSON.parse(c.dataset.targets || '[]').map(function (t) { return t.id; }));
+        });
+        var common = Array.from(targetSets[0]).filter(function (id) {
+            return targetSets.every(function (s) { return s.has(id); });
+        });
+        return common.length > 0;
+    }
+
     function setupTable(selectAllId, chkClass, bulkBtnId, selSet, constrainTargets) {
         var selectAll = document.getElementById(selectAllId);
         var bulkBtn  = document.getElementById(bulkBtnId);
         if (!selectAll) return;
+
+        // When target-constrained, disable "select all" if the items don't
+        // share a common target (bulk promote to one repo would be impossible).
+        function _refreshSelectAllAvailability() {
+            if (!constrainTargets) return;
+            var canSelect = _canSelectAll(chkClass);
+            selectAll.disabled = !canSelect;
+            selectAll.title = canSelect
+                ? 'Select all'
+                : 'Cannot select all \u2014 packages have different target repos';
+        }
+
+        _refreshSelectAllAvailability();
 
         // Restore prior selections.
         if (selSet && selSet.size) {
@@ -1600,11 +1634,7 @@ function promoteFromList(buildPk, repoId, repoName, pkgName) {
                 if (r.ok) {
                     // AJAX-reload the results table so the WebSocket connection stays alive.
                     // The WS will then deliver the final status update without being interrupted.
-                    if (typeof window._reloadPromotionsTable === 'function') {
-                        window._reloadPromotionsTable();
-                    } else {
-                        location.reload();
-                    }
+                    window._reloadPromotionsTable();
                 } else { showErrorModal('Promote Failed', d.error || r.statusText); }
             } catch (e) { showErrorModal('Promote Error', e.message); }
         }
@@ -1689,11 +1719,7 @@ async function bulkPromote() {
             if (errors.length) {
                 showErrorModal('Promote Errors', errors.map(function (e) { return '<div>' + e + '</div>'; }).join(''));
             }
-            if (typeof window._reloadPromotionsTable === 'function') {
-                window._reloadPromotionsTable();
-            } else {
-                location.reload();
-            }
+            window._reloadPromotionsTable();
         }
     );
 }

@@ -50,7 +50,7 @@ class LogoutView(LoginRequiredMixin, View):
 class DashboardView(LoginRequiredMixin, View):
     """Main dashboard view."""
     def get(self, request):
-        from apps.flatpak.models import Repository, Package, Build, Client, SiteConfig
+        from apps.flatpak.models import Repository, Package, Build, Client, SiteConfig, ExternalRef
         from django.db.models import Count, Max, F
         from django.utils import timezone
         from datetime import timedelta
@@ -66,6 +66,11 @@ class DashboardView(LoginRequiredMixin, View):
             upstream_version__isnull=False
         ).exclude(upstream_version='').exclude(upstream_version=F('version')).count()
         packages_deps_outdated = Package.objects.filter(deps_need_rebuild=True).count()
+
+        external_count      = ExternalRef.objects.count()
+        externals_importing = ExternalRef.objects.filter(status__in=['pulling', 'publishing']).count()
+        externals_imported  = ExternalRef.objects.filter(status__in=['pulled', 'published']).count()
+        externals_failed    = ExternalRef.objects.filter(status='failed').count()
 
         recent_builds = (
             Build.objects
@@ -94,6 +99,10 @@ class DashboardView(LoginRequiredMixin, View):
             'packages_published':  packages_published,
             'packages_outdated':   packages_outdated,
             'packages_deps_outdated': packages_deps_outdated,
+            'external_count':       external_count,
+            'externals_importing':  externals_importing,
+            'externals_imported':   externals_imported,
+            'externals_failed':     externals_failed,
             'recent_builds':       recent_builds,
             'clients_online':      clients_online,
             'clients_offline':     clients_offline,

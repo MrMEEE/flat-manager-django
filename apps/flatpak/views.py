@@ -1431,7 +1431,14 @@ class PromotionListView(LoginRequiredMixin, ListView):
                 continue
             targets = get_available_promotion_targets(build)
             if targets:
-                ready_to_promote.append({'build': build, 'targets': targets})
+                # Repos this build has already been successfully promoted to
+                # (use the prefetched set to avoid extra queries)
+                current_repos = [
+                    p.target_repo.name
+                    for p in build.promotions.all()
+                    if p.status == 'promoted'
+                ]
+                ready_to_promote.append({'build': build, 'targets': targets, 'current_repos': current_repos})
                 seen_packages.add(build.package_id)
         context['ready_to_promote'] = ready_to_promote
         ready_to_promote_externals = []

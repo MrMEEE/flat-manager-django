@@ -119,6 +119,66 @@
         </a>
     </div></div>
 
+<h5 class="text-muted fw-semibold mt-4 mb-2">Externals</h5>
+<!-- ── External stat cards ─────────────────────────────────────────────────── -->
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <a href="{% url 'flatpak:external_list' %}" class="text-decoration-none">
+            <div class="card text-white bg-secondary h-100">
+                <div class="card-body d-flex align-items-center gap-3">
+                    <i class="bi bi-box-arrow-in-down fs-2 opacity-75"></i>
+                    <div>
+                        <div class="display-6 fw-bold lh-1">{{ external_count }}</div>
+                        <div class="small opacity-75">Externals</div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <div class="col-6 col-md-3">
+        <a href="{% url 'flatpak:external_list' %}?status=published" class="text-decoration-none">
+            <div class="card text-white bg-success h-100">
+                <div class="card-body d-flex align-items-center gap-3">
+                    <i class="bi bi-check-circle fs-2 opacity-75"></i>
+                    <div>
+                        <div class="display-6 fw-bold lh-1">{{ externals_imported }}</div>
+                        <div class="small opacity-75">Imported</div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <div class="col-6 col-md-3">
+        <a href="{% url 'flatpak:external_list' %}?status=failed" class="text-decoration-none">
+            <div class="card text-white bg-danger h-100">
+                <div class="card-body d-flex align-items-center gap-3">
+                    <i class="bi bi-x-circle fs-2 opacity-75"></i>
+                    <div>
+                        <div class="display-6 fw-bold lh-1">{{ externals_failed }}</div>
+                        <div class="small opacity-75">Failed</div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <div class="col-6 col-md-3">
+        <a href="{% url 'flatpak:external_list' %}?status=pulling" class="text-decoration-none">
+            <div class="card border-warning h-100">
+                <div class="card-body d-flex align-items-center gap-3">
+                    <i class="bi bi-cloud-download fs-2 text-warning opacity-75"></i>
+                    <div>
+                        <div class="display-6 fw-bold lh-1">{{ externals_importing }}</div>
+                        <div class="small text-muted">Importing now</div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+</div>
+
 <h5 class="text-muted fw-semibold mt-4 mb-2">Clients</h5>
 <!-- ── Client stat cards ────────────────────────────────────────────────────── -->
 <div class="row g-3 mb-4">
