@@ -1275,6 +1275,77 @@ class BuildUnpublishView(LoginRequiredMixin, View):
         return JsonResponse({'status': 'ok', 'message': f'Build #{build.build_number} unpublished'})
 
 
+class BuildDeleteView(LoginRequiredMixin, View):
+    """Permanently delete a build and remove its OSTree refs from all repos."""
+
+    ACTIVE = {'building', 'committing', 'publishing'}
+
+    def post(self, request, pk):
+        from apps.flatpak.utils.ostree import update_repo_metadata
+        build = get_object_or_404(Build, pk=pk)
+
+        if build.status in self.ACTIVE:
+            return JsonResponse(
+                {'error': 'Cannot delete an active build. Cancel it first.'},
+                status=400,
+            )
+
+        package = build.package
+        if not package:
+            return JsonResponse({'error': 'Only package builds can be deleted here.'}, status=400)
+
+        # 1. Delete all promotions for this build — removes OSTree refs from every
+        #    target repo and deletes the Promotion DB records.
+        for promo in list(build.promotions.select_related('target_repo', 'package').all()):
+            try:
+                _delete_promotion_from_repo(promo)
+            except Exception as e:
+                return JsonResponse(
+                    {'error': f'Failed to remove promotion to {promo.target_repo.name}: {e}'},
+                    status=500,
+                )
+
+        # 2. If the build is published, remove its ref from the package source repo
+        #    — but only if the ref still points to this build's commit (a newer
+        #    build may already have replaced it).
+        if build.status == 'published':
+            source_repo_path = package.repository.repo_path
+            ref_name = f'app/{package.package_id}/{package.arch}/{package.branch}'
+            locale_ref = f'runtime/{package.package_id}.Locale/{package.arch}/{package.branch}'
+            try:
+                should_delete = True
+                if build.commit_hash:
+                    r = subprocess.run(
+                        ['ostree', 'rev-parse', f'--repo={source_repo_path}', ref_name],
+                        capture_output=True, text=True, timeout=30,
+                    )
+                    should_delete = r.stdout.strip() == build.commit_hash
+                if should_delete:
+                    subprocess.run(
+                        ['ostree', 'refs', '--delete', ref_name, f'--repo={source_repo_path}'],
+                        capture_output=True, text=True, timeout=60,
+                    )
+                    subprocess.run(
+                        ['ostree', 'refs', '--delete', locale_ref, f'--repo={source_repo_path}'],
+                        capture_output=True, text=True, timeout=60,
+                    )
+                    update_repo_metadata(source_repo_path, package.repository.gpg_key, generate_deltas=False)
+            except Exception as e:
+                return JsonResponse(
+                    {'error': f'Failed to remove ref from source repo: {e}'}, status=500
+                )
+
+        build_number = build.build_number
+        build.delete()
+
+        # Update Package.status to reflect whichever build is now the latest.
+        latest = package.builds.order_by('-build_number').first()
+        package.status = latest.status if latest else 'failed'
+        package.save(update_fields=['status'])
+
+        return JsonResponse({'status': 'ok', 'message': f'Build #{build_number} deleted'})
+
+
 class BuildCancelView(LoginRequiredMixin, View):
     """Cancel an in-progress build (building / committing / publishing)."""
 

@@ -346,6 +346,12 @@
                                         <i class="bi bi-x-circle"></i> Cancel
                                     </button>
                                     {% endif %}
+                                    {% if build.status not in 'building,committing,publishing' %}
+                                    <button type="button" class="btn btn-sm btn-outline-danger ms-1"
+                                            onclick="deleteBuild({{ build.pk }}, {{ build.build_number }}, '{{ build.status }}')">
+                                        <i class="bi bi-trash"></i> Delete
+                                    </button>
+                                    {% endif %}
                                 </td>
                             </tr>
                             {% endfor %}
@@ -718,6 +724,40 @@
                 showAlert('Error', 'Error cancelling build: ' + error.message, 'danger');
             }
         });
+    };
+
+    // Delete a specific build permanently
+    window.deleteBuild = function(buildPk, buildNumber, buildStatus) {
+        let message = `Permanently delete build #${buildNumber}?`;
+        if (buildStatus === 'published') {
+            message += ' This build is currently published — the OSTree ref will be removed from all repositories it has been promoted to.';
+        } else if (buildStatus === 'committed' || buildStatus === 'built') {
+            message += ' The build record and any staged OSTree data will be removed.';
+        }
+        message += ' This cannot be undone.';
+        showConfirm(
+            `Delete Build #${buildNumber}`,
+            message,
+            'Delete',
+            'btn-danger',
+            async function() {
+                try {
+                    const resp = await fetch(`/builds/${buildPk}/delete/`, {
+                        method: 'POST',
+                        headers: { 'X-CSRFToken': '{{ csrf_token }}' },
+                        credentials: 'same-origin',
+                    });
+                    const data = await resp.json();
+                    if (resp.ok) {
+                        await refreshBuildHistory();
+                    } else {
+                        showAlert('Delete Failed', data.error || 'Unknown error');
+                    }
+                } catch (e) {
+                    showAlert('Delete Error', e.message);
+                }
+            }
+        );
     };
 
     // Delete package permanently via modal confirmation
@@ -1152,6 +1192,7 @@
                         ${b.status === 'built' ? `<button type="button" class="btn btn-sm btn-outline-info ms-1" onclick="commitBuildAction(${buildId})"><i class="bi bi-check-circle"></i> Commit</button>` : ''}
                         ${b.status === 'committed' ? `<button type="button" class="btn btn-sm btn-outline-success ms-1" onclick="publishBuildAction(${buildId})"><i class="bi bi-cloud-upload"></i> Publish</button>` : ''}
                         ${'building,committing,publishing'.includes(b.status) ? `<button type="button" class="btn btn-sm btn-outline-danger ms-1" onclick="cancelBuildRecord(${b.id}, this)"><i class="bi bi-x-circle"></i> Cancel</button>` : ''}
+                        ${'building,committing,publishing'.includes(b.status) ? '' : `<button type="button" class="btn btn-sm btn-outline-danger ms-1" onclick="deleteBuild(${b.id}, ${b.build_number}, '${b.status}')"><i class="bi bi-trash"></i> Delete</button>`}
                     </td>
                 `;
                 if (isNew) {
