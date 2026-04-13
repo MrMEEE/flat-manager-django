@@ -1197,7 +1197,8 @@
         }
     }
 
-    function onWebSocketMessage(data) {
+    // Exposed globally so base.html's handleWebSocketMessage() can call it.
+    window.onWebSocketMessage = function (data) {
         if (data.type === 'promotion_status_update') {
             _applyPromotionUpdate(String(data.promotion_id), data.status, data.error_message);
         } else if (data.type === 'build_status_update') {
