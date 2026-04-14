@@ -467,7 +467,7 @@ class RepositoryUpdateMetadataView(LoginRequiredMixin, View):
             return JsonResponse({'error': 'Repository not found on disk'}, status=404)
 
         try:
-            result = update_repo_metadata(repo_path, repository.gpg_key)
+            result = update_repo_metadata(repo_path, repository.gpg_key, generate_deltas=False)
         except Exception as e:
             return JsonResponse({'error': str(e)}, status=500)
 
@@ -1083,7 +1083,7 @@ class ExternalRefPromotionDeleteView(LoginRequiredMixin, View):
             if delete_result.returncode != 0 and 'No such ref' not in (delete_result.stderr or ''):
                 raise RuntimeError(delete_result.stderr.strip() or delete_result.stdout.strip())
 
-            update_repo_metadata(repo_path, target_repo.gpg_key)
+            update_repo_metadata(repo_path, target_repo.gpg_key, generate_deltas=False)
             promo.delete()
             return JsonResponse({'status': 'ok'})
         except Exception as exc:
@@ -1140,7 +1140,7 @@ def _delete_promotion_from_repo(promotion):
             ['ostree', 'refs', '--delete', locale_ref, f'--repo={target_repo_path}'],
             capture_output=True, text=True, timeout=60
         )
-        result = update_repo_metadata(target_repo_path, promotion.target_repo.gpg_key)
+        result = update_repo_metadata(target_repo_path, promotion.target_repo.gpg_key, generate_deltas=False)
         if not result['success']:
             logger.warning(f"update_repo_metadata warning for {promotion}: {result}")
     promotion.delete()
