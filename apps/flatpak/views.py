@@ -2931,6 +2931,79 @@ class OrganisationDeleteView(LoginRequiredMixin, DeleteView):
     success_url = reverse_lazy('flatpak:organisation_list')
 
 
+def _version_lt(installed_version, latest_version):
+    """Return True when installed_version is older than latest_version."""
+    if not installed_version or not latest_version:
+        return False
+    try:
+        from packaging.version import Version as _Version, InvalidVersion as _InvalidVersion
+        try:
+            return _Version(installed_version) < _Version(latest_version)
+        except _InvalidVersion:
+            return installed_version != latest_version
+    except Exception:
+        return installed_version != latest_version
+
+
+def _latest_published_versions_for_app_ids(app_ids):
+    """
+    Resolve app_id -> latest published version from Package records.
+
+    Calculated at render time so client status stays current even when
+    packages are promoted after the client's last check-in.
+    """
+    if not app_ids:
+        return {}
+
+    latest_versions = {}
+    for p in Package.objects.filter(
+        status='published',
+        package_id__in=app_ids,
+    ).exclude(version='').only('version', 'package_id'):
+        app_id = p.package_id
+        current = latest_versions.get(app_id)
+        if current is None or _version_lt(current, p.version):
+            latest_versions[app_id] = p.version
+    return latest_versions
+
+
+def _compute_client_dynamic_package_state(client, latest_versions):
+    """Compute foreign/outdated package snapshots for a single client."""
+    installed = list(client.installed_flatpaks or [])
+    managed_set = set(client.managed_remotes or [])
+
+    foreign_flatpaks = [
+        pkg for pkg in installed
+        if pkg.get('origin') not in managed_set
+    ]
+
+    outdated_flatpaks = []
+    for pkg in installed:
+        if pkg.get('origin') not in managed_set:
+            continue
+        app_id = pkg.get('app_id', '')
+        inst_ver = pkg.get('version', '')
+        latest_ver = latest_versions.get(app_id, '')
+        if _version_lt(inst_ver, latest_ver):
+            outdated_flatpaks.append({
+                'app_id': app_id,
+                'current_version': inst_ver,
+                'new_version': latest_ver,
+                'origin': pkg.get('origin', ''),
+                'name': pkg.get('name', ''),
+                'branch': pkg.get('branch', ''),
+            })
+
+    return {
+        'installed_flatpaks': installed,
+        'installed_count': len(installed),
+        'foreign_flatpaks': foreign_flatpaks,
+        'foreign_count': len(foreign_flatpaks),
+        'outdated_flatpaks': outdated_flatpaks,
+        'outdated_count': len(outdated_flatpaks),
+    }
+
+
 class ClientListView(LoginRequiredMixin, ListView):
     template_name = 'flatpak/client_list.html'
     context_object_name = 'clients'
@@ -2952,6 +3025,23 @@ class ClientListView(LoginRequiredMixin, ListView):
         stale_hours = SiteConfig.get_solo().client_stale_hours
         threshold = timezone.now() - timedelta(hours=stale_hours)
         qs = list(Client.objects.prefetch_related('organisations').all())
+
+        managed_app_ids = set()
+        for client in qs:
+            managed_set = set(client.managed_remotes or [])
+            for pkg in (client.installed_flatpaks or []):
+                if pkg.get('origin') in managed_set and pkg.get('app_id'):
+                    managed_app_ids.add(pkg['app_id'])
+        latest_versions = _latest_published_versions_for_app_ids(managed_app_ids)
+
+        for client in qs:
+            dynamic = _compute_client_dynamic_package_state(client, latest_versions)
+            client.installed_count = dynamic['installed_count']
+            client.foreign_count = dynamic['foreign_count']
+            client.outdated_count = dynamic['outdated_count']
+            client.foreign_flatpaks = dynamic['foreign_flatpaks']
+            client.outdated_flatpaks = dynamic['outdated_flatpaks']
+
         self._annotate_status(qs, threshold)
         # Pre-serialize JSON so the template emits valid JSON strings.
         # Django's template renders Python lists/dicts with repr() (single
@@ -2988,6 +3078,21 @@ class ClientDetailView(LoginRequiredMixin, DetailView):
         from django.utils import timezone
         from datetime import timedelta
         client = context['client']
+
+        managed_set = set(client.managed_remotes or [])
+        managed_app_ids = {
+            p.get('app_id')
+            for p in (client.installed_flatpaks or [])
+            if p.get('app_id') and p.get('origin') in managed_set
+        }
+        latest_versions = _latest_published_versions_for_app_ids(managed_app_ids)
+        dynamic = _compute_client_dynamic_package_state(client, latest_versions)
+        client.installed_count = dynamic['installed_count']
+        client.foreign_count = dynamic['foreign_count']
+        client.outdated_count = dynamic['outdated_count']
+        client.foreign_flatpaks = dynamic['foreign_flatpaks']
+        client.outdated_flatpaks = dynamic['outdated_flatpaks']
+
         stale_hours = SiteConfig.get_solo().client_stale_hours
         threshold = timezone.now() - timedelta(hours=stale_hours)
         if client.last_checkin is None or client.last_checkin < threshold:
