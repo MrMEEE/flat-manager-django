@@ -242,10 +242,97 @@ def identify_managed_remotes(remotes, server_url):
     return [r['name'] for r in remotes if r['url'].rstrip('/').startswith(server_url)]
 
 
-def checkin(server_url, hostname, remotes, managed_remotes, installed, user_flatpaks):
+def get_serial_number():
+    """Best-effort hardware serial number detection."""
+    invalid_values = {
+        '',
+        'none',
+        'unknown',
+        'not specified',
+        'n/a',
+        'na',
+        'to be filled by o.e.m.',
+        'default string',
+        'system serial number',
+    }
+
+    def _clean(value):
+        value = (value or '').strip()
+        return value if value and value.lower() not in invalid_values else ''
+
+    # Preferred source: firmware-reported chassis/system serial.
+    # Works reliably on most physical systems and matches dmidecode output.
+    try:
+        value = _clean(run(['dmidecode', '-s', 'system-serial-number']))
+        if value:
+            return value
+    except Exception:
+        pass
+
+    candidates = [
+        '/sys/class/dmi/id/product_serial',
+        '/sys/class/dmi/id/board_serial',
+        '/sys/class/dmi/id/chassis_serial',
+    ]
+
+    for path in candidates:
+        try:
+            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                value = _clean(f.read())
+            if value:
+                return value
+        except Exception:
+            continue
+
+    # Fallback for environments where DMI files are unavailable.
+    value = run(['cat', '/etc/machine-id']).strip()
+    return value or ''
+
+
+def get_machine_type():
+    """Best-effort hardware machine type/model detection."""
+    invalid_values = {
+        '',
+        'none',
+        'unknown',
+        'not specified',
+        'n/a',
+        'na',
+        'to be filled by o.e.m.',
+        'default string',
+    }
+
+    def _clean(value):
+        value = (value or '').strip()
+        return value if value and value.lower() not in invalid_values else ''
+
+    # Preferred source: firmware-reported product/model name.
+    try:
+        value = _clean(run(['dmidecode', '-s', 'system-product-name']))
+        if value:
+            return value
+    except Exception:
+        pass
+
+    # Fallback to sysfs DMI values.
+    for path in ('/sys/class/dmi/id/product_name', '/sys/class/dmi/id/chassis_type'):
+        try:
+            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                value = _clean(f.read())
+            if value:
+                return value
+        except Exception:
+            continue
+
+    return ''
+
+
+def checkin(server_url, hostname, serial_number, machine_type, remotes, managed_remotes, installed, user_flatpaks):
     """POST the check-in payload to the server."""
     payload = {
         'hostname':        hostname,
+        'serial_number':   serial_number,
+        'machine_type':    machine_type,
         'server_url':      server_url,
         'remotes':         remotes,
         'managed_remotes': managed_remotes,
@@ -318,6 +405,8 @@ def main():
 
     remotes         = get_all_remotes(users=users)
     managed_remotes = identify_managed_remotes(remotes, server_url)
+    serial_number = get_serial_number()
+    machine_type = get_machine_type()
     refresh_appstream(users=users)
 
     # System-wide data
@@ -339,7 +428,7 @@ def main():
                 installed.append(tagged)
                 seen_ids.add(pkg['app_id'])
 
-    status, body = checkin(server_url, hostname, remotes, managed_remotes,
+    status, body = checkin(server_url, hostname, serial_number, machine_type, remotes, managed_remotes,
                            installed, user_flatpaks)
 
     if status == 200:

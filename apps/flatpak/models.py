@@ -798,6 +798,18 @@ class Client(models.Model):
         unique=True,
         help_text="Hostname of the client machine."
     )
+    serial_number = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text="Hardware serial number reported by the client machine."
+    )
+    machine_type = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text="Hardware model/type reported by the client machine."
+    )
     last_checkin = models.DateTimeField(
         null=True, blank=True,
         help_text="Timestamp of the most recent check-in from this client."

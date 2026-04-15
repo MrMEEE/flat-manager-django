@@ -3210,6 +3210,12 @@ class ClientCheckinView(View):
         from django.utils import timezone
 
         remotes = data.get('remotes', [])
+        serial_number = str(data.get('serial_number', '') or '').strip()
+        if len(serial_number) > 255:
+            serial_number = serial_number[:255]
+        machine_type = str(data.get('machine_type', '') or '').strip()
+        if len(machine_type) > 255:
+            machine_type = machine_type[:255]
         managed_remote_names = data.get('managed_remotes', [])
         installed = data.get('installed', [])
         user_flatpaks = data.get('user_flatpaks', [])
@@ -3275,6 +3281,8 @@ class ClientCheckinView(View):
 
         client, _ = Client.objects.get_or_create(hostname=hostname)
         client.last_checkin = timezone.now()
+        client.serial_number = serial_number
+        client.machine_type = machine_type
         client.remotes = remotes
         client.managed_remotes = managed_remote_names
         client.installed_flatpaks = installed
@@ -3299,6 +3307,7 @@ class ClientCheckinView(View):
                         'notification_type': 'client_updated',
                         'pk': client.pk,
                         'hostname': hostname,
+                        'serial_number': client.serial_number,
                         'installed_count': client.installed_count,
                         'foreign_count': client.foreign_count,
                         'outdated_count': client.outdated_count,

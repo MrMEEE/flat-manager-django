@@ -65,6 +65,22 @@
                     <span class="text-muted">Never</span>
                 {% endif %}
             </dd>
+            <dt class="col-sm-3">Serial number</dt>
+            <dd class="col-sm-9">
+                {% if client.serial_number %}
+                    <code>{{ client.serial_number }}</code>
+                {% else %}
+                    <span class="text-muted">Unknown</span>
+                {% endif %}
+            </dd>
+            <dt class="col-sm-3">Machine type</dt>
+            <dd class="col-sm-9">
+                {% if client.machine_type %}
+                    {{ client.machine_type }}
+                {% else %}
+                    <span class="text-muted">Unknown</span>
+                {% endif %}
+            </dd>
             <dt class="col-sm-3">Users</dt>
             <dd class="col-sm-9">
                 {% for u in client.user_flatpaks %}

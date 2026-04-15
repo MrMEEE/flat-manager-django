@@ -37,6 +37,7 @@
                         </th>
                         <th>Status</th>
                         <th>Hostname</th>
+                        <th>Serial Number</th>
                         <th>Users</th>
                         <th>Organisations</th>
                         <th>Managed repos</th>
@@ -70,6 +71,13 @@
                         <td><strong>
                             <a href="{% url 'flatpak:client_detail' client.pk %}">{{ client.hostname }}</a>
                         </strong></td>
+                        <td>
+                            {% if client.serial_number %}
+                                <code>{{ client.serial_number }}</code>
+                            {% else %}
+                                <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
                         <td>
                             {% for u in client.user_flatpaks %}
                                 <span class="badge bg-secondary me-1">{{ u.username }}</span>
@@ -135,17 +143,17 @@
                     </tr>
                     <!-- Hidden data rows for JS to read (pre-serialised JSON from view) -->
                     <tr id="data-installed-{{ client.pk }}" style="display:none;">
-                        <td colspan="10">
+                        <td colspan="11">
                             <script type="application/json">{{ client.installed_json }}</script>
                         </td>
                     </tr>
                     <tr id="data-foreign-{{ client.pk }}" style="display:none;">
-                        <td colspan="10">
+                        <td colspan="11">
                             <script type="application/json">{{ client.foreign_json }}</script>
                         </td>
                     </tr>
                     <tr id="data-outdated-{{ client.pk }}" style="display:none;">
-                        <td colspan="10">
+                        <td colspan="11">
                             <script type="application/json">{{ client.outdated_json }}</script>
                         </td>
                     </tr>
@@ -375,8 +383,8 @@ function onWebSocketMessage(data) {
     // Update count badges.
     function _updateCount(kind, count, btnClass) {
         // In the visible row, count cells are at fixed positions:
-        // col 8 = installed, col 9 = foreign, col 10 = outdated (0-indexed 7,8,9)
-        const colIdx = {installed: 7, foreign: 8, outdated: 9}[kind];
+        // col 9 = installed, col 10 = foreign, col 11 = outdated (0-indexed 8,9,10)
+        const colIdx = {installed: 8, foreign: 9, outdated: 10}[kind];
         const td = visibleRow.cells[colIdx];
         if (!td) return;
         if (count > 0) {
@@ -390,6 +398,13 @@ function onWebSocketMessage(data) {
     _updateCount('foreign',   data.foreign_count,    'btn-outline-warning text-warning');
     _updateCount('outdated',  data.outdated_count,   'btn-outline-danger text-danger');
 
+    // Update serial number cell (col 3).
+    if (visibleRow.cells[3]) {
+        visibleRow.cells[3].innerHTML = data.serial_number
+            ? `<code>${esc(data.serial_number)}</code>`
+            : '<span class="text-muted">—</span>';
+    }
+
     // Update status badge (col 1).
     let badgeHtml;
     if (!data.last_checkin) {
@@ -401,9 +416,9 @@ function onWebSocketMessage(data) {
     }
     if (visibleRow.cells[1]) visibleRow.cells[1].innerHTML = badgeHtml;
 
-    // Update last check-in cell (col 6).
-    if (visibleRow.cells[6] && data.last_checkin) {
-        visibleRow.cells[6].innerHTML =
+    // Update last check-in cell (col 8 / index 7).
+    if (visibleRow.cells[7] && data.last_checkin) {
+        visibleRow.cells[7].innerHTML =
             `<span title="${esc(data.last_checkin)} UTC">${esc(data.last_checkin)} (just now)</span>`;
     }
 }
