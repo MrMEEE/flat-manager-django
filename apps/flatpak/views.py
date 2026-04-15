@@ -2054,6 +2054,101 @@ class RunUpstreamVersionScanView(LoginRequiredMixin, View):
         return JsonResponse({'status': 'ok', 'message': f"Queued {count} upstream version check(s)"})
 
 
+class ScanRepairRepoTmpPermissionsView(LoginRequiredMixin, View):
+    """
+    Scan (and optionally repair) OSTree repo tmp staging directory permissions.
+
+    This catches cases where a staging directory is created without execute bits,
+    which can later break `ostree pull-local` with fstatat permission errors.
+    """
+
+    def post(self, request):
+        import json
+        import stat
+
+        try:
+            body = json.loads(request.body.decode('utf-8') or '{}')
+        except Exception:
+            body = {}
+        repair = bool(body.get('repair', False))
+
+        repos_scanned = 0
+        issues = []
+        repaired = []
+        errors = []
+
+        for repo in Repository.objects.filter(is_active=True):
+            repo_path = repo.repo_path
+            if not os.path.exists(os.path.join(repo_path, 'config')):
+                continue
+
+            repos_scanned += 1
+            tmp_path = os.path.join(repo_path, 'tmp')
+            if not os.path.isdir(tmp_path):
+                continue
+
+            # Check tmp itself and common children used by OSTree transactions.
+            candidate_dirs = [tmp_path]
+            for child in ('cache',):
+                p = os.path.join(tmp_path, child)
+                if os.path.isdir(p):
+                    candidate_dirs.append(p)
+            try:
+                for name in os.listdir(tmp_path):
+                    if not name.startswith('staging-'):
+                        continue
+                    p = os.path.join(tmp_path, name)
+                    if os.path.isdir(p):
+                        candidate_dirs.append(p)
+            except Exception as e:
+                errors.append({'repo': repo.name, 'path': tmp_path, 'error': str(e)})
+                continue
+
+            for dpath in candidate_dirs:
+                try:
+                    current_mode = stat.S_IMODE(os.stat(dpath).st_mode)
+                    if (current_mode & 0o111) == 0:
+                        issue = {
+                            'repo': repo.name,
+                            'path': dpath,
+                            'mode': oct(current_mode),
+                            'problem': 'directory missing execute bits',
+                        }
+                        issues.append(issue)
+
+                        if repair:
+                            # Normalize to a safe traversable directory mode.
+                            os.chmod(dpath, 0o755)
+                            repaired.append({
+                                'repo': repo.name,
+                                'path': dpath,
+                                'from_mode': oct(current_mode),
+                                'to_mode': '0o755',
+                            })
+                except Exception as e:
+                    errors.append({'repo': repo.name, 'path': dpath, 'error': str(e)})
+
+        if repair:
+            message = (
+                f"Scanned {repos_scanned} repo(s); found {len(issues)} issue(s); "
+                f"repaired {len(repaired)} path(s)."
+            )
+        else:
+            message = f"Scanned {repos_scanned} repo(s); found {len(issues)} issue(s)."
+
+        return JsonResponse({
+            'status': 'ok',
+            'repair': repair,
+            'message': message,
+            'repos_scanned': repos_scanned,
+            'issues_found': len(issues),
+            'repaired_count': len(repaired),
+            'issues': issues,
+            'repaired': repaired,
+            'errors': errors,
+        })
+
+
 class ScanOrphanedRefsView(LoginRequiredMixin, View):
     """Return refs present in any repo that are not tracked by a Package, ExternalRef, or BST source."""
 

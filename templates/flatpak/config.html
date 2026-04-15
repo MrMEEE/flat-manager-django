@@ -436,6 +436,34 @@ sudo ./setup-bst1-venv.sh /opt/flat-manager/bst1-venv</pre>
     </div>
 </div>
 
+<div class="row">
+    <div class="col-lg-6 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-shield-check"></i> Repo Tmp Permission Repair</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-3">
+                    Scan OSTree repository <code>tmp/staging-*</code> directories for invalid permissions
+                    (missing execute bits), which can cause promotion failures like
+                    <code>fstatat(...commit): Permission denied</code>.
+                </p>
+                <div class="d-flex gap-2 flex-wrap">
+                    <button id="btn-scan-repo-tmp-perms" class="btn btn-outline-secondary" type="button"
+                            onclick="scanRepoTmpPermissions()">
+                        <i class="bi bi-search"></i> Scan Repo Tmp Permissions
+                    </button>
+                    <button id="btn-repair-repo-tmp-perms" class="btn btn-warning" type="button"
+                            onclick="confirmRepairRepoTmpPermissions()">
+                        <i class="bi bi-wrench-adjustable-circle"></i> Repair Found Issues
+                    </button>
+                </div>
+                <div id="repo-tmp-perms-result" class="mt-3" style="display:none;"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Orphaned Refs -->
 <div class="row">
     <div class="col-12 mb-4">
@@ -518,6 +546,110 @@ function runTaskNow(key, url, label) {
         btn.disabled = false;
         btn.innerHTML = originalHtml;
     });
+}
+
+function _escapeHtml(s) {
+    return (s || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function _renderRepoTmpPermsResult(data) {
+    const result = document.getElementById('repo-tmp-perms-result');
+    result.style.display = 'block';
+
+    const tone = data.issues_found > 0 ? 'warning' : 'success';
+    let html = `<div class="alert alert-${tone} mb-2"><i class="bi bi-info-circle"></i> ${_escapeHtml(data.message || 'Completed.')}</div>`;
+
+    if (data.issues && data.issues.length) {
+        html += '<div class="table-responsive"><table class="table table-sm table-striped">';
+        html += '<thead><tr><th>Repository</th><th>Path</th><th>Mode</th><th>Problem</th></tr></thead><tbody>';
+        for (const issue of data.issues) {
+            html += `<tr><td><code>${_escapeHtml(issue.repo)}</code></td>` +
+                `<td><code>${_escapeHtml(issue.path)}</code></td>` +
+                `<td><code>${_escapeHtml(issue.mode)}</code></td>` +
+                `<td>${_escapeHtml(issue.problem)}</td></tr>`;
+        }
+        html += '</tbody></table></div>';
+    }
+
+    if (data.repair && data.repaired && data.repaired.length) {
+        html += '<div class="alert alert-success mt-2 mb-0"><i class="bi bi-check-circle"></i> ' +
+            `Repaired ${data.repaired.length} path(s).` +
+            '</div>';
+    }
+
+    if (data.errors && data.errors.length) {
+        html += '<div class="alert alert-danger mt-2 mb-0"><i class="bi bi-exclamation-circle"></i> ' +
+            `Encountered ${data.errors.length} error(s). Check server logs for details.` +
+            '</div>';
+    }
+
+    result.innerHTML = html;
+}
+
+async function _runRepoTmpPermissionScan(repair) {
+    const scanBtn = document.getElementById('btn-scan-repo-tmp-perms');
+    const repairBtn = document.getElementById('btn-repair-repo-tmp-perms');
+    const result = document.getElementById('repo-tmp-perms-result');
+    const scanOriginal = scanBtn.innerHTML;
+    const repairOriginal = repairBtn.innerHTML;
+
+    scanBtn.disabled = true;
+    repairBtn.disabled = true;
+    result.style.display = 'none';
+
+    if (repair) {
+        repairBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Repairing…';
+    } else {
+        scanBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Scanning…';
+    }
+
+    try {
+        const r = await fetch('{% url "flatpak:scan_repair_repo_tmp_perms" %}', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({repair: repair}),
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || r.statusText);
+        _renderRepoTmpPermsResult(data);
+    } catch (e) {
+        result.style.display = 'block';
+        result.innerHTML = `<div class="alert alert-danger mb-0"><i class="bi bi-exclamation-circle"></i> ${_escapeHtml(e.message)}</div>`;
+    } finally {
+        scanBtn.disabled = false;
+        repairBtn.disabled = false;
+        scanBtn.innerHTML = scanOriginal;
+        repairBtn.innerHTML = repairOriginal;
+    }
+}
+
+function scanRepoTmpPermissions() {
+    _runRepoTmpPermissionScan(false);
+}
+
+function confirmRepairRepoTmpPermissions() {
+    document.getElementById('configConfirmTitle').textContent = 'Repair Repo Tmp Permissions';
+    document.getElementById('configConfirmBody').innerHTML =
+        '<p>Run permission repair for all active repositories?</p>' +
+        '<p class="text-muted small mb-0">This changes broken <code>tmp/staging-*</code> directories to mode <code>0755</code>.</p>';
+
+    const okBtn = document.getElementById('configConfirmOk');
+    okBtn.textContent = 'Repair';
+    okBtn.className = 'btn btn-warning';
+
+    const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('configConfirmModal'));
+    okBtn.onclick = function () {
+        modal.hide();
+        _runRepoTmpPermissionScan(true);
+    };
+    modal.show();
 }
 
 const CSRF = document.querySelector('[name=csrfmiddlewaretoken]').value;

@@ -52,6 +52,7 @@ urlpatterns = [
     path('config/check-external-ref-updates/', views.RunCheckExternalRefUpdatesView.as_view(), name='check_external_ref_updates'),
     path('config/scan-available-versions/', views.RunAvailableVersionScanView.as_view(), name='scan_available_versions'),
     path('config/scan-upstream-versions/', views.RunUpstreamVersionScanView.as_view(), name='scan_upstream_versions'),
+    path('config/scan-repair-repo-tmp-perms/', views.ScanRepairRepoTmpPermissionsView.as_view(), name='scan_repair_repo_tmp_perms'),
     path('config/scan-orphaned-refs/', views.ScanOrphanedRefsView.as_view(), name='scan_orphaned_refs'),
     path('config/prune-orphaned-ref/', views.PruneOrphanedRefsView.as_view(), name='prune_orphaned_ref'),
     path('config/prune-orphaned-refs/bulk/', views.BulkPruneOrphanedRefsView.as_view(), name='bulk_prune_orphaned_refs'),
