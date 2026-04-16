@@ -811,15 +811,21 @@ def get_available_external_ref_promotion_targets(external_ref):
     otherwise old promotions from previous commits permanently block re-promotion.
     """
     source_repo = external_ref.repository
-    promotions_qs = external_ref.promotions.all()
+    # For chain traversal: only promotions from the current pull cycle count as
+    # "completed" so previously-promoted repos become eligible again after a new pull.
+    completed_qs = external_ref.promotions.all()
     if external_ref.last_pulled_at:
-        promotions_qs = promotions_qs.filter(created_at__gte=external_ref.last_pulled_at)
-
+        completed_qs = completed_qs.filter(created_at__gte=external_ref.last_pulled_at)
     completed_ids = set(
-        promotions_qs.filter(status='promoted').values_list('target_repo_id', flat=True)
+        completed_qs.filter(status='promoted').values_list('target_repo_id', flat=True)
     )
+
+    # Block creation of a duplicate row: exclude any repo that already has an
+    # active (pending / promoting) promotion regardless of when it was created.
     taken_ids = set(
-        promotions_qs.exclude(status='failed').values_list('target_repo_id', flat=True)
+        external_ref.promotions
+        .filter(status__in=('pending', 'promoting'))
+        .values_list('target_repo_id', flat=True)
     )
     available = []
     visited = {source_repo.id}
@@ -1051,12 +1057,20 @@ class ExternalRefPromoteView(LoginRequiredMixin, View):
         if target_repo is None:
             return JsonResponse({'error': 'Invalid promotion target for this external ref'}, status=400)
 
-        promo = ExternalRefPromotion.objects.create(
+        # Reuse an existing row (any status) for this (ext, target_repo) pair
+        # rather than inserting a new one — the unique constraint forbids duplicates.
+        promo, created = ExternalRefPromotion.objects.get_or_create(
             external_ref=ext,
             target_repo=target_repo,
-            status='pending',
-            promoted_by=request.user,
+            defaults={'status': 'pending', 'promoted_by': request.user},
         )
+        if not created:
+            # Reset the existing row so the task picks it up fresh.
+            promo.status = 'pending'
+            promo.error_message = ''
+            promo.completed_at = None
+            promo.promoted_by = request.user
+            promo.save()
         promote_external_ref_task.delay(promo.id)
         return JsonResponse({'status': 'ok', 'promotion_id': promo.id})
 
