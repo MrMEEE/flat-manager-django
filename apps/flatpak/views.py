@@ -805,13 +805,21 @@ def get_available_external_ref_promotion_targets(external_ref):
     """
     Returns list of Repository objects that this ExternalRef can currently be
     promoted to. Same chain logic as package/BST promotions.
+
+    External refs are mutable (same DB row gets newer commits over time).
+    We only consider promotions created since the latest successful pull,
+    otherwise old promotions from previous commits permanently block re-promotion.
     """
     source_repo = external_ref.repository
+    promotions_qs = external_ref.promotions.all()
+    if external_ref.last_pulled_at:
+        promotions_qs = promotions_qs.filter(created_at__gte=external_ref.last_pulled_at)
+
     completed_ids = set(
-        external_ref.promotions.filter(status='promoted').values_list('target_repo_id', flat=True)
+        promotions_qs.filter(status='promoted').values_list('target_repo_id', flat=True)
     )
     taken_ids = set(
-        external_ref.promotions.exclude(status='failed').values_list('target_repo_id', flat=True)
+        promotions_qs.exclude(status='failed').values_list('target_repo_id', flat=True)
     )
     available = []
     visited = {source_repo.id}
