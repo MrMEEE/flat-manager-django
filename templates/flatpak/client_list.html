@@ -144,17 +144,17 @@
                     <!-- Hidden data rows for JS to read (pre-serialised JSON from view) -->
                     <tr id="data-installed-{{ client.pk }}" style="display:none;">
                         <td colspan="11">
-                            <script type="application/json">{{ client.installed_json }}</script>
+                            <script type="application/json">{{ client.installed_json|safe }}</script>
                         </td>
                     </tr>
                     <tr id="data-foreign-{{ client.pk }}" style="display:none;">
                         <td colspan="11">
-                            <script type="application/json">{{ client.foreign_json }}</script>
+                            <script type="application/json">{{ client.foreign_json|safe }}</script>
                         </td>
                     </tr>
                     <tr id="data-outdated-{{ client.pk }}" style="display:none;">
                         <td colspan="11">
-                            <script type="application/json">{{ client.outdated_json }}</script>
+                            <script type="application/json">{{ client.outdated_json|safe }}</script>
                         </td>
                     </tr>
                     {% endfor %}
@@ -309,9 +309,11 @@ document.getElementById('btnBulkDeleteOk').addEventListener('click', function() 
 // ── Flatpak list modal ────────────────────────────────────────────────────────
 function showFlatpakList(hostname, kind, clientPk) {
     const row = document.getElementById('data-' + kind + '-' + clientPk);
-    const script = row.querySelector('script[type="application/json"]');
+    const script = row ? row.querySelector('script[type="application/json"]') : null;
     let items = [];
-    try { items = JSON.parse(script.textContent); } catch(e) {}
+    if (script && script.textContent) {
+        try { items = JSON.parse(script.textContent); } catch(e) {}
+    }
 
     const titles = {
         installed: 'Installed Flatpaks',
