@@ -64,7 +64,7 @@
             {% if ready_to_commit %}<span class="badge bg-warning text-dark ms-2">{{ ready_to_commit|length }}</span>{% endif %}
         </h5>
         <div class="d-flex align-items-center gap-2" onclick="event.stopPropagation()">
-            <button class="btn btn-sm btn-warning d-none" id="commit-selected-btn"
+            <button class="btn btn-sm btn-primary d-none" id="commit-selected-btn"
                     onclick="bulkAction('commit')">
                 <i class="bi bi-box-arrow-in-down-right"></i> Commit Selected
             </button>
@@ -101,7 +101,7 @@
                         <td>{% if build %}<a href="{% url 'flatpak:build_detail' build.pk %}">#{{ build.build_number }}</a>{% else %}-{% endif %}</td>
                         <td>{{ build.completed_at|date:"M d, H:i"|default:"-" }}</td>
                         <td>
-                            <button class="btn btn-sm btn-warning"
+                            <button class="btn btn-sm btn-primary"
                                     onclick="singleAction('commit', {{ package.pk }}, '{{ package.package_name|escapejs }}')">
                                 <i class="bi bi-box-arrow-in-down-right"></i> Commit
                             </button>
@@ -127,7 +127,7 @@
             {% if ready_to_publish %}<span class="badge bg-success ms-2">{{ ready_to_publish|length }}</span>{% endif %}
         </h5>
         <div class="d-flex align-items-center gap-2" onclick="event.stopPropagation()">
-            <button class="btn btn-sm btn-success d-none" id="publish-selected-btn"
+            <button class="btn btn-sm btn-primary d-none" id="publish-selected-btn"
                     onclick="bulkAction('publish')">
                 <i class="bi bi-cloud-upload"></i> Publish Selected
             </button>
@@ -164,7 +164,7 @@
                         <td>{% if build %}<a href="{% url 'flatpak:build_detail' build.pk %}">#{{ build.build_number }}</a>{% else %}-{% endif %}</td>
                         <td>{{ build.completed_at|date:"M d, H:i"|default:"-" }}</td>
                         <td>
-                            <button class="btn btn-sm btn-success"
+                            <button class="btn btn-sm btn-primary"
                                     onclick="singleAction('publish', {{ package.pk }}, '{{ package.package_name|escapejs }}')">
                                 <i class="bi bi-cloud-upload"></i> Publish
                             </button>
@@ -669,7 +669,7 @@
         <div class="table-responsive">
             <table class="table table-hover mb-0">
                 <thead class="table-light">
-                    <tr><th>Ref</th><th>Source Repo</th><th>Target Repo</th><th>Status</th><th>By</th><th>Completed</th><th>Actions</th></tr>
+                    <tr><th>Ref</th><th>Hash</th><th>Source Repo</th><th>Target Repo</th><th>Status</th><th>By</th><th>Completed</th><th>Actions</th></tr>
                 </thead>
                 <tbody>
                     {% for promo in external_ref_promotions %}
@@ -680,10 +680,8 @@
                         <td>
                             <a href="{% url 'flatpak:external_detail' promo.external_ref.pk %}">{{ promo.external_ref.display_name|default:promo.external_ref.ref }}</a>
                             <br><small class="text-muted"><code>{{ promo.external_ref.ref }}</code></small>
-                            {% if promo.external_ref_version %}
-                            <br><small class="text-muted">version <code>{{ promo.external_ref_version.commit_hash|slice:":12" }}</code></small>
-                            {% endif %}
                         </td>
+                        <td><code>{{ promo.external_ref_version.commit_hash|slice:":12"|default:"—" }}</code></td>
                         <td>{{ promo.external_ref.repository.name }}</td>
                         <td>{{ promo.target_repo.name }}</td>
                         <td data-role="status-cell">
@@ -700,13 +698,13 @@
                         <td>{{ promo.completed_at|date:"M d, H:i"|default:"—" }}</td>
                         <td data-role="actions-cell" class="d-flex gap-1">
                             {% if promo.status != 'promoted' %}
-                            <button class="btn btn-sm btn-outline-warning" onclick="externalPromoRetry({{ promo.pk }}, '{{ promo.external_ref.display_name|default:promo.external_ref.ref|escapejs }}', '{{ promo.target_repo.name|escapejs }}')">
-                                <i class="bi bi-arrow-clockwise"></i>
+                            <button class="btn btn-sm btn-warning" onclick="externalPromoRetry({{ promo.pk }}, '{{ promo.external_ref.display_name|default:promo.external_ref.ref|escapejs }}', '{{ promo.target_repo.name|escapejs }}')">
+                                <i class="bi bi-arrow-clockwise"></i> Retry
                             </button>
                             {% endif %}
                             <button class="btn btn-sm btn-outline-danger"
                                     onclick="externalPromoDelete({{ promo.pk }}, '{{ promo.target_repo.name|escapejs }}')">
-                                <i class="bi bi-trash"></i>
+                                <i class="bi bi-trash3"></i> Delete
                             </button>
                         </td>
                     </tr>
@@ -738,62 +736,47 @@
                         <th>Ref</th>
                         <th>Repository</th>
                         <th>Remote</th>
+                        <th>Hash</th>
                         <th>Status</th>
                         <th>Published</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {% regroup published_externals by display_name as pub_ext_groups %}
-                    {% for group in pub_ext_groups %}
-                    {% if group.list|length > 1 %}
-                    <tr class="table-light pub-ext-group-header" style="cursor:pointer"
-                        data-bs-toggle="collapse" data-bs-target=".pub-ext-group-{{ forloop.counter }}"
-                        aria-expanded="false">
-                        <td colspan="5">
-                            <i class="bi bi-folder2 text-secondary me-1"></i>
-                            <strong>{{ group.grouper }}</strong>
-                            <span class="badge bg-secondary ms-2">{{ group.list|length }}</span>
-                            <i class="bi bi-chevron-down ms-1 small"></i>
-                        </td>
-                        <td></td>
-                    </tr>
-                    {% for ext in group.list %}
-                    <tr class="collapse pub-ext-group-{{ forloop.parentloop.counter }}">
-                        <td>
-                            <a href="{% url 'flatpak:external_detail' ext.pk %}">{{ ext.display_name|default:ext.ref }}</a>
-                            <br><small class="text-muted"><code>{{ ext.ref }}</code></small>
-                        </td>
-                        <td><a href="{% url 'flatpak:repo_detail' ext.repository.pk %}">{{ ext.repository.name }}</a></td>
-                        <td>{{ ext.remote.name|default:"—" }}</td>
-                        <td><span class="badge bg-success">Published</span></td>
-                        <td>{{ ext.updated_at|date:"M d, H:i" }}</td>
-                        <td>
-                            <a href="{% url 'flatpak:external_detail' ext.pk %}" class="btn btn-sm btn-outline-primary">
-                                <i class="bi bi-eye"></i>
-                            </a>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                    {% else %}
-                    {% for ext in group.list %}
+                    {% for row in published_externals %}
                     <tr>
                         <td>
-                            <a href="{% url 'flatpak:external_detail' ext.pk %}">{{ ext.display_name|default:ext.ref }}</a>
-                            <br><small class="text-muted"><code>{{ ext.ref }}</code></small>
+                            <a href="{% url 'flatpak:external_detail' row.external_ref.pk %}">{{ row.external_ref.display_name|default:row.external_ref.ref }}</a>
+                            <br><small class="text-muted"><code>{{ row.external_ref.ref }}</code></small>
                         </td>
-                        <td><a href="{% url 'flatpak:repo_detail' ext.repository.pk %}">{{ ext.repository.name }}</a></td>
-                        <td>{{ ext.remote.name|default:"—" }}</td>
-                        <td><span class="badge bg-success">Published</span></td>
-                        <td>{{ ext.updated_at|date:"M d, H:i" }}</td>
+                        <td><a href="{% url 'flatpak:repo_detail' row.repository.pk %}">{{ row.repository.name }}</a></td>
+                        <td>{{ row.remote.name|default:"—" }}</td>
+                        <td><code>{{ row.external_ref_version.commit_hash|slice:":12"|default:"—" }}</code></td>
                         <td>
-                            <a href="{% url 'flatpak:external_detail' ext.pk %}" class="btn btn-sm btn-outline-primary">
+                            {% if row.placement_kind == 'source' %}
+                            <span class="badge bg-success">Published</span>
+                            {% else %}
+                            <span class="badge bg-primary">Promoted</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ row.placed_at|date:"M d, H:i"|default:"—" }}</td>
+                        <td>
+                            <a href="{% url 'flatpak:external_detail' row.external_ref.pk %}" class="btn btn-sm btn-outline-primary">
                                 <i class="bi bi-eye"></i>
                             </a>
+                            {% if row.placement_kind == 'source' %}
+                            <button class="btn btn-sm btn-outline-danger ms-1"
+                                    onclick="confirmExternalUnpublish({{ row.external_ref.pk }}, {{ row.external_ref_version.pk }}, '{{ row.external_ref.display_name|default:row.external_ref.ref|escapejs }}', '{{ row.repository.name|escapejs }}', '{{ row.external_ref_version.commit_hash|slice:":12" }}')">
+                                <i class="bi bi-trash3"></i> Unpublish
+                            </button>
+                            {% else %}
+                            <button class="btn btn-sm btn-outline-danger ms-1"
+                                    onclick="externalPromoDelete({{ row.promotion.pk }}, '{{ row.repository.name|escapejs }}')">
+                                <i class="bi bi-trash3"></i> Remove
+                            </button>
+                            {% endif %}
                         </td>
                     </tr>
-                    {% endfor %}
-                    {% endif %}
                     {% endfor %}
                 </tbody>
             </table>
@@ -1162,9 +1145,9 @@
         var safe = function (s) { return (s || '').replace(/'/g, "\\'"); };
         var btns = '';
         if (status !== 'promoted') {
-            btns += '<button class="btn btn-sm btn-outline-warning" onclick="externalPromoRetry(' + numPk + ', \'' + safe(refName) + '\', \'' + safe(repoName) + '\')"><i class="bi bi-arrow-clockwise"></i></button> ';
+            btns += '<button class="btn btn-sm btn-warning" onclick="externalPromoRetry(' + numPk + ', \'' + safe(refName) + '\', \'' + safe(repoName) + '\')"><i class="bi bi-arrow-clockwise"></i> Retry</button> ';
         }
-        btns += '<button class="btn btn-sm btn-outline-danger" onclick="externalPromoDelete(' + numPk + ', \'' + safe(repoName) + '\')"><i class="bi bi-trash"></i></button>';
+        btns += '<button class="btn btn-sm btn-outline-danger" onclick="externalPromoDelete(' + numPk + ', \'' + safe(repoName) + '\')"><i class="bi bi-trash3"></i> Delete</button>';
         return btns;
     }
 
@@ -1574,12 +1557,13 @@ async function bulkAction(type) {
 }
 
 
-function showDeleteConfirm(title, body, okLabel, onOk) {
+function showDeleteConfirm(title, body, okLabel, onOk, okBtnClass) {
+    var btnClass = okBtnClass || 'btn-primary';
     document.getElementById('deleteConfirmTitle').textContent = title;
     document.getElementById('deleteConfirmBody').innerHTML = body;
     document.getElementById('deleteConfirmFooter').innerHTML =
         '<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>' +
-        `<button type="button" class="btn btn-danger" id="deleteConfirmOk">${okLabel}</button>`;
+        `<button type="button" class="btn ${btnClass}" id="deleteConfirmOk">${okLabel}</button>`;
     const okBtn = document.getElementById('deleteConfirmOk');
     const modal = new bootstrap.Modal(document.getElementById('deleteConfirmModal'));
     okBtn.onclick = function() { modal.hide(); onOk(); };
@@ -1613,7 +1597,31 @@ function confirmUnpublish(buildPk, pkgName, buildRef) {
                 if (r.ok) { _reload(); }
                 else { showErrorModal('Unpublish Failed', d.error || r.statusText); }
             } catch (e) { showErrorModal('Unpublish Error', e.message); }
-        }
+        },
+        'btn-danger'
+    );
+}
+
+function confirmExternalUnpublish(externalPk, versionPk, refName, repoName, hashShort) {
+    showDeleteConfirm(
+        'Unpublish External',
+        `<p>Remove <strong>${refName} @ ${hashShort}</strong> from <strong>${repoName}</strong>?</p>
+         <p class="text-muted small mb-0">Only the source-repository publication is removed. Promotions to child repositories are not changed.</p>`,
+        'Unpublish',
+        async () => {
+            try {
+                const r = await fetch(`/externals/${externalPk}/unpublish/`, {
+                    method: 'POST',
+                    headers: { 'X-CSRFToken': _csrf, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ external_ref_version_id: versionPk }),
+                    credentials: 'same-origin',
+                });
+                const d = await r.json().catch(() => ({}));
+                if (r.ok) { _reload(); }
+                else { showErrorModal('Unpublish Failed', d.error || r.statusText); }
+            } catch (e) { showErrorModal('Unpublish Error', e.message); }
+        },
+        'btn-danger'
     );
 }
 
@@ -1874,7 +1882,8 @@ function confirmDeletePromotion(promotionPk, pkgName, repoName) {
                 if (r.ok) { _reload(); }
                 else { showErrorModal('Delete Failed', d.error || r.statusText); }
             } catch (e) { showErrorModal('Delete Error', e.message); }
-        }
+        },
+        'btn-danger'
     );
 }
 
@@ -1922,7 +1931,8 @@ async function bstPromoDelete(promoPk, repoName) {
                 if (r.ok) { _reload(); }
                 else { const d = await r.json().catch(() => ({})); showErrorModal('Delete Failed', d.error || r.statusText); }
             } catch (e) { showErrorModal('Delete Error', e.message); }
-        }
+        },
+        'btn-danger'
     );
 }
 
@@ -1982,7 +1992,8 @@ async function externalPromoDelete(promoPk, repoName) {
                 if (r.ok) { _reload(); }
                 else { showErrorModal('Delete Failed', d.error || r.statusText); }
             } catch (e) { showErrorModal('Delete Error', e.message); }
-        }
+        },
+        'btn-danger'
     );
 }
 </script>

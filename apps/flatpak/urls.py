@@ -69,6 +69,7 @@ urlpatterns = [
     path('externals/<int:pk>/edit/', views.ExternalRefUpdateView.as_view(), name='external_edit'),
     path('externals/<int:pk>/pull/', views.ExternalRefPullView.as_view(), name='external_pull'),
     path('externals/<int:pk>/publish/', views.ExternalRefPublishView.as_view(), name='external_publish'),
+    path('externals/<int:pk>/unpublish/', views.ExternalRefUnpublishView.as_view(), name='external_unpublish'),
     path('externals/<int:pk>/promote/', views.ExternalRefPromoteView.as_view(), name='external_promote'),
     path('externals/<int:pk>/status/', views.ExternalRefStatusView.as_view(), name='external_status'),
     path('external-promotions/<int:pk>/retry/', views.ExternalRefPromotionRetryView.as_view(), name='external_promotion_retry'),

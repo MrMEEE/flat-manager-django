@@ -1509,13 +1509,53 @@ class PromotionListView(LoginRequiredMixin, ListView):
         if pub_repo:
             pub_qs = pub_qs.filter(package__repository_id=pub_repo)
         context['published_builds'] = pub_qs
-        context['published_externals'] = (
-            ExternalRef.objects
+        published_externals = []
+        published_versions = (
+            ExternalRefVersion.objects
             .filter(status='published')
-            .select_related('repository', 'remote', 'created_by')
-            .prefetch_related('promotions', 'promotions__target_repo')
-            .order_by('-updated_at')
+            .select_related('external_ref', 'external_ref__repository', 'external_ref__remote')
+            .order_by('-source_published_at', '-pulled_at', '-id')
         )
+        for version in published_versions:
+            published_externals.append({
+                'external_ref': version.external_ref,
+                'external_ref_version': version,
+                'repository': version.external_ref.repository,
+                'remote': version.external_ref.remote,
+                'placement_kind': 'source',
+                'placement_status': 'Published',
+                'placed_at': version.source_published_at or version.pulled_at,
+            })
+
+        promoted_external_rows = (
+            ExternalRefPromotion.objects
+            .filter(status='promoted', external_ref_version__isnull=False)
+            .select_related(
+                'external_ref',
+                'external_ref_version',
+                'target_repo',
+                'external_ref__remote',
+                'external_ref__repository',
+            )
+            .order_by('-completed_at', '-id')
+        )
+        for promo in promoted_external_rows:
+            published_externals.append({
+                'external_ref': promo.external_ref,
+                'external_ref_version': promo.external_ref_version,
+                'repository': promo.target_repo,
+                'remote': promo.external_ref.remote,
+                'placement_kind': 'promotion',
+                'placement_status': 'Promoted',
+                'placed_at': promo.completed_at,
+                'promotion': promo,
+            })
+
+        published_externals.sort(
+            key=lambda row: row.get('placed_at') or row['external_ref_version'].pulled_at,
+            reverse=True,
+        )
+        context['published_externals'] = published_externals
         # Use Package.status (canonical truth) so we always see the current
         # state of each package, not stale Build rows from previous attempts.
         context['ready_to_commit'] = (
@@ -2966,6 +3006,82 @@ class ExternalRefPublishView(LoginRequiredMixin, View):
 
         publish_external_ref_task.delay(ext.pk)
         return JsonResponse({'status': 'success', 'message': f'Publish started for {ext.display_name or ext.ref}'})
+
+
+class ExternalRefUnpublishView(LoginRequiredMixin, View):
+    """Remove a published ExternalRefVersion from its source repository."""
+
+    def post(self, request, pk):
+        import json
+
+        ext = get_object_or_404(ExternalRef.objects.select_related('repository'), pk=pk)
+
+        try:
+            data = json.loads(request.body or '{}')
+        except json.JSONDecodeError:
+            data = {}
+
+        version_id = data.get('external_ref_version_id')
+        if not version_id:
+            return JsonResponse({'error': 'external_ref_version_id is required'}, status=400)
+
+        try:
+            version = ext.versions.get(pk=int(version_id))
+        except (TypeError, ValueError, ExternalRefVersion.DoesNotExist):
+            return JsonResponse({'error': 'Invalid external_ref_version_id'}, status=400)
+
+        if version.status != 'published':
+            return JsonResponse({'error': 'Selected external version is not published'}, status=400)
+
+        repo = ext.repository
+        repo_path = repo.repo_path
+        ref_name = version.ref
+
+        try:
+            resolved = subprocess.run(
+                ['ostree', 'rev-parse', f'--repo={repo_path}', ref_name],
+                capture_output=True, text=True, timeout=60,
+            )
+            if resolved.returncode != 0:
+                return JsonResponse(
+                    {'error': f'Ref {ref_name} is not present in {repo.name}'},
+                    status=400,
+                )
+
+            current_commit = (resolved.stdout or '').strip()
+            if current_commit and version.commit_hash and current_commit != version.commit_hash:
+                return JsonResponse(
+                    {
+                        'error': (
+                            'Cannot unpublish this version because a newer commit is currently '
+                            f'published at {ref_name} in {repo.name}'
+                        )
+                    },
+                    status=400,
+                )
+
+            delete_result = subprocess.run(
+                ['ostree', 'refs', '--delete', ref_name, f'--repo={repo_path}'],
+                capture_output=True, text=True, timeout=120,
+            )
+            if delete_result.returncode != 0 and 'No such ref' not in (delete_result.stderr or ''):
+                raise RuntimeError(delete_result.stderr.strip() or delete_result.stdout.strip())
+
+            update_repo_metadata(repo_path, repo.gpg_key, generate_deltas=False)
+
+            version.status = 'pulled'
+            version.source_published_at = None
+            version.error_message = ''
+            version.save(update_fields=['status', 'source_published_at', 'error_message'])
+
+            has_published = ext.versions.filter(status='published').exists()
+            ext.status = 'published' if has_published else 'pulled'
+            ext.error_message = ''
+            ext.save(update_fields=['status', 'error_message'])
+
+            return JsonResponse({'status': 'ok'})
+        except Exception as exc:
+            return JsonResponse({'error': str(exc)}, status=400)
 
 
 class ExternalRefStatusView(LoginRequiredMixin, View):
