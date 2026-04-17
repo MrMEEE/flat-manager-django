@@ -821,15 +821,17 @@ def get_available_external_ref_promotion_targets(external_ref_version):
         return []
 
     source_repo = external_ref_version.external_ref.repository
-    completed_qs = external_ref_version.promotions.all()
     completed_ids = set(
-        completed_qs.filter(status='promoted').values_list('target_repo_id', flat=True)
+        external_ref_version.promotions
+        .filter(status='promoted')
+        .values_list('target_repo_id', flat=True)
     )
 
-    # Avoid duplicate in-flight promotions for the same version and target repo.
+    # Keep parity with build/BST target logic: once a target has any non-failed
+    # promotion row for this immutable version, don't offer it again.
     taken_ids = set(
         external_ref_version.promotions
-        .filter(status__in=('pending', 'promoting'))
+        .exclude(status='failed')
         .values_list('target_repo_id', flat=True)
     )
     available = []
