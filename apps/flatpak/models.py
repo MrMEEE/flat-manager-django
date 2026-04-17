@@ -744,6 +744,58 @@ class ExternalRef(models.Model):
         super().save(*args, **kwargs)
 
 
+class ExternalRefVersion(models.Model):
+    """
+    Immutable snapshot of an ExternalRef pull identified by commit hash.
+    Each commit for a given ExternalRef appears only once.
+    """
+    STATUS_CHOICES = [
+        ('pulled', 'Pulled'),
+        ('published', 'Published to Source Repo'),
+        ('failed', 'Failed'),
+    ]
+
+    external_ref = models.ForeignKey(
+        ExternalRef, on_delete=models.CASCADE, related_name='versions'
+    )
+    ref = models.CharField(
+        max_length=500,
+        help_text="Ref string snapshot used for this version (e.g. runtime/org.kde.Platform/x86_64/49)",
+    )
+    commit_hash = models.CharField(
+        max_length=64,
+        help_text="Immutable commit hash identifying this external ref version",
+    )
+    upstream_commit = models.CharField(
+        max_length=64,
+        blank=True,
+        help_text="Upstream commit observed when this version was pulled",
+    )
+    pulled_at = models.DateTimeField(auto_now_add=True)
+    source_published_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When this version was published to external_ref.repository",
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pulled')
+    error_message = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['-pulled_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['external_ref', 'commit_hash'],
+                name='unique_external_ref_commit_hash',
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.external_ref.display_name or self.external_ref.ref}"
+            f"@{self.commit_hash[:12]}"
+        )
+
+
 class ExternalRefPromotion(models.Model):
     """
     Tracks promotion of a published ExternalRef to a child repository.
@@ -758,6 +810,13 @@ class ExternalRefPromotion(models.Model):
 
     external_ref = models.ForeignKey(
         ExternalRef, on_delete=models.CASCADE, related_name='promotions'
+    )
+    external_ref_version = models.ForeignKey(
+        'ExternalRefVersion',
+        on_delete=models.CASCADE,
+        related_name='promotions',
+        null=True,
+        blank=True,
     )
     target_repo = models.ForeignKey(
         'Repository', on_delete=models.CASCADE, related_name='external_ref_promotions'
@@ -779,8 +838,8 @@ class ExternalRefPromotion(models.Model):
         verbose_name = 'External Ref Promotion'
         constraints = [
             models.UniqueConstraint(
-                fields=['external_ref', 'target_repo'],
-                name='unique_external_ref_target_repo',
+                fields=['external_ref_version', 'target_repo'],
+                name='unique_external_ref_version_target_repo',
             ),
         ]
 

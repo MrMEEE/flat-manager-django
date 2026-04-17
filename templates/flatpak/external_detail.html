@@ -120,6 +120,81 @@
     </div>
 </div>
 
+<div class="card mt-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-clock-history"></i> Version History</h5>
+        <span class="badge bg-secondary">{{ external_versions|length }}</span>
+    </div>
+    <div class="card-body p-0">
+        {% if external_versions %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Commit</th>
+                        <th>Status</th>
+                        <th>Pulled</th>
+                        <th>Published</th>
+                        <th style="width: 220px">Promote</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for ver in external_versions %}
+                    <tr>
+                        <td><code>{{ ver.commit_hash|slice:":16" }}</code></td>
+                        <td>
+                            {% if ver.status == 'published' %}
+                            <span class="badge bg-primary">Published</span>
+                            {% elif ver.status == 'pulled' %}
+                            <span class="badge bg-success">Pulled</span>
+                            {% else %}
+                            <span class="badge bg-danger">Failed</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ ver.pulled_at|date:"Y-m-d H:i" }}</td>
+                        <td>{{ ver.source_published_at|date:"Y-m-d H:i"|default:"—" }}</td>
+                        <td>
+                            {% if ver.status == 'published' and ver.available_promotion_targets %}
+                                {% if ver.available_promotion_targets|length == 1 %}
+                                    {% with repo=ver.available_promotion_targets.0 %}
+                                    <button class="btn btn-sm btn-secondary"
+                                            onclick="promoteExternalVersion({{ ver.pk }}, {{ repo.pk }}, '{{ repo.name|escapejs }}', '{{ ver.commit_hash|slice:":12" }}')">
+                                        <i class="bi bi-arrow-up-right"></i> {{ repo.name }}
+                                    </button>
+                                    {% endwith %}
+                                {% else %}
+                                    <div class="dropdown">
+                                        <button class="btn btn-sm btn-secondary dropdown-toggle" type="button"
+                                                data-bs-toggle="dropdown" aria-expanded="false">
+                                            <i class="bi bi-arrow-up-right"></i> Promote
+                                        </button>
+                                        <ul class="dropdown-menu">
+                                            {% for repo in ver.available_promotion_targets %}
+                                            <li>
+                                                <a class="dropdown-item" href="#"
+                                                   onclick="event.preventDefault(); promoteExternalVersion({{ ver.pk }}, {{ repo.pk }}, '{{ repo.name|escapejs }}', '{{ ver.commit_hash|slice:":12" }}')">
+                                                    {{ repo.name }}
+                                                </a>
+                                            </li>
+                                            {% endfor %}
+                                        </ul>
+                                    </div>
+                                {% endif %}
+                            {% else %}
+                            <span class="text-muted">No available targets</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="p-3 text-muted">No version history yet. Pulling the external ref will create the first version snapshot.</div>
+        {% endif %}
+    </div>
+</div>
+
 {# Confirm modal (required by copilot-instructions pattern) #}
 <div class="modal fade" id="confirmModal" tabindex="-1" aria-labelledby="confirmModalLabel" aria-hidden="true">
     <div class="modal-dialog">
@@ -159,6 +234,7 @@
 <script>
 const PULL_URL    = "{% url 'flatpak:external_pull' ext.pk %}";
 const PUBLISH_URL = "{% url 'flatpak:external_publish' ext.pk %}";
+const PROMOTE_URL = "{% url 'flatpak:external_promote' ext.pk %}";
 const STATUS_URL  = "{% url 'flatpak:external_status' ext.pk %}";
 const CSRF_TOKEN  = "{{ csrf_token }}";
 
@@ -210,6 +286,34 @@ function postAction(url, onSuccess) {
 
 function doPull()    { postAction(PULL_URL); }
 function doPublish() { postAction(PUBLISH_URL); }
+
+function promoteExternalVersion(versionPk, repoPk, repoName, shortCommit) {
+    showDeleteConfirm(
+        'Promote External Version',
+        `Promote version <strong>${shortCommit}</strong> to <strong>${repoName}</strong>?`,
+        'Promote',
+        function () {
+            fetch(PROMOTE_URL, {
+                method: 'POST',
+                headers: {'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json'},
+                credentials: 'same-origin',
+                body: JSON.stringify({
+                    target_repo_id: repoPk,
+                    external_ref_version_id: versionPk,
+                }),
+            })
+            .then(r => r.json().then(d => ({ok: r.ok, data: d})).catch(() => ({ok: r.ok, data: {}})))
+            .then(({ok, data}) => {
+                if (!ok) {
+                    showErrorModal('Promote Failed', data.error || 'Unknown error');
+                    return;
+                }
+                window.location.href = "{% url 'flatpak:promotion_list' %}";
+            })
+            .catch(err => showErrorModal('Promote Error', String(err)));
+        }
+    );
+}
 
 let _pollInterval = null;
 

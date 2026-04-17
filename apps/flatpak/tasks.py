@@ -1847,7 +1847,7 @@ def pull_external_ref_task(external_ref_id):
     Pull an OSTree ref from its configured flatpak remote into build-repo,
     then immediately publish it to the target repository.
     """
-    from apps.flatpak.models import ExternalRef
+    from apps.flatpak.models import ExternalRef, ExternalRefVersion
     from apps.flatpak.utils.ostree import update_repo_metadata
 
     try:
@@ -2056,6 +2056,26 @@ def pull_external_ref_task(external_ref_id):
             ext.update_available = False
         ext.save()
 
+        if commit:
+            version, created = ExternalRefVersion.objects.get_or_create(
+                external_ref=ext,
+                commit_hash=commit,
+                defaults={
+                    'ref': ref,
+                    'upstream_commit': upstream_commit or '',
+                    'pulled_at': _now,
+                    'status': 'pulled',
+                    'error_message': '',
+                },
+            )
+            if not created:
+                version.ref = ref
+                version.upstream_commit = upstream_commit or ''
+                version.status = 'pulled'
+                version.error_message = ''
+                version.save(update_fields=['ref', 'upstream_commit', 'status', 'error_message'])
+            _log_external(ext, 'info', f"Recorded version {version.commit_hash[:12]}")
+
         _log_external(ext, 'info', "Pull complete - publishing to repository")
 
         # Immediately publish to target repo
@@ -2077,7 +2097,7 @@ def publish_external_ref_task(external_ref_id):
     """
     Publish an already-pulled ExternalRef from build-repo into the target repository.
     """
-    from apps.flatpak.models import ExternalRef
+    from apps.flatpak.models import ExternalRef, ExternalRefVersion
     from apps.flatpak.utils.ostree import update_repo_metadata, temp_gpg_homedir
 
     try:
@@ -2086,9 +2106,26 @@ def publish_external_ref_task(external_ref_id):
         logger.error(f"ExternalRef {external_ref_id} not found")
         return
 
+    version = None
     try:
         ext.status = 'publishing'
         ext.save()
+
+        if ext.commit_hash:
+            version = (
+                ExternalRefVersion.objects
+                .filter(external_ref=ext, commit_hash=ext.commit_hash)
+                .order_by('-id')
+                .first()
+            )
+            if version is None:
+                version = ExternalRefVersion.objects.create(
+                    external_ref=ext,
+                    ref=ext.ref,
+                    commit_hash=ext.commit_hash,
+                    upstream_commit=ext.upstream_commit or '',
+                    status='pulled',
+                )
 
         build_repo_path = os.path.join(settings.REPOS_BASE_PATH, 'build-repo')
         target_repo_path = ext.repository.repo_path
@@ -2196,6 +2233,11 @@ def publish_external_ref_task(external_ref_id):
 
         ext.status = 'published'
         ext.save()
+        if version is not None:
+            version.status = 'published'
+            version.source_published_at = timezone.now()
+            version.error_message = ''
+            version.save(update_fields=['status', 'source_published_at', 'error_message'])
         _log_external(ext, 'info', "Published successfully")
 
     except Exception as e:
@@ -2204,6 +2246,10 @@ def publish_external_ref_task(external_ref_id):
             ext.status = 'failed'
             ext.error_message = str(e)
             ext.save()
+            if version is not None:
+                version.status = 'failed'
+                version.error_message = str(e)
+                version.save(update_fields=['status', 'error_message'])
             _log_external(ext, 'error', f"Publish failed: {e}")
         except Exception:
             pass
@@ -3609,7 +3655,7 @@ def promote_external_ref_task(external_promotion_id):
 
     try:
         promotion = ExternalRefPromotion.objects.select_related(
-            'external_ref', 'target_repo', 'target_repo__gpg_key'
+            'external_ref', 'external_ref_version', 'target_repo', 'target_repo__gpg_key'
         ).get(id=external_promotion_id)
 
         promotion.status = 'promoting'
@@ -3617,21 +3663,49 @@ def promote_external_ref_task(external_promotion_id):
         send_external_ref_promotion_status_update(promotion)
 
         ext = promotion.external_ref
+        version = promotion.external_ref_version
         target_repo = promotion.target_repo
         build_repo_path = os.path.join(settings.REPOS_BASE_PATH, 'build-repo')
         target_repo_path = target_repo.repo_path
 
+        source_ref = (version.ref if version else ext.ref)
+        source_commit = (version.commit_hash if version else ext.commit_hash)
+
         if not os.path.exists(os.path.join(target_repo_path, 'config')):
             raise FileNotFoundError(f"Target repository '{target_repo.name}' not found on disk")
 
-        logger.info(f"Promoting external ref {ext.ref} from build-repo to {target_repo.name}")
-
-        pull_result = subprocess.run(
-            ['ostree', 'pull-local', f'--repo={target_repo_path}', build_repo_path, ext.ref],
-            capture_output=True, text=True, timeout=600
+        logger.info(
+            f"Promoting external ref {source_ref}"
+            f"@{(source_commit or 'unknown')[:12]} from build-repo to {target_repo.name}"
         )
-        if pull_result.returncode != 0:
-            raise RuntimeError(f"ostree pull-local failed: {pull_result.stderr.strip()}")
+
+        source_candidates = [c for c in (source_commit, source_ref) if c]
+        pull_result = None
+        used_source = None
+        pull_errors = []
+        for source in source_candidates:
+            pull_result = subprocess.run(
+                ['ostree', 'pull-local', f'--repo={target_repo_path}', build_repo_path, source],
+                capture_output=True, text=True, timeout=600
+            )
+            if pull_result.returncode == 0:
+                used_source = source
+                break
+            pull_errors.append(f"{source}: {pull_result.stderr.strip() or pull_result.stdout.strip()}")
+
+        if used_source is None:
+            raise RuntimeError(f"ostree pull-local failed: {' | '.join(pull_errors)}")
+
+        if source_commit and source_ref and used_source != source_ref:
+            create_target_ref = subprocess.run(
+                ['ostree', 'refs', f'--repo={target_repo_path}', '--force', f'--create={source_ref}', source_commit],
+                capture_output=True, text=True
+            )
+            if create_target_ref.returncode != 0:
+                raise RuntimeError(
+                    f"Copied via {used_source}, but could not create target ref {source_ref}: "
+                    f"{create_target_ref.stderr.strip() or create_target_ref.stdout.strip()}"
+                )
 
         update_repo_metadata(target_repo_path, target_repo.gpg_key, generate_deltas=False)
 
@@ -3639,7 +3713,10 @@ def promote_external_ref_task(external_promotion_id):
         promotion.completed_at = timezone.now()
         promotion.save()
         send_external_ref_promotion_status_update(promotion)
-        logger.info(f"External ref promotion {external_promotion_id} complete: {ext.ref} → {target_repo.name}")
+        logger.info(
+            f"External ref promotion {external_promotion_id} complete: "
+            f"{source_ref}@{(source_commit or 'unknown')[:12]} → {target_repo.name}"
+        )
 
     except ExternalRefPromotion.DoesNotExist:
         logger.error(f"ExternalRefPromotion {external_promotion_id} not found")

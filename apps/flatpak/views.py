@@ -10,7 +10,7 @@ from django.urls import reverse_lazy, reverse
 from django.contrib import messages
 from django.shortcuts import render, redirect, get_object_or_404
 from django.conf import settings
-from .models import GPGKey, Repository, RepositorySubset, Package, Build, Promotion, BuildStreamSource, Client, ExternalRef, ExternalRefPromotion, Organisation
+from .models import GPGKey, Repository, RepositorySubset, Package, Build, Promotion, BuildStreamSource, Client, ExternalRef, ExternalRefVersion, ExternalRefPromotion, Organisation
 from .forms import GPGKeyGenerateForm, GPGKeyImportForm, GPGKeyRenewForm
 from .utils.gpg import generate_gpg_key, import_gpg_key, renew_gpg_key
 from .utils.ostree import init_ostree_repo, sign_repo_summary, delete_ostree_repo, temp_gpg_homedir, update_repo_metadata
@@ -801,29 +801,34 @@ def get_available_bst_promotion_targets(build):
     return available
 
 
-def get_available_external_ref_promotion_targets(external_ref):
-    """
-    Returns list of Repository objects that this ExternalRef can currently be
-    promoted to. Same chain logic as package/BST promotions.
+def _latest_external_ref_version(external_ref):
+    """Return the newest published source-repo version for an ExternalRef."""
+    return (
+        external_ref.versions
+        .filter(status='published')
+        .order_by('-source_published_at', '-pulled_at', '-id')
+        .first()
+    )
 
-    External refs are mutable (same DB row gets newer commits over time).
-    We only consider promotions created since the latest successful pull,
-    otherwise old promotions from previous commits permanently block re-promotion.
+
+def get_available_external_ref_promotion_targets(external_ref_version):
     """
-    source_repo = external_ref.repository
-    # For chain traversal: only promotions from the current pull cycle count as
-    # "completed" so previously-promoted repos become eligible again after a new pull.
-    completed_qs = external_ref.promotions.all()
-    if external_ref.last_pulled_at:
-        completed_qs = completed_qs.filter(created_at__gte=external_ref.last_pulled_at)
+    Returns list of Repository objects that this ExternalRefVersion can
+    currently be promoted to. Uses the same lifecycle chain logic as package
+    and BST promotions, but scoped to a specific immutable version.
+    """
+    if not external_ref_version:
+        return []
+
+    source_repo = external_ref_version.external_ref.repository
+    completed_qs = external_ref_version.promotions.all()
     completed_ids = set(
         completed_qs.filter(status='promoted').values_list('target_repo_id', flat=True)
     )
 
-    # Block creation of a duplicate row: exclude any repo that already has an
-    # active (pending / promoting) promotion regardless of when it was created.
+    # Avoid duplicate in-flight promotions for the same version and target repo.
     taken_ids = set(
-        external_ref.promotions
+        external_ref_version.promotions
         .filter(status__in=('pending', 'promoting'))
         .values_list('target_repo_id', flat=True)
     )
@@ -1040,8 +1045,6 @@ class ExternalRefPromoteView(LoginRequiredMixin, View):
         from apps.flatpak.tasks import promote_external_ref_task
 
         ext = get_object_or_404(ExternalRef, pk=pk)
-        if ext.status != 'published':
-            return JsonResponse({'error': f'External ref must be published first (current: {ext.status})'}, status=400)
 
         try:
             data = json.loads(request.body or '{}')
@@ -1052,15 +1055,33 @@ class ExternalRefPromoteView(LoginRequiredMixin, View):
         if not target_repo_id:
             return JsonResponse({'error': 'target_repo_id is required'}, status=400)
 
-        available_targets = get_available_external_ref_promotion_targets(ext)
+        requested_version_id = data.get('external_ref_version_id')
+        if requested_version_id:
+            try:
+                version = ext.versions.get(pk=int(requested_version_id))
+            except (TypeError, ValueError, ExternalRefVersion.DoesNotExist):
+                return JsonResponse({'error': 'Invalid external_ref_version_id'}, status=400)
+        else:
+            if ext.status != 'published':
+                return JsonResponse({'error': f'External ref must be published first (current: {ext.status})'}, status=400)
+            version = _latest_external_ref_version(ext)
+
+        if version is None:
+            return JsonResponse({'error': 'No published version available to promote'}, status=400)
+
+        if version.status != 'published':
+            return JsonResponse({'error': 'Selected external version is not published yet'}, status=400)
+
+        available_targets = get_available_external_ref_promotion_targets(version)
         target_repo = next((repo for repo in available_targets if repo.pk == int(target_repo_id)), None)
         if target_repo is None:
-            return JsonResponse({'error': 'Invalid promotion target for this external ref'}, status=400)
+            return JsonResponse({'error': 'Invalid promotion target for this external ref version'}, status=400)
 
-        # Reuse an existing row (any status) for this (ext, target_repo) pair
-        # rather than inserting a new one — the unique constraint forbids duplicates.
+        # Reuse an existing row for this exact (external version, target repo)
+        # pair rather than inserting duplicates.
         promo, created = ExternalRefPromotion.objects.get_or_create(
             external_ref=ext,
+            external_ref_version=version,
             target_repo=target_repo,
             defaults={'status': 'pending', 'promoted_by': request.user},
         )
@@ -1092,10 +1113,13 @@ class ExternalRefPromotionDeleteView(LoginRequiredMixin, View):
     def post(self, request, pk):
         from apps.flatpak.utils.ostree import update_repo_metadata
 
-        promo = get_object_or_404(ExternalRefPromotion.objects.select_related('external_ref', 'target_repo'), pk=pk)
+        promo = get_object_or_404(
+            ExternalRefPromotion.objects.select_related('external_ref', 'external_ref_version', 'target_repo'),
+            pk=pk,
+        )
         target_repo = promo.target_repo
         repo_path = target_repo.repo_path
-        ref_name = promo.external_ref.ref
+        ref_name = promo.external_ref_version.ref if promo.external_ref_version else promo.external_ref.ref
 
         try:
             delete_result = subprocess.run(
@@ -1535,10 +1559,20 @@ class PromotionListView(LoginRequiredMixin, ListView):
                 seen_packages.add(build.package_id)
         context['ready_to_promote'] = ready_to_promote
         ready_to_promote_externals = []
-        for ext in context['published_externals']:
-            targets = get_available_external_ref_promotion_targets(ext)
+        promotable_versions = (
+            ExternalRefVersion.objects
+            .filter(status='published')
+            .select_related('external_ref', 'external_ref__repository', 'external_ref__remote')
+            .order_by('-source_published_at', '-pulled_at', '-id')
+        )
+        for version in promotable_versions:
+            targets = get_available_external_ref_promotion_targets(version)
             if targets:
-                ready_to_promote_externals.append({'external_ref': ext, 'targets': targets})
+                ready_to_promote_externals.append({
+                    'external_ref': version.external_ref,
+                    'external_ref_version': version,
+                    'targets': targets,
+                })
         context['ready_to_promote_externals'] = ready_to_promote_externals
         context['repositories'] = Repository.objects.filter(is_active=True)
         context['promo_status_choices'] = Promotion.STATUS_CHOICES
@@ -1585,7 +1619,13 @@ class PromotionListView(LoginRequiredMixin, ListView):
         )
         context['external_ref_promotions'] = (
             ExternalRefPromotion.objects
-            .select_related('external_ref', 'target_repo', 'promoted_by', 'external_ref__repository')
+            .select_related(
+                'external_ref',
+                'external_ref_version',
+                'target_repo',
+                'promoted_by',
+                'external_ref__repository',
+            )
             .order_by('-created_at')[:50]
         )
         # BST builds ready to promote
@@ -2782,6 +2822,19 @@ class ExternalRefDetailView(LoginRequiredMixin, DetailView):
     def get_queryset(self):
         from .models import ExternalRef
         return ExternalRef.objects.select_related('repository', 'remote', 'created_by')
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        ext = context['ext']
+        versions = list(
+            ext.versions
+            .all()
+            .order_by('-source_published_at', '-pulled_at', '-id')
+        )
+        for version in versions:
+            version.available_promotion_targets = get_available_external_ref_promotion_targets(version)
+        context['external_versions'] = versions
+        return context
 
 
 class ExternalRefCreateView(LoginRequiredMixin, CreateView):
