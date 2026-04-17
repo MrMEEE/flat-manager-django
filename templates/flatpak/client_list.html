@@ -445,5 +445,38 @@ function showErrorModal(title, message) {
     modal.querySelector('.modal-body').textContent = message;
     new bootstrap.Modal(modal).show();
 }
+
+// ── WebSocket connection for real-time client updates ────────────────────────
+(function() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(protocol + '//' + window.location.host + '/ws/notifications/');
+
+    ws.onopen = function(e) {
+        console.log('Connected to client updates WebSocket');
+    };
+
+    ws.onmessage = function(e) {
+        try {
+            const data = JSON.parse(e.data);
+            onWebSocketMessage(data);
+        } catch(err) {
+            console.error('Failed to parse WebSocket message:', err);
+        }
+    };
+
+    ws.onerror = function(error) {
+        console.error('WebSocket error:', error);
+    };
+
+    ws.onclose = function(e) {
+        if (!e.wasClean) {
+            console.warn('WebSocket connection closed unexpectedly, will attempt to reconnect...');
+            // Attempt to reconnect after 3 seconds
+            setTimeout(function() {
+                window.location.reload();
+            }, 3000);
+        }
+    };
+})();
 </script>
 {% endblock %}
