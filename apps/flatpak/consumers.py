@@ -140,6 +140,16 @@ class NotificationsConsumer(AsyncWebsocketConsumer):
     async def bst_promotion_status_update(self, event):
         await self.promotion_status_update(event)
 
+    async def rpm_build_status_update(self, event):
+        """Forward RPM build status updates."""
+        await self.send(text_data=json.dumps({
+            'type': 'rpm_build_status_update',
+            'build_id': event.get('build_id'),
+            'status': event.get('status'),
+            'message': event.get('message', ''),
+            'timestamp': event.get('timestamp'),
+        }))
+
     async def task_update(self, event):
         """Forward background task completion to the WebSocket client."""
         await self.send(text_data=json.dumps({

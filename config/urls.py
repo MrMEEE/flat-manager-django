@@ -11,6 +11,7 @@ urlpatterns = [
     path('api/', include('apps.api.urls')),
     path('', include('apps.users.urls')),
     path('', include('apps.flatpak.urls')),
+    path('', include('apps.rpm.urls')),
 ]
 
 if settings.DEBUG:

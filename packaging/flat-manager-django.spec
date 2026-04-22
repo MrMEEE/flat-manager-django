@@ -507,6 +507,10 @@ systemd-tmpfiles --create %{_tmpfilesdir}/flat-manager.conf 2>/dev/null || :
 # owned flat-manager:flat-manager; nginx (httpd_t) needs group read access.
 getent passwd nginx >/dev/null 2>&1 && usermod -aG %{app_group} nginx || :
 
+# Add the flat-manager service user to the mock group so it can run
+# mock-based RPM builds without root privileges.
+getent group mock >/dev/null 2>&1 && usermod -aG mock %{app_user} || :
+
 # Label /var/run/flat-manager/ so nginx (httpd_t) can connect to the UNIX socket.
 # Without this SELinux denies httpd_t write access to var_run_t sock_file.
 # Note: use /var/run (not /run) — semanage requires the canonical path.

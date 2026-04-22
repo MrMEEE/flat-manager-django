@@ -1,0 +1,476 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ package.name }} - RPM Package - Flat Manager{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'rpm:package_list' %}">RPM Packages</a></li>
+        <li class="breadcrumb-item active">{{ package.name }}</li>
+    </ol>
+</nav>
+
+{% if messages %}
+    {% for message in messages %}
+    <div class="alert alert-{{ message.tags }} alert-dismissible fade show">
+        {{ message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endfor %}
+{% endif %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>
+        <i class="bi bi-box"></i> {{ package.name }}
+        <span class="badge bg-{{ package.get_status_color }} ms-2">
+            {% if package.status == 'building' %}<span class="spinner-border spinner-border-sm me-1"></span>{% endif %}
+            {{ package.get_status_display }}
+        </span>
+    </h2>
+    <div class="d-flex gap-2">
+        <form method="post" action="{% url 'rpm:package_build' package.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-success">
+                <i class="bi bi-hammer"></i> Build Now
+            </button>
+        </form>
+        <a href="{% url 'rpm:package_edit' package.pk %}" class="btn btn-outline-secondary">
+            <i class="bi bi-pencil"></i> Edit
+        </a>
+        <button type="button" class="btn btn-outline-danger"
+                onclick="showDeleteConfirm(
+                    'Delete Package',
+                    'Delete <strong>{{ package.name }}</strong> and all its build records? This cannot be undone.',
+                    'Delete',
+                    function() { document.getElementById('delete-form').submit(); }
+                )">
+            <i class="bi bi-trash"></i>
+        </button>
+        <form id="delete-form" method="post" action="{% url 'rpm:package_delete' package.pk %}" class="d-none">
+            {% csrf_token %}
+        </form>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-7">
+        <div class="card">
+            <div class="card-header"><h6 class="mb-0">Package Details</h6></div>
+            <div class="card-body">
+                <dl class="row mb-0">
+                    <dt class="col-sm-4">Git Repository</dt>
+                    <dd class="col-sm-8 text-break">
+                        <a href="{{ package.git_repo_url }}" target="_blank" rel="noopener noreferrer">
+                            {{ package.git_repo_url }}
+                        </a>
+                    </dd>
+
+                    <dt class="col-sm-4">Branch</dt>
+                    <dd class="col-sm-8"><code>{{ package.git_branch }}</code></dd>
+
+                    <dt class="col-sm-4">SPEC File</dt>
+                    <dd class="col-sm-8"><code>{{ package.spec_file }}</code></dd>
+
+                    <dt class="col-sm-4">Distributions</dt>
+                    <dd class="col-sm-8">
+                        {% for dist in package.distributions.all %}
+                            <span class="badge bg-secondary me-1">{{ dist.display_name }}</span>
+                        {% empty %}
+                            <span class="text-muted">None configured</span>
+                        {% endfor %}
+                    </dd>
+
+                    <dt class="col-sm-4">Last Built</dt>
+                    <dd class="col-sm-8" id="last-build-version">
+                        {% if package.last_build_version %}
+                            <code>{{ package.last_build_version }}</code>
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
+                    </dd>
+
+                    <dt class="col-sm-4">Available Version</dt>
+                    <dd class="col-sm-8">
+                        <span id="available-version-value">
+                            {% if package.available_version %}
+                                <code>{{ package.available_version }}</code>
+                                {% if package.available_version_is_newer %}
+                                <span class="badge bg-info text-dark ms-1"
+                                      title="A newer version is available in the source repository">
+                                    <i class="bi bi-arrow-repeat"></i> New version
+                                </span>
+                                {% endif %}
+                            {% else %}
+                                <span class="text-muted">Not checked yet</span>
+                            {% endif %}
+                        </span>
+                        {% if package.available_version_checked_at %}
+                        <small class="text-muted ms-2" id="available-checked-at">
+                            checked {{ package.available_version_checked_at|timesince }} ago
+                        </small>
+                        {% endif %}
+                        <button class="btn btn-sm btn-outline-secondary ms-2" id="check-available-btn"
+                                onclick="checkAvailableVersion({{ package.pk }})">
+                            <i class="bi bi-arrow-clockwise"></i> Check now
+                        </button>
+                    </dd>
+
+                    {% if package.upstream_url or package.upstream_version_script %}
+                    <dt class="col-sm-4">Upstream Version</dt>
+                    <dd class="col-sm-8">
+                        <span id="upstream-version-value">
+                            {% if package.upstream_version %}
+                                <code>{{ package.upstream_version }}</code>
+                                {% if package.upstream_version_is_newer %}
+                                <span class="badge bg-warning text-dark ms-1"
+                                      title="Newer upstream version available">
+                                    <i class="bi bi-arrow-up-circle"></i> Update available
+                                </span>
+                                {% endif %}
+                            {% else %}
+                                <span class="text-muted">Not checked yet</span>
+                            {% endif %}
+                        </span>
+                        {% if package.upstream_checked_at %}
+                        <small class="text-muted ms-2" id="upstream-checked-at">
+                            checked {{ package.upstream_checked_at|timesince }} ago
+                        </small>
+                        {% endif %}
+                        <button class="btn btn-sm btn-outline-secondary ms-2" id="check-upstream-btn"
+                                onclick="checkUpstreamVersion({{ package.pk }})">
+                            <i class="bi bi-arrow-clockwise"></i> Check now
+                        </button>
+                    </dd>
+                    {% if package.upstream_url %}
+                    <dt class="col-sm-4">Upstream URL</dt>
+                    <dd class="col-sm-8">
+                        <a href="{{ package.upstream_url }}" target="_blank" rel="noopener">
+                            {{ package.upstream_url }}
+                        </a>
+                    </dd>
+                    {% endif %}
+                    {% endif %}
+
+                    {% if package.spec_requires %}
+                    <dt class="col-sm-4">Dependencies</dt>
+                    <dd class="col-sm-8" id="spec-requires">
+                        {% if package.spec_requires.requires %}
+                        <div class="mb-1"><strong>Requires:</strong>
+                            <ul class="mb-1 ps-3 small">
+                            {% for req in package.spec_requires.requires %}
+                                <li><code>{{ req }}</code></li>
+                            {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+                        {% if package.spec_requires.build_requires %}
+                        <div><strong>BuildRequires:</strong>
+                            <ul class="mb-0 ps-3 small">
+                            {% for req in package.spec_requires.build_requires %}
+                                <li><code>{{ req }}</code></li>
+                            {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+                        {% if package.spec_requires_checked_at %}
+                        <small class="text-muted d-block mt-1">parsed {{ package.spec_requires_checked_at|timesince }} ago</small>
+                        {% endif %}
+                    </dd>
+                    {% endif %}
+
+                    <dt class="col-sm-4">Created</dt>
+                    <dd class="col-sm-8">
+                        {{ package.created_at|date:"d M Y H:i" }}
+                        {% if package.created_by %}by {{ package.created_by.get_full_name|default:package.created_by.username }}{% endif %}
+                    </dd>
+                </dl>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Destinations section -->
+{% if dist_destinations %}
+<h5 class="mb-3 mt-4"><i class="bi bi-diagram-3"></i> Satellite / Katello Destinations</h5>
+<div class="card mb-4">
+    <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Distribution</th>
+                    <th>Destinations</th>
+                    <th class="text-end">Assign</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for row in dist_destinations %}
+            <tr>
+                <td><span class="badge bg-secondary">{{ row.distribution.display_name }}</span></td>
+                <td>
+                    {% for dest in row.destinations %}
+                    <span class="badge bg-light text-dark border me-1">
+                        {{ dest.repository.display_label }}
+                        <button type="button" class="btn-close btn-close-sm ms-1 align-middle"
+                                style="font-size:.6rem"
+                                title="Remove"
+                                onclick="confirmRemoveDest({{ dest.pk }}, '{{ dest.repository.name|escapejs }}', '{{ row.distribution.display_name|escapejs }}')"></button>
+                    </span>
+                    {% empty %}
+                    <span class="text-muted fst-italic small">None</span>
+                    {% endfor %}
+                </td>
+                <td class="text-end">
+                    {% if available_repos %}
+                    <form method="post" action="{% url 'rpm:assign_destination' package.pk %}" class="d-inline-flex gap-1 align-items-center">
+                        {% csrf_token %}
+                        <input type="hidden" name="distribution_id" value="{{ row.distribution.pk }}">
+                        <select name="repository_id" class="form-select form-select-sm" style="min-width:220px" required>
+                            <option value="">— select repo —</option>
+                            {% for repo in available_repos %}
+                            <option value="{{ repo.pk }}">{{ repo }}</option>
+                            {% endfor %}
+                        </select>
+                        <button type="submit" class="btn btn-sm btn-outline-primary" title="Assign">
+                            <i class="bi bi-plus-circle"></i>
+                        </button>
+                    </form>
+                    {% else %}
+                    <a href="{% url 'rpm:destination_list' %}" class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-plus-circle"></i> Add server first
+                    </a>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- Confirm remove destination modal -->
+<div class="modal fade" id="removeDestModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Remove Destination</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="removeDestBody"></div>
+            <div class="modal-footer" id="removeDestFooter"></div>
+        </div>
+    </div>
+</div>
+<form id="removeDestForm" method="post" style="display:none">{% csrf_token %}</form>
+
+<script>
+function confirmRemoveDest(pk, repoName, distName) {
+    document.getElementById('removeDestBody').innerHTML =
+        `<p>Remove <strong>${repoName}</strong> as a destination for <strong>${distName}</strong>?</p>`;
+    document.getElementById('removeDestFooter').innerHTML =
+        '<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>' +
+        '<button type="button" class="btn btn-danger" id="removeDestOk">Remove</button>';
+    const modal = new bootstrap.Modal(document.getElementById('removeDestModal'));
+    document.getElementById('removeDestOk').onclick = function () {
+        modal.hide();
+        const form = document.getElementById('removeDestForm');
+        form.action = `/rpms/destinations/${pk}/remove/`;
+        form.submit();
+    };
+    modal.show();
+}
+</script>
+
+<!-- Builds table -->
+<h5 class="mb-3"><i class="bi bi-hammer"></i> Builds</h5>
+
+{% if builds %}
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead class="table-dark">
+                <tr>
+                    <th>#</th>
+                    <th>Distribution</th>
+                    <th>Status</th>
+                    <th>Version</th>
+                    <th>Commit</th>
+                    <th>Started</th>
+                    <th>Duration</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for build in builds %}
+                <tr>
+                    <td>
+                        <a href="{% url 'rpm:build_detail' build.pk %}" class="fw-semibold">
+                            #{{ build.build_number }}
+                        </a>
+                    </td>
+                    <td><span class="badge bg-secondary">{{ build.distribution.display_name }}</span></td>
+                    <td>
+                        <span class="badge bg-{{ build.get_status_color }}">
+                            {% if build.status == 'building' or build.status == 'pending' %}
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                            {% endif %}
+                            {{ build.get_status_display }}
+                        </span>
+                    </td>
+                    <td>{{ build.version|default:"—" }}</td>
+                    <td>
+                        {% if build.source_commit %}
+                        <code class="small">{{ build.source_commit|slice:":8" }}</code>
+                        {% else %}—{% endif %}
+                    </td>
+                    <td class="text-muted small">{{ build.started_at|date:"d M H:i" }}</td>
+                    <td class="text-muted small">
+                        {% if build.completed_at %}
+                            {% with diff=build.completed_at|timeuntil:build.started_at %}{{ diff }}{% endwith %}
+                        {% elif build.status == 'building' %}
+                            <span class="spinner-border spinner-border-sm text-primary"></span>
+                        {% else %}—{% endif %}
+                    </td>
+                    <td class="text-end">
+                        <a href="{% url 'rpm:build_detail' build.pk %}" class="btn btn-sm btn-outline-secondary">
+                            <i class="bi bi-eye"></i>
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="text-center py-4 text-muted card">
+    <div class="card-body">
+        <i class="bi bi-hammer" style="font-size:2rem"></i>
+        <p class="mt-2">No builds yet. Click <strong>Build Now</strong> to start one.</p>
+    </div>
+</div>
+{% endif %}
+
+<!-- Error modal -->
+<div class="modal fade" id="errorModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="errorModalTitle">Error</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="errorModalBody"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete confirm modal -->
+<div class="modal fade" id="deleteConfirmModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteConfirmTitle">Confirm Delete</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="deleteConfirmBody"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="deleteConfirmOk">Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function showDeleteConfirm(title, body, okLabel, onOk) {
+    document.getElementById('deleteConfirmTitle').textContent = title;
+    document.getElementById('deleteConfirmBody').innerHTML = body;
+    document.getElementById('deleteConfirmOk').textContent = okLabel;
+    document.getElementById('deleteConfirmOk').onclick = function () {
+        bootstrap.Modal.getInstance(document.getElementById('deleteConfirmModal')).hide();
+        onOk();
+    };
+    new bootstrap.Modal(document.getElementById('deleteConfirmModal')).show();
+}
+
+function showErrorModal(title, message) {
+    document.getElementById('errorModalTitle').textContent = title;
+    document.getElementById('errorModalBody').textContent = message;
+    new bootstrap.Modal(document.getElementById('errorModal')).show();
+}
+
+function checkAvailableVersion(pk) {
+    const btn = document.getElementById('check-available-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    fetch('/rpms/' + pk + '/check-available/', {
+        method: 'POST',
+        headers: {'X-CSRFToken': '{{ csrf_token }}'},
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) {
+            showErrorModal('Check Available Version', data.error);
+        } else {
+            let html = '<code>' + data.available_version + '</code>';
+            if (data.has_update) {
+                html += ' <span class="badge bg-info text-dark ms-1"><i class="bi bi-arrow-repeat"></i> New version</span>';
+            }
+            document.getElementById('available-version-value').innerHTML = html;
+
+            // Refresh the dependencies section
+            if (data.requires !== undefined || data.build_requires !== undefined) {
+                let reqHtml = '';
+                if (data.requires && data.requires.length) {
+                    reqHtml += '<div class="mb-1"><strong>Requires:</strong><ul class="mb-1 ps-3 small">';
+                    data.requires.forEach(r => { reqHtml += '<li><code>' + r + '</code></li>'; });
+                    reqHtml += '</ul></div>';
+                }
+                if (data.build_requires && data.build_requires.length) {
+                    reqHtml += '<div><strong>BuildRequires:</strong><ul class="mb-0 ps-3 small">';
+                    data.build_requires.forEach(r => { reqHtml += '<li><code>' + r + '</code></li>'; });
+                    reqHtml += '</ul></div>';
+                }
+                const depsEl = document.getElementById('spec-requires');
+                if (depsEl) depsEl.innerHTML = reqHtml || '<span class="text-muted">None</span>';
+            }
+        }
+    })
+    .catch(e => showErrorModal('Network Error', e.message))
+    .finally(() => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Check now';
+    });
+}
+
+function checkUpstreamVersion(pk) {
+    const btn = document.getElementById('check-upstream-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    fetch('/rpms/' + pk + '/check-upstream/', {
+        method: 'POST',
+        headers: {'X-CSRFToken': '{{ csrf_token }}'},
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) {
+            showErrorModal('Check Upstream Version', data.error);
+        } else {
+            let html = '<code>' + data.version + '</code>';
+            if (data.has_update) {
+                html += ' <span class="badge bg-warning text-dark ms-1"><i class="bi bi-arrow-up-circle"></i> Update available</span>';
+            }
+            document.getElementById('upstream-version-value').innerHTML = html;
+        }
+    })
+    .catch(e => showErrorModal('Network Error', e.message))
+    .finally(() => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Check now';
+    });
+}
+</script>
+{% endblock %}

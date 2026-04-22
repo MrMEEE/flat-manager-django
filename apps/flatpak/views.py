@@ -10,7 +10,7 @@ from django.urls import reverse_lazy, reverse
 from django.contrib import messages
 from django.shortcuts import render, redirect, get_object_or_404
 from django.conf import settings
-from .models import GPGKey, Repository, RepositorySubset, Package, Build, Promotion, BuildStreamSource, Client, ExternalRef, ExternalRefVersion, ExternalRefPromotion, Organisation
+from .models import GPGKey, Repository, RepositorySubset, Package, Build, Promotion, BuildStreamSource, Client, ExternalRef, ExternalRefPromotion, Organisation
 from .forms import GPGKeyGenerateForm, GPGKeyImportForm, GPGKeyRenewForm
 from .utils.gpg import generate_gpg_key, import_gpg_key, renew_gpg_key
 from .utils.ostree import init_ostree_repo, sign_repo_summary, delete_ostree_repo, temp_gpg_homedir, update_repo_metadata
@@ -801,38 +801,17 @@ def get_available_bst_promotion_targets(build):
     return available
 
 
-def _latest_external_ref_version(external_ref):
-    """Return the newest published source-repo version for an ExternalRef."""
-    return (
-        external_ref.versions
-        .filter(status='published')
-        .order_by('-source_published_at', '-pulled_at', '-id')
-        .first()
-    )
-
-
-def get_available_external_ref_promotion_targets(external_ref_version):
+def get_available_external_ref_promotion_targets(external_ref):
     """
-    Returns list of Repository objects that this ExternalRefVersion can
-    currently be promoted to. Uses the same lifecycle chain logic as package
-    and BST promotions, but scoped to a specific immutable version.
+    Returns list of Repository objects that this ExternalRef can currently be
+    promoted to. Same chain logic as package/BST promotions.
     """
-    if not external_ref_version:
-        return []
-
-    source_repo = external_ref_version.external_ref.repository
+    source_repo = external_ref.repository
     completed_ids = set(
-        external_ref_version.promotions
-        .filter(status='promoted')
-        .values_list('target_repo_id', flat=True)
+        external_ref.promotions.filter(status='promoted').values_list('target_repo_id', flat=True)
     )
-
-    # Keep parity with build/BST target logic: once a target has any non-failed
-    # promotion row for this immutable version, don't offer it again.
     taken_ids = set(
-        external_ref_version.promotions
-        .exclude(status='failed')
-        .values_list('target_repo_id', flat=True)
+        external_ref.promotions.exclude(status='failed').values_list('target_repo_id', flat=True)
     )
     available = []
     visited = {source_repo.id}
@@ -1047,6 +1026,8 @@ class ExternalRefPromoteView(LoginRequiredMixin, View):
         from apps.flatpak.tasks import promote_external_ref_task
 
         ext = get_object_or_404(ExternalRef, pk=pk)
+        if ext.status != 'published':
+            return JsonResponse({'error': f'External ref must be published first (current: {ext.status})'}, status=400)
 
         try:
             data = json.loads(request.body or '{}')
@@ -1057,43 +1038,17 @@ class ExternalRefPromoteView(LoginRequiredMixin, View):
         if not target_repo_id:
             return JsonResponse({'error': 'target_repo_id is required'}, status=400)
 
-        requested_version_id = data.get('external_ref_version_id')
-        if requested_version_id:
-            try:
-                version = ext.versions.get(pk=int(requested_version_id))
-            except (TypeError, ValueError, ExternalRefVersion.DoesNotExist):
-                return JsonResponse({'error': 'Invalid external_ref_version_id'}, status=400)
-        else:
-            if ext.status != 'published':
-                return JsonResponse({'error': f'External ref must be published first (current: {ext.status})'}, status=400)
-            version = _latest_external_ref_version(ext)
-
-        if version is None:
-            return JsonResponse({'error': 'No published version available to promote'}, status=400)
-
-        if version.status != 'published':
-            return JsonResponse({'error': 'Selected external version is not published yet'}, status=400)
-
-        available_targets = get_available_external_ref_promotion_targets(version)
+        available_targets = get_available_external_ref_promotion_targets(ext)
         target_repo = next((repo for repo in available_targets if repo.pk == int(target_repo_id)), None)
         if target_repo is None:
-            return JsonResponse({'error': 'Invalid promotion target for this external ref version'}, status=400)
+            return JsonResponse({'error': 'Invalid promotion target for this external ref'}, status=400)
 
-        # Reuse an existing row for this exact (external version, target repo)
-        # pair rather than inserting duplicates.
-        promo, created = ExternalRefPromotion.objects.get_or_create(
+        promo = ExternalRefPromotion.objects.create(
             external_ref=ext,
-            external_ref_version=version,
             target_repo=target_repo,
-            defaults={'status': 'pending', 'promoted_by': request.user},
+            status='pending',
+            promoted_by=request.user,
         )
-        if not created:
-            # Reset the existing row so the task picks it up fresh.
-            promo.status = 'pending'
-            promo.error_message = ''
-            promo.completed_at = None
-            promo.promoted_by = request.user
-            promo.save()
         promote_external_ref_task.delay(promo.id)
         return JsonResponse({'status': 'ok', 'promotion_id': promo.id})
 
@@ -1115,13 +1070,10 @@ class ExternalRefPromotionDeleteView(LoginRequiredMixin, View):
     def post(self, request, pk):
         from apps.flatpak.utils.ostree import update_repo_metadata
 
-        promo = get_object_or_404(
-            ExternalRefPromotion.objects.select_related('external_ref', 'external_ref_version', 'target_repo'),
-            pk=pk,
-        )
+        promo = get_object_or_404(ExternalRefPromotion.objects.select_related('external_ref', 'target_repo'), pk=pk)
         target_repo = promo.target_repo
         repo_path = target_repo.repo_path
-        ref_name = promo.external_ref_version.ref if promo.external_ref_version else promo.external_ref.ref
+        ref_name = promo.external_ref.ref
 
         try:
             delete_result = subprocess.run(
@@ -1509,53 +1461,13 @@ class PromotionListView(LoginRequiredMixin, ListView):
         if pub_repo:
             pub_qs = pub_qs.filter(package__repository_id=pub_repo)
         context['published_builds'] = pub_qs
-        published_externals = []
-        published_versions = (
-            ExternalRefVersion.objects
+        context['published_externals'] = (
+            ExternalRef.objects
             .filter(status='published')
-            .select_related('external_ref', 'external_ref__repository', 'external_ref__remote')
-            .order_by('-source_published_at', '-pulled_at', '-id')
+            .select_related('repository', 'remote', 'created_by')
+            .prefetch_related('promotions', 'promotions__target_repo')
+            .order_by('-updated_at')
         )
-        for version in published_versions:
-            published_externals.append({
-                'external_ref': version.external_ref,
-                'external_ref_version': version,
-                'repository': version.external_ref.repository,
-                'remote': version.external_ref.remote,
-                'placement_kind': 'source',
-                'placement_status': 'Published',
-                'placed_at': version.source_published_at or version.pulled_at,
-            })
-
-        promoted_external_rows = (
-            ExternalRefPromotion.objects
-            .filter(status='promoted', external_ref_version__isnull=False)
-            .select_related(
-                'external_ref',
-                'external_ref_version',
-                'target_repo',
-                'external_ref__remote',
-                'external_ref__repository',
-            )
-            .order_by('-completed_at', '-id')
-        )
-        for promo in promoted_external_rows:
-            published_externals.append({
-                'external_ref': promo.external_ref,
-                'external_ref_version': promo.external_ref_version,
-                'repository': promo.target_repo,
-                'remote': promo.external_ref.remote,
-                'placement_kind': 'promotion',
-                'placement_status': 'Promoted',
-                'placed_at': promo.completed_at,
-                'promotion': promo,
-            })
-
-        published_externals.sort(
-            key=lambda row: row.get('placed_at') or row['external_ref_version'].pulled_at,
-            reverse=True,
-        )
-        context['published_externals'] = published_externals
         # Use Package.status (canonical truth) so we always see the current
         # state of each package, not stale Build rows from previous attempts.
         context['ready_to_commit'] = (
@@ -1601,20 +1513,10 @@ class PromotionListView(LoginRequiredMixin, ListView):
                 seen_packages.add(build.package_id)
         context['ready_to_promote'] = ready_to_promote
         ready_to_promote_externals = []
-        promotable_versions = (
-            ExternalRefVersion.objects
-            .filter(status='published')
-            .select_related('external_ref', 'external_ref__repository', 'external_ref__remote')
-            .order_by('-source_published_at', '-pulled_at', '-id')
-        )
-        for version in promotable_versions:
-            targets = get_available_external_ref_promotion_targets(version)
+        for ext in context['published_externals']:
+            targets = get_available_external_ref_promotion_targets(ext)
             if targets:
-                ready_to_promote_externals.append({
-                    'external_ref': version.external_ref,
-                    'external_ref_version': version,
-                    'targets': targets,
-                })
+                ready_to_promote_externals.append({'external_ref': ext, 'targets': targets})
         context['ready_to_promote_externals'] = ready_to_promote_externals
         context['repositories'] = Repository.objects.filter(is_active=True)
         context['promo_status_choices'] = Promotion.STATUS_CHOICES
@@ -1661,13 +1563,7 @@ class PromotionListView(LoginRequiredMixin, ListView):
         )
         context['external_ref_promotions'] = (
             ExternalRefPromotion.objects
-            .select_related(
-                'external_ref',
-                'external_ref_version',
-                'target_repo',
-                'promoted_by',
-                'external_ref__repository',
-            )
+            .select_related('external_ref', 'target_repo', 'promoted_by', 'external_ref__repository')
             .order_by('-created_at')[:50]
         )
         # BST builds ready to promote
@@ -2159,95 +2055,63 @@ class RunUpstreamVersionScanView(LoginRequiredMixin, View):
 
 
 class ScanRepairRepoTmpPermissionsView(LoginRequiredMixin, View):
-    """
-    Scan (and optionally repair) OSTree repo tmp staging directory permissions.
-
-    This catches cases where a staging directory is created without execute bits,
-    which can later break `ostree pull-local` with fstatat permission errors.
-    """
+    """Scan (and optionally repair) broken permissions on tmp/staging-* dirs in all active repos."""
 
     def post(self, request):
-        import json
+        import glob
+        import json as _json
         import stat
 
         try:
-            body = json.loads(request.body.decode('utf-8') or '{}')
-        except Exception:
+            body = _json.loads(request.body or b'{}')
+        except ValueError:
             body = {}
         repair = bool(body.get('repair', False))
 
-        repos_scanned = 0
+        from .models import Repository
+        repos = Repository.objects.filter(is_active=True)
+
         issues = []
         repaired = []
         errors = []
 
-        for repo in Repository.objects.filter(is_active=True):
-            repo_path = repo.repo_path
-            if not os.path.exists(os.path.join(repo_path, 'config')):
+        for repo in repos:
+            tmp_dir = os.path.join(repo.repo_path, 'tmp')
+            if not os.path.isdir(tmp_dir):
                 continue
-
-            repos_scanned += 1
-            tmp_path = os.path.join(repo_path, 'tmp')
-            if not os.path.isdir(tmp_path):
-                continue
-
-            # Check tmp itself and common children used by OSTree transactions.
-            candidate_dirs = [tmp_path]
-            for child in ('cache',):
-                p = os.path.join(tmp_path, child)
-                if os.path.isdir(p):
-                    candidate_dirs.append(p)
-            try:
-                for name in os.listdir(tmp_path):
-                    if not name.startswith('staging-'):
-                        continue
-                    p = os.path.join(tmp_path, name)
-                    if os.path.isdir(p):
-                        candidate_dirs.append(p)
-            except Exception as e:
-                errors.append({'repo': repo.name, 'path': tmp_path, 'error': str(e)})
-                continue
-
-            for dpath in candidate_dirs:
+            for staging_path in glob.glob(os.path.join(tmp_dir, 'staging-*')):
                 try:
-                    current_mode = stat.S_IMODE(os.stat(dpath).st_mode)
-                    if (current_mode & 0o111) == 0:
-                        issue = {
+                    st = os.stat(staging_path)
+                    mode = stat.S_IMODE(st.st_mode)
+                    # Expect 0o755 (rwxr-xr-x); flag anything without o+rx
+                    if (mode & 0o005) != 0o005:
+                        mode_str = oct(mode)
+                        issues.append({
                             'repo': repo.name,
-                            'path': dpath,
-                            'mode': oct(current_mode),
-                            'problem': 'directory missing execute bits',
-                        }
-                        issues.append(issue)
-
+                            'path': staging_path,
+                            'mode': mode_str,
+                            'problem': 'Missing world read/execute bits',
+                        })
                         if repair:
-                            # Normalize to a safe traversable directory mode.
-                            os.chmod(dpath, 0o755)
-                            repaired.append({
-                                'repo': repo.name,
-                                'path': dpath,
-                                'from_mode': oct(current_mode),
-                                'to_mode': '0o755',
-                            })
-                except Exception as e:
-                    errors.append({'repo': repo.name, 'path': dpath, 'error': str(e)})
+                            try:
+                                os.chmod(staging_path, 0o755)
+                                repaired.append(staging_path)
+                            except OSError as e:
+                                errors.append(str(e))
+                except OSError as e:
+                    errors.append(str(e))
 
+        issues_found = len(issues)
         if repair:
-            message = (
-                f"Scanned {repos_scanned} repo(s); found {len(issues)} issue(s); "
-                f"repaired {len(repaired)} path(s)."
-            )
+            message = f"Scan complete. {issues_found} issue(s) found; {len(repaired)} repaired."
         else:
-            message = f"Scanned {repos_scanned} repo(s); found {len(issues)} issue(s)."
+            message = f"Scan complete. {issues_found} issue(s) found."
 
         return JsonResponse({
-            'status': 'ok',
-            'repair': repair,
             'message': message,
-            'repos_scanned': repos_scanned,
-            'issues_found': len(issues),
-            'repaired_count': len(repaired),
+            'issues_found': issues_found,
             'issues': issues,
+            'repair': repair,
             'repaired': repaired,
             'errors': errors,
         })
@@ -2865,19 +2729,6 @@ class ExternalRefDetailView(LoginRequiredMixin, DetailView):
         from .models import ExternalRef
         return ExternalRef.objects.select_related('repository', 'remote', 'created_by')
 
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        ext = context['ext']
-        versions = list(
-            ext.versions
-            .all()
-            .order_by('-source_published_at', '-pulled_at', '-id')
-        )
-        for version in versions:
-            version.available_promotion_targets = get_available_external_ref_promotion_targets(version)
-        context['external_versions'] = versions
-        return context
-
 
 class ExternalRefCreateView(LoginRequiredMixin, CreateView):
     template_name = 'flatpak/external_form.html'
@@ -3124,79 +2975,6 @@ class OrganisationDeleteView(LoginRequiredMixin, DeleteView):
     success_url = reverse_lazy('flatpak:organisation_list')
 
 
-def _version_lt(installed_version, latest_version):
-    """Return True when installed_version is older than latest_version."""
-    if not installed_version or not latest_version:
-        return False
-    try:
-        from packaging.version import Version as _Version, InvalidVersion as _InvalidVersion
-        try:
-            return _Version(installed_version) < _Version(latest_version)
-        except _InvalidVersion:
-            return installed_version != latest_version
-    except Exception:
-        return installed_version != latest_version
-
-
-def _latest_published_versions_for_app_ids(app_ids):
-    """
-    Resolve app_id -> latest published version from Package records.
-
-    Calculated at render time so client status stays current even when
-    packages are promoted after the client's last check-in.
-    """
-    if not app_ids:
-        return {}
-
-    latest_versions = {}
-    for p in Package.objects.filter(
-        status='published',
-        package_id__in=app_ids,
-    ).exclude(version='').only('version', 'package_id'):
-        app_id = p.package_id
-        current = latest_versions.get(app_id)
-        if current is None or _version_lt(current, p.version):
-            latest_versions[app_id] = p.version
-    return latest_versions
-
-
-def _compute_client_dynamic_package_state(client, latest_versions):
-    """Compute foreign/outdated package snapshots for a single client."""
-    installed = list(client.installed_flatpaks or [])
-    managed_set = set(client.managed_remotes or [])
-
-    foreign_flatpaks = [
-        pkg for pkg in installed
-        if pkg.get('origin') not in managed_set
-    ]
-
-    outdated_flatpaks = []
-    for pkg in installed:
-        if pkg.get('origin') not in managed_set:
-            continue
-        app_id = pkg.get('app_id', '')
-        inst_ver = pkg.get('version', '')
-        latest_ver = latest_versions.get(app_id, '')
-        if _version_lt(inst_ver, latest_ver):
-            outdated_flatpaks.append({
-                'app_id': app_id,
-                'current_version': inst_ver,
-                'new_version': latest_ver,
-                'origin': pkg.get('origin', ''),
-                'name': pkg.get('name', ''),
-                'branch': pkg.get('branch', ''),
-            })
-
-    return {
-        'installed_flatpaks': installed,
-        'installed_count': len(installed),
-        'foreign_flatpaks': foreign_flatpaks,
-        'foreign_count': len(foreign_flatpaks),
-        'outdated_flatpaks': outdated_flatpaks,
-        'outdated_count': len(outdated_flatpaks),
-    }
-
-
 class ClientListView(LoginRequiredMixin, ListView):
     template_name = 'flatpak/client_list.html'
     context_object_name = 'clients'
@@ -3218,23 +2996,6 @@ class ClientListView(LoginRequiredMixin, ListView):
         stale_hours = SiteConfig.get_solo().client_stale_hours
         threshold = timezone.now() - timedelta(hours=stale_hours)
         qs = list(Client.objects.prefetch_related('organisations').all())
-
-        managed_app_ids = set()
-        for client in qs:
-            managed_set = set(client.managed_remotes or [])
-            for pkg in (client.installed_flatpaks or []):
-                if pkg.get('origin') in managed_set and pkg.get('app_id'):
-                    managed_app_ids.add(pkg['app_id'])
-        latest_versions = _latest_published_versions_for_app_ids(managed_app_ids)
-
-        for client in qs:
-            dynamic = _compute_client_dynamic_package_state(client, latest_versions)
-            client.installed_count = dynamic['installed_count']
-            client.foreign_count = dynamic['foreign_count']
-            client.outdated_count = dynamic['outdated_count']
-            client.foreign_flatpaks = dynamic['foreign_flatpaks']
-            client.outdated_flatpaks = dynamic['outdated_flatpaks']
-
         self._annotate_status(qs, threshold)
         # Pre-serialize JSON so the template emits valid JSON strings.
         # Django's template renders Python lists/dicts with repr() (single
@@ -3271,21 +3032,6 @@ class ClientDetailView(LoginRequiredMixin, DetailView):
         from django.utils import timezone
         from datetime import timedelta
         client = context['client']
-
-        managed_set = set(client.managed_remotes or [])
-        managed_app_ids = {
-            p.get('app_id')
-            for p in (client.installed_flatpaks or [])
-            if p.get('app_id') and p.get('origin') in managed_set
-        }
-        latest_versions = _latest_published_versions_for_app_ids(managed_app_ids)
-        dynamic = _compute_client_dynamic_package_state(client, latest_versions)
-        client.installed_count = dynamic['installed_count']
-        client.foreign_count = dynamic['foreign_count']
-        client.outdated_count = dynamic['outdated_count']
-        client.foreign_flatpaks = dynamic['foreign_flatpaks']
-        client.outdated_flatpaks = dynamic['outdated_flatpaks']
-
         stale_hours = SiteConfig.get_solo().client_stale_hours
         threshold = timezone.now() - timedelta(hours=stale_hours)
         if client.last_checkin is None or client.last_checkin < threshold:
@@ -3403,12 +3149,6 @@ class ClientCheckinView(View):
         from django.utils import timezone
 
         remotes = data.get('remotes', [])
-        serial_number = str(data.get('serial_number', '') or '').strip()
-        if len(serial_number) > 255:
-            serial_number = serial_number[:255]
-        machine_type = str(data.get('machine_type', '') or '').strip()
-        if len(machine_type) > 255:
-            machine_type = machine_type[:255]
         managed_remote_names = data.get('managed_remotes', [])
         installed = data.get('installed', [])
         user_flatpaks = data.get('user_flatpaks', [])
@@ -3474,8 +3214,6 @@ class ClientCheckinView(View):
 
         client, _ = Client.objects.get_or_create(hostname=hostname)
         client.last_checkin = timezone.now()
-        client.serial_number = serial_number
-        client.machine_type = machine_type
         client.remotes = remotes
         client.managed_remotes = managed_remote_names
         client.installed_flatpaks = installed
@@ -3500,7 +3238,6 @@ class ClientCheckinView(View):
                         'notification_type': 'client_updated',
                         'pk': client.pk,
                         'hostname': hostname,
-                        'serial_number': client.serial_number,
                         'installed_count': client.installed_count,
                         'foreign_count': client.foreign_count,
                         'outdated_count': client.outdated_count,

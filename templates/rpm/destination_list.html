@@ -1,0 +1,286 @@
+{% extends 'base.html' %}
+{% block title %}RPM Destinations{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-diagram-3"></i> Satellite / Katello Destinations</h2>
+    <a href="{% url 'rpm:server_create' %}" class="btn btn-primary">
+        <i class="bi bi-plus-circle"></i> Add Server
+    </a>
+</div>
+
+{% if messages %}
+{% for msg in messages %}
+<div class="alert alert-{{ msg.tags|default:'info' }} alert-dismissible fade show" role="alert">
+    {{ msg }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endfor %}
+{% endif %}
+
+{% if not servers %}
+<div class="alert alert-info">
+    <i class="bi bi-info-circle me-2"></i>
+    No Satellite/Katello servers have been configured yet.
+    <a href="{% url 'rpm:server_create' %}">Add the first server</a> to start pushing RPMs automatically after builds.
+</div>
+{% endif %}
+
+{% for server in servers %}
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <div>
+            <strong><i class="bi bi-server me-1"></i> {{ server.name }}</strong>
+            <small class="text-muted ms-2">{{ server.url }}</small>
+            {% if not server.ssl_verify %}
+            <span class="badge bg-warning text-dark ms-2">SSL verify off</span>
+            {% endif %}
+        </div>
+        <div class="d-flex gap-2">
+            <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal"
+                    data-bs-target="#addRepoModal{{ server.pk }}"
+                    title="Add repository from this server">
+                <i class="bi bi-plus-circle"></i> Add Repository
+            </button>
+            <button class="btn btn-sm btn-outline-danger"
+                    onclick="confirmServerDelete({{ server.pk }}, '{{ server.name|escapejs }}')">
+                <i class="bi bi-trash"></i>
+            </button>
+        </div>
+    </div>
+    <div class="card-body p-0">
+        {% if server.repositories.all %}
+        <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Organization</th>
+                    <th>Product</th>
+                    <th>Repository</th>
+                    <th>Katello ID</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for repo in server.repositories.all %}
+                <tr>
+                    <td>{{ repo.organization }}</td>
+                    <td>{{ repo.product }}</td>
+                    <td>{{ repo.name }}</td>
+                    <td><code>{{ repo.repository_id }}</code></td>
+                    <td class="text-end">
+                        <button class="btn btn-sm btn-outline-danger"
+                                onclick="confirmRepoDelete({{ repo.pk }}, '{{ repo.name|escapejs }}')">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted p-3 mb-0 fst-italic">No repositories added yet for this server.</p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Add Repository Modal for server {{ server.pk }} -->
+<div class="modal fade" id="addRepoModal{{ server.pk }}" tabindex="-1">
+    <div class="modal-dialog">
+        <form method="post" action="{% url 'rpm:repo_add' server.pk %}">
+            {% csrf_token %}
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-plus-circle me-1"></i> Add Repository — {{ server.name }}</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Organization <span class="text-danger">*</span></label>
+                        <select class="form-select" name="organization_id" id="orgSelect{{ server.pk }}" required>
+                            <option value="">Loading…</option>
+                        </select>
+                        <input type="hidden" name="organization" id="orgName{{ server.pk }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Product <span class="text-danger">*</span></label>
+                        <select class="form-select" name="product_id" id="productSelect{{ server.pk }}" required disabled>
+                            <option value="">— select organization first —</option>
+                        </select>
+                        <input type="hidden" name="product" id="productName{{ server.pk }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Repository <span class="text-danger">*</span></label>
+                        <select class="form-select" name="repository_id" id="repoSelect{{ server.pk }}" required disabled>
+                            <option value="">— select product first —</option>
+                        </select>
+                        <input type="hidden" name="name" id="repoName{{ server.pk }}">
+                    </div>
+                    <div id="repoError{{ server.pk }}" class="alert alert-danger d-none"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="addRepoBtn{{ server.pk }}" disabled>Add Repository</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% endfor %}
+
+<!-- Confirm delete modal (shared) -->
+<div class="modal fade" id="deleteConfirmModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteConfirmTitle">Confirm</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="deleteConfirmBody"></div>
+            <div class="modal-footer" id="deleteConfirmFooter"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Hidden forms for deletes -->
+<form id="deleteServerForm" method="post" style="display:none">
+    {% csrf_token %}
+</form>
+<form id="deleteRepoForm" method="post" style="display:none">
+    {% csrf_token %}
+</form>
+
+<script>
+const _csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] || '';
+
+function showDeleteConfirm(title, body, okLabel, onOk) {
+    document.getElementById('deleteConfirmTitle').textContent = title;
+    document.getElementById('deleteConfirmBody').innerHTML = body;
+    document.getElementById('deleteConfirmFooter').innerHTML =
+        '<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>' +
+        `<button type="button" class="btn btn-danger" id="deleteConfirmOk">${okLabel}</button>`;
+    const okBtn = document.getElementById('deleteConfirmOk');
+    const modal = new bootstrap.Modal(document.getElementById('deleteConfirmModal'));
+    okBtn.onclick = function () { modal.hide(); onOk(); };
+    modal.show();
+}
+
+function confirmServerDelete(pk, name) {
+    showDeleteConfirm(
+        'Remove Satellite Server',
+        `<p>Remove server <strong>${name}</strong>?</p>
+         <p class="text-danger small mb-0">All repositories linked to this server will also be removed and packages will no longer be auto-pushed here.</p>`,
+        'Remove',
+        () => {
+            const form = document.getElementById('deleteServerForm');
+            form.action = `/rpms/destinations/servers/${pk}/delete/`;
+            form.submit();
+        }
+    );
+}
+
+function confirmRepoDelete(pk, name) {
+    showDeleteConfirm(
+        'Remove Repository',
+        `<p>Remove repository <strong>${name}</strong> from this server?</p>
+         <p class="text-muted small mb-0">Package destination assignments for this repository will also be removed.</p>`,
+        'Remove',
+        () => {
+            const form = document.getElementById('deleteRepoForm');
+            form.action = `/rpms/destinations/repos/${pk}/delete/`;
+            form.submit();
+        }
+    );
+}
+
+// AJAX cascading dropdowns for each server's modal
+document.querySelectorAll('[id^="addRepoModal"]').forEach(modal => {
+    const serverId = modal.id.replace('addRepoModal', '');
+
+    const orgSel     = document.getElementById(`orgSelect${serverId}`);
+    const productSel = document.getElementById(`productSelect${serverId}`);
+    const repoSel    = document.getElementById(`repoSelect${serverId}`);
+    const orgName    = document.getElementById(`orgName${serverId}`);
+    const productName = document.getElementById(`productName${serverId}`);
+    const repoName   = document.getElementById(`repoName${serverId}`);
+    const addBtn     = document.getElementById(`addRepoBtn${serverId}`);
+    const errDiv     = document.getElementById(`repoError${serverId}`);
+
+    let orgsLoaded = false;
+
+    modal.addEventListener('show.bs.modal', () => {
+        if (orgsLoaded) return;
+        fetch(`{% url 'rpm:fetch_orgs' %}?server=${serverId}`)
+            .then(r => r.json())
+            .then(data => {
+                orgSel.innerHTML = '<option value="">— select organization —</option>';
+                (data.orgs || []).forEach(o => {
+                    const opt = new Option(o.name, o.id);
+                    opt.dataset.name = o.name;
+                    orgSel.append(opt);
+                });
+                orgsLoaded = true;
+            })
+            .catch(() => {
+                orgSel.innerHTML = '<option value="">Error loading organizations</option>';
+            });
+    });
+
+    orgSel.addEventListener('change', () => {
+        const orgId = orgSel.value;
+        orgName.value = orgSel.selectedOptions[0]?.dataset.name || orgSel.selectedOptions[0]?.text || '';
+        productSel.innerHTML = '<option value="">Loading…</option>';
+        productSel.disabled = true;
+        repoSel.innerHTML = '<option value="">— select product first —</option>';
+        repoSel.disabled = true;
+        addBtn.disabled = true;
+        errDiv.classList.add('d-none');
+        if (!orgId) return;
+        fetch(`{% url 'rpm:fetch_products' %}?server=${serverId}&org_id=${orgId}`)
+            .then(r => r.json())
+            .then(data => {
+                productSel.innerHTML = '<option value="">— select product —</option>';
+                (data.products || []).forEach(p => {
+                    const opt = new Option(p.name, p.id);
+                    opt.dataset.name = p.name;
+                    productSel.append(opt);
+                });
+                productSel.disabled = false;
+            })
+            .catch(e => {
+                errDiv.textContent = 'Failed to load products: ' + e.message;
+                errDiv.classList.remove('d-none');
+            });
+    });
+
+    productSel.addEventListener('change', () => {
+        const productId = productSel.value;
+        productName.value = productSel.selectedOptions[0]?.dataset.name || productSel.selectedOptions[0]?.text || '';
+        repoSel.innerHTML = '<option value="">Loading…</option>';
+        repoSel.disabled = true;
+        addBtn.disabled = true;
+        errDiv.classList.add('d-none');
+        if (!productId) return;
+        fetch(`{% url 'rpm:fetch_repos' %}?server=${serverId}&product_id=${productId}`)
+            .then(r => r.json())
+            .then(data => {
+                repoSel.innerHTML = '<option value="">— select repository —</option>';
+                (data.repos || []).forEach(r => {
+                    const opt = new Option(r.name, r.id);
+                    opt.dataset.name = r.name;
+                    repoSel.append(opt);
+                });
+                repoSel.disabled = false;
+            })
+            .catch(e => {
+                errDiv.textContent = 'Failed to load repositories: ' + e.message;
+                errDiv.classList.remove('d-none');
+            });
+    });
+
+    repoSel.addEventListener('change', () => {
+        repoName.value = repoSel.selectedOptions[0]?.dataset.name || repoSel.selectedOptions[0]?.text || '';
+        addBtn.disabled = !repoSel.value;
+    });
+});
+</script>
+{% endblock %}

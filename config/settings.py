@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     'apps.users',
     'apps.flatpak',
     'apps.api',
+    'apps.rpm',
 ]
 
 MIDDLEWARE = [
@@ -205,6 +206,9 @@ CORS_ALLOWED_ORIGINS = os.environ.get(
 FLATPAK_REPO_PATH = os.environ.get('REPOS_BASE_PATH', str(BASE_DIR / 'repos'))
 FLATPAK_BUILD_PATH = os.environ.get('FLATPAK_BUILD_PATH', str(BASE_DIR / 'builds'))
 
+# RPM Repository Settings
+RPM_REPO_BASE_PATH = os.environ.get('RPM_REPO_BASE_PATH', str(BASE_DIR / 'rpm-repos'))
+
 # BuildStream 1 venv path (BST 1 and BST 2 have incompatible project.conf formats).
 # Set to the root of a virtualenv that has BuildStream 1 installed.
 # BST 2 is assumed to be available as 'bst' in the primary virtualenv.
@@ -254,3 +258,4 @@ LOGGING = {
 os.makedirs(_LOG_DIR, exist_ok=True)
 os.makedirs(FLATPAK_REPO_PATH, exist_ok=True)
 os.makedirs(FLATPAK_BUILD_PATH, exist_ok=True)
+os.makedirs(RPM_REPO_BASE_PATH, exist_ok=True)

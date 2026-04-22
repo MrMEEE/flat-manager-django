@@ -1,0 +1,98 @@
+{% extends 'base.html' %}
+{% block title %}Add Satellite Server{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <a href="{% url 'rpm:destination_list' %}" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back to Destinations
+    </a>
+</div>
+
+<div class="row justify-content-center">
+<div class="col-lg-7">
+
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-server me-1"></i> Add Satellite / Katello Server</h5>
+    </div>
+    <div class="card-body">
+
+        {% if errors.non_field %}
+        <div class="alert alert-danger">
+            <i class="bi bi-exclamation-triangle-fill me-1"></i>
+            {{ errors.non_field }}
+        </div>
+        {% endif %}
+
+        <p class="text-muted small">
+            Provide administrator credentials once to provision a dedicated service account on the
+            Satellite/Katello server. Only an encrypted Personal Access Token is stored — the admin
+            password is never saved.
+        </p>
+
+        <form method="post">
+            {% csrf_token %}
+
+            <div class="mb-3">
+                <label class="form-label">Display Name <span class="text-danger">*</span></label>
+                <input type="text" name="name" class="form-control {% if errors.name %}is-invalid{% endif %}"
+                       value="{{ form_data.name|default:'' }}" required placeholder="e.g. Production Satellite">
+                {% if errors.name %}<div class="invalid-feedback">{{ errors.name }}</div>{% endif %}
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Satellite URL <span class="text-danger">*</span></label>
+                <input type="url" name="url" class="form-control {% if errors.url %}is-invalid{% endif %}"
+                       value="{{ form_data.url|default:'' }}" required
+                       placeholder="https://satellite.example.com">
+                {% if errors.url %}<div class="invalid-feedback">{{ errors.url }}</div>{% endif %}
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Service Account Login</label>
+                <input type="text" name="svc_login" class="form-control"
+                       value="{{ form_data.svc_login|default:'flat-manager' }}"
+                       placeholder="flat-manager">
+                <div class="form-text">Username for the service account to be created on Satellite.</div>
+            </div>
+
+            <div class="mb-3 form-check">
+                <input type="checkbox" name="ssl_verify" class="form-check-input" id="id_ssl_verify"
+                       {% if not form_data or form_data.ssl_verify == 'on' %}checked{% endif %}>
+                <label class="form-check-label" for="id_ssl_verify">Verify SSL certificate</label>
+            </div>
+
+            <hr>
+            <h6 class="text-muted">Administrator Credentials <small>(used once to provision the service account)</small></h6>
+
+            <div class="mb-3">
+                <label class="form-label">Admin Username <span class="text-danger">*</span></label>
+                <input type="text" name="admin_user" class="form-control {% if errors.admin_user %}is-invalid{% endif %}"
+                       value="{{ form_data.admin_user|default:'' }}" required autocomplete="off">
+                {% if errors.admin_user %}<div class="invalid-feedback">{{ errors.admin_user }}</div>{% endif %}
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Admin Password <span class="text-danger">*</span></label>
+                <input type="password" name="admin_pass" class="form-control {% if errors.admin_pass %}is-invalid{% endif %}"
+                       required autocomplete="new-password">
+                {% if errors.admin_pass %}<div class="invalid-feedback">{{ errors.admin_pass }}</div>{% endif %}
+                <div class="form-text text-warning">
+                    <i class="bi bi-shield-exclamation me-1"></i>
+                    This password is used only to create the service account and is never stored.
+                </div>
+            </div>
+
+            <div class="d-flex gap-2 justify-content-end">
+                <a href="{% url 'rpm:destination_list' %}" class="btn btn-secondary">Cancel</a>
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-check-circle me-1"></i> Add Server
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+</div>
+</div>
+{% endblock %}

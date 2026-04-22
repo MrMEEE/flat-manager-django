@@ -1,0 +1,303 @@
+{% extends 'base.html' %}
+
+{% block title %}RPM Build #{{ build.build_number }} - {{ build.package.name }} - Flat Manager{% endblock %}
+
+{% block extra_css %}
+<style>
+#log-container {
+    background: #1e1e1e;
+    border-radius: 4px;
+    padding: 1rem;
+    height: 500px;
+    overflow-y: auto;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 0.8rem;
+    line-height: 1.5;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'rpm:package_list' %}">RPM Packages</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'rpm:package_detail' build.package.pk %}">{{ build.package.name }}</a></li>
+        <li class="breadcrumb-item active">Build #{{ build.build_number }}</li>
+    </ol>
+</nav>
+
+{% if messages %}
+    {% for message in messages %}
+    <div class="alert alert-{{ message.tags }} alert-dismissible fade show">
+        {{ message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endfor %}
+{% endif %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>
+        <i class="bi bi-hammer"></i>
+        Build #{{ build.build_number }}
+        <span id="status-badge" class="badge bg-{{ build.get_status_color }} ms-2">
+            {% if build.status in "building,pending" %}
+            <span class="spinner-border spinner-border-sm me-1"></span>
+            {% endif %}
+            {{ build.get_status_display }}
+        </span>
+    </h2>
+    <div class="d-flex gap-2" id="action-buttons">
+        {% if build.status in "failed,cancelled,built" %}
+        <form method="post" action="{% url 'rpm:build_retry' build.pk %}">
+            {% csrf_token %}
+            <button class="btn btn-outline-primary">
+                <i class="bi bi-arrow-clockwise"></i> Retry
+            </button>
+        </form>
+        {% endif %}
+
+        {% if build.status in "building,pending" %}
+        <form method="post" action="{% url 'rpm:build_cancel' build.pk %}">
+            {% csrf_token %}
+            <button class="btn btn-outline-danger">
+                <i class="bi bi-x-circle"></i> Cancel
+            </button>
+        </form>
+        {% endif %}
+
+        {% if build.status in "failed,cancelled,built" %}
+        <button type="button" class="btn btn-outline-danger btn-sm"
+                onclick="showDeleteConfirm(
+                    'Delete Build',
+                    'Delete build #{{ build.build_number }} for <strong>{{ build.package.name }}</strong>?',
+                    'Delete',
+                    function() { document.getElementById('delete-build-form').submit(); }
+                )">
+            <i class="bi bi-trash"></i>
+        </button>
+        <form id="delete-build-form" method="post" action="{% url 'rpm:build_delete' build.pk %}" class="d-none">
+            {% csrf_token %}
+        </form>
+        {% endif %}
+
+        <a href="{% url 'rpm:package_detail' build.package.pk %}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back
+        </a>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header"><h6 class="mb-0">Build Details</h6></div>
+            <div class="card-body">
+                <dl class="row mb-0">
+                    <dt class="col-sm-5">Package</dt>
+                    <dd class="col-sm-7">
+                        <a href="{% url 'rpm:package_detail' build.package.pk %}">{{ build.package.name }}</a>
+                    </dd>
+
+                    <dt class="col-sm-5">Distribution</dt>
+                    <dd class="col-sm-7">
+                        <span class="badge bg-secondary">{{ build.distribution.display_name }}</span>
+                    </dd>
+
+                    <dt class="col-sm-5">Version</dt>
+                    <dd class="col-sm-7">{{ build.version|default:"—" }}</dd>
+
+                    <dt class="col-sm-5">Source Commit</dt>
+                    <dd class="col-sm-7">
+                        {% if build.source_commit %}
+                        <code>{{ build.source_commit|slice:":12" }}</code>
+                        {% else %}—{% endif %}
+                    </dd>
+
+                    <dt class="col-sm-5">Started</dt>
+                    <dd class="col-sm-7">{{ build.started_at|date:"d M Y H:i:s" }}</dd>
+
+                    <dt class="col-sm-5">Completed</dt>
+                    <dd class="col-sm-7">{{ build.completed_at|date:"d M Y H:i:s"|default:"—" }}</dd>
+                </dl>
+            </div>
+        </div>
+    </div>
+
+    {% if build.rpm_files %}
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header"><h6 class="mb-0"><i class="bi bi-archive"></i> Built RPMs</h6></div>
+            <div class="card-body">
+                <ul class="list-unstyled mb-0">
+                    {% for rpm in build.rpm_files %}
+                    <li><code class="small">{{ rpm }}</code></li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+{% if build.error_message %}
+<div class="alert alert-danger mb-4">
+    <strong>Error:</strong> {{ build.error_message }}
+</div>
+{% endif %}
+
+<!-- Log viewer -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="bi bi-terminal"></i> Build Log</h6>
+        <button class="btn btn-sm btn-outline-secondary" onclick="scrollLogsToBottom()">
+            <i class="bi bi-arrow-down"></i> Bottom
+        </button>
+    </div>
+    <div class="card-body p-0">
+        <div id="log-container">
+            <div id="logs-placeholder" style="color:#858585">Loading logs&hellip;</div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete confirm modal -->
+<div class="modal fade" id="deleteConfirmModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteConfirmTitle">Confirm</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="deleteConfirmBody"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="deleteConfirmOk">Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const buildId = {{ build.pk }};
+const logsApiUrl = '{% url "rpm:build_logs" build.pk %}';
+let buildStatus = '{{ build.status }}';
+let lastLogCount = 0;
+const logsDiv = document.getElementById('log-container');
+
+const activeStatuses = ['building', 'pending'];
+
+function scrollLogsToBottom() {
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+}
+
+function statusBadgeHtml(status) {
+    const colors = {
+        pending: 'secondary', building: 'primary', built: 'success',
+        failed: 'danger', cancelled: 'warning'
+    };
+    const labels = {
+        pending: 'Pending', building: 'Building', built: 'Built',
+        failed: 'Failed', cancelled: 'Cancelled'
+    };
+    const spin = (status === 'building' || status === 'pending')
+        ? '<span class="spinner-border spinner-border-sm me-1"></span>' : '';
+    return `<span id="status-badge" class="badge bg-${colors[status] || 'secondary'} ms-2">${spin}${labels[status] || status}</span>`;
+}
+
+async function updateLogs() {
+    try {
+        const resp = await fetch(logsApiUrl);
+        if (!resp.ok) return;
+        const data = await resp.json();
+
+        const placeholder = document.getElementById('logs-placeholder');
+        if (placeholder) placeholder.remove();
+
+        const newLogs = data.logs || [];
+
+        if (newLogs.length === 0 && lastLogCount === 0) {
+            if (!document.getElementById('logs-empty')) {
+                const empty = document.createElement('div');
+                empty.id = 'logs-empty';
+                empty.style.color = '#858585';
+                empty.textContent = activeStatuses.includes(buildStatus) ? 'Waiting for logs…' : 'No logs available.';
+                logsDiv.appendChild(empty);
+            }
+        } else {
+            const emptyMsg = document.getElementById('logs-empty');
+            if (emptyMsg) emptyMsg.remove();
+        }
+
+        if (newLogs.length > lastLogCount) {
+            for (let i = lastLogCount; i < newLogs.length; i++) {
+                const log = newLogs[i];
+                const entry = document.createElement('div');
+                entry.style.cssText = 'display:flex;gap:0.5em;padding:1px 0;';
+
+                let levelColor = '#d4d4d4';
+                if (log.level === 'error') levelColor = '#f48771';
+                else if (log.level === 'warning') levelColor = '#dcdcaa';
+                else if (log.level === 'info') levelColor = '#4ec9b0';
+
+                const tsSpan = document.createElement('span');
+                tsSpan.style.cssText = 'color:#858585;flex-shrink:0;user-select:none;';
+                tsSpan.textContent = log.timestamp;
+
+                const lvlSpan = document.createElement('span');
+                lvlSpan.style.cssText = `color:${levelColor};flex-shrink:0;user-select:none;`;
+                lvlSpan.textContent = `[${log.level.toUpperCase()}]`;
+
+                const msgSpan = document.createElement('span');
+                msgSpan.style.cssText = 'color:#d4d4d4;white-space:pre-wrap;word-break:break-all;flex:1;';
+                msgSpan.textContent = log.message;
+
+                entry.appendChild(tsSpan);
+                entry.appendChild(lvlSpan);
+                entry.appendChild(msgSpan);
+                logsDiv.appendChild(entry);
+            }
+            lastLogCount = newLogs.length;
+            scrollLogsToBottom();
+        }
+
+        // Update status if changed
+        if (data.status && data.status !== buildStatus) {
+            buildStatus = data.status;
+            const badgeEl = document.getElementById('status-badge');
+            if (badgeEl) badgeEl.outerHTML = statusBadgeHtml(data.status);
+            if (!activeStatuses.includes(data.status)) {
+                clearInterval(window.logPollInterval);
+                window.logPollInterval = null;
+                // Reload page to refresh action buttons
+                setTimeout(() => location.reload(), 500);
+            }
+        }
+    } catch (e) {
+        console.error('Error fetching RPM build logs:', e);
+    }
+}
+
+function startPolling() {
+    if (!window.logPollInterval) {
+        updateLogs();
+        window.logPollInterval = setInterval(updateLogs, 2000);
+    }
+}
+
+if (activeStatuses.includes(buildStatus)) {
+    startPolling();
+} else {
+    updateLogs();
+}
+
+function showDeleteConfirm(title, body, okLabel, onOk) {
+    document.getElementById('deleteConfirmTitle').textContent = title;
+    document.getElementById('deleteConfirmBody').innerHTML = body;
+    document.getElementById('deleteConfirmOk').textContent = okLabel;
+    document.getElementById('deleteConfirmOk').onclick = function () {
+        bootstrap.Modal.getInstance(document.getElementById('deleteConfirmModal')).hide();
+        onOk();
+    };
+    new bootstrap.Modal(document.getElementById('deleteConfirmModal')).show();
+}
+</script>
+{% endblock %}

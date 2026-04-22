@@ -1,0 +1,349 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ object.name|default:"New RPM Package" }} - Flat Manager{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'rpm:package_list' %}">RPM Packages</a></li>
+        {% if object.pk %}
+        <li class="breadcrumb-item"><a href="{% url 'rpm:package_detail' object.pk %}">{{ object.name }}</a></li>
+        <li class="breadcrumb-item active">Edit</li>
+        {% else %}
+        <li class="breadcrumb-item active">New Package</li>
+        {% endif %}
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>
+        <i class="bi bi-box"></i>
+        {% if object.pk %}Edit {{ object.name }}{% else %}New RPM Package{% endif %}
+    </h2>
+</div>
+
+<div class="row">
+    <div class="col-lg-7">
+        <div class="card">
+            <div class="card-body">
+                <form method="post" novalidate>
+                    {% csrf_token %}
+
+                    {% if form.non_field_errors %}
+                    <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+                    {% endif %}
+
+                    <div class="mb-3">
+                        <label for="{{ form.name.id_for_label }}" class="form-label fw-semibold">
+                            Package Name <span class="text-danger">*</span>
+                        </label>
+                        <input type="text"
+                               name="{{ form.name.html_name }}"
+                               id="{{ form.name.id_for_label }}"
+                               value="{{ form.name.value|default_if_none:'' }}"
+                               class="form-control {% if form.name.errors %}is-invalid{% endif %}"
+                               placeholder="e.g. mypackage">
+                        {% if form.name.errors %}
+                        <div class="invalid-feedback">{{ form.name.errors|join:", " }}</div>
+                        {% endif %}
+                        <div class="form-text">{{ form.name.help_text }}</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="{{ form.description.id_for_label }}" class="form-label fw-semibold">Description</label>
+                        <textarea name="{{ form.description.html_name }}"
+                                  id="{{ form.description.id_for_label }}"
+                                  rows="3"
+                                  class="form-control {% if form.description.errors %}is-invalid{% endif %}"
+                                  placeholder="Optional notes about this package…">{{ form.description.value|default_if_none:'' }}</textarea>
+                        {% if form.description.errors %}
+                        <div class="invalid-feedback">{{ form.description.errors|join:", " }}</div>
+                        {% endif %}
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="{{ form.git_repo_url.id_for_label }}" class="form-label fw-semibold">
+                            Git Repository URL <span class="text-danger">*</span>
+                        </label>
+                        <input type="url"
+                               name="{{ form.git_repo_url.html_name }}"
+                               id="{{ form.git_repo_url.id_for_label }}"
+                               value="{{ form.git_repo_url.value|default_if_none:'' }}"
+                               class="form-control {% if form.git_repo_url.errors %}is-invalid{% endif %}"
+                               placeholder="https://github.com/yourorg/mypackage.git">
+                        {% if form.git_repo_url.errors %}
+                        <div class="invalid-feedback">{{ form.git_repo_url.errors|join:", " }}</div>
+                        {% endif %}
+                        <div class="form-text">{{ form.git_repo_url.help_text }}</div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-5">
+                            <label for="{{ form.git_branch.id_for_label }}" class="form-label fw-semibold">
+                                Branch <span class="text-danger">*</span>
+                            </label>
+                            <div class="input-group">
+                                {# Text input shown until branches are fetched #}
+                                <input type="text"
+                                       name="{{ form.git_branch.html_name }}"
+                                       id="{{ form.git_branch.id_for_label }}"
+                                       value="{{ form.git_branch.value|default_if_none:'main' }}"
+                                       class="form-control {% if form.git_branch.errors %}is-invalid{% endif %}"
+                                       placeholder="main">
+                                {# Select shown after fetching branches #}
+                                <select name="{{ form.git_branch.html_name }}"
+                                        id="id_git_branch_select"
+                                        class="form-select {% if form.git_branch.errors %}is-invalid{% endif %}"
+                                        style="display:none">
+                                </select>
+                                <button class="btn btn-outline-secondary" type="button" id="btn-fetch-specs"
+                                        title="Fetch branches and .spec files from repository">
+                                    <i class="bi bi-arrow-repeat" id="fetch-specs-icon"></i>
+                                </button>
+                            </div>
+                            {% if form.git_branch.errors %}
+                            <div class="text-danger small mt-1">{{ form.git_branch.errors|join:", " }}</div>
+                            {% endif %}
+                            <div class="form-text" id="branch-hint"></div>
+                        </div>
+                        <div class="col-md-7">
+                            <label for="id_spec_file" class="form-label fw-semibold">
+                                SPEC File Path <span class="text-danger">*</span>
+                            </label>
+                            {# Text input shown until spec files are fetched #}
+                            <input type="text"
+                                   name="{{ form.spec_file.html_name }}"
+                                   id="id_spec_file_text"
+                                   value="{{ form.spec_file.value|default_if_none:'' }}"
+                                   class="form-control {% if form.spec_file.errors %}is-invalid{% endif %}"
+                                   placeholder="SPECS/mypackage.spec">
+                            {# Dropdown shown after fetching #}
+                            <select name="{{ form.spec_file.html_name }}"
+                                    id="id_spec_file_select"
+                                    class="form-select {% if form.spec_file.errors %}is-invalid{% endif %}"
+                                    style="display:none">
+                            </select>
+                            {% if form.spec_file.errors %}
+                            <div class="invalid-feedback d-block">{{ form.spec_file.errors|join:", " }}</div>
+                            {% endif %}
+                            <div class="form-text" id="spec-file-hint">Relative to the repository root. Click <i class="bi bi-arrow-repeat"></i> to browse.</div>
+                        </div>
+                    </div>
+                    <div id="spec-fetch-error" class="alert alert-danger py-2 mb-3" style="display:none"></div>
+
+                    <hr class="my-3">
+                    <h6 class="text-muted mb-3"><i class="bi bi-arrow-up-circle"></i> Upstream Version Tracking <span class="badge bg-secondary fw-normal">optional</span></h6>
+
+                    <div class="mb-3">
+                        <label for="{{ form.upstream_url.id_for_label }}" class="form-label fw-semibold">Upstream URL</label>
+                        <input type="url"
+                               name="{{ form.upstream_url.html_name }}"
+                               id="{{ form.upstream_url.id_for_label }}"
+                               value="{{ form.upstream_url.value|default_if_none:'' }}"
+                               class="form-control {% if form.upstream_url.errors %}is-invalid{% endif %}"
+                               placeholder="https://github.com/owner/repo">
+                        {% if form.upstream_url.errors %}
+                        <div class="invalid-feedback">{{ form.upstream_url.errors|join:", " }}</div>
+                        {% endif %}
+                        <div class="form-text">{{ form.upstream_url.help_text }}</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="{{ form.upstream_version_script.id_for_label }}" class="form-label fw-semibold">Upstream Version Script</label>
+                        <textarea name="{{ form.upstream_version_script.html_name }}"
+                                  id="{{ form.upstream_version_script.id_for_label }}"
+                                  rows="6"
+                                  class="form-control font-monospace {% if form.upstream_version_script.errors %}is-invalid{% endif %}"
+                                  placeholder="#!/bin/bash&#10;# Print the latest version to stdout&#10;curl -s https://api.github.com/repos/owner/repo/releases/latest \&#10;  | grep '&quot;tag_name&quot;' | cut -d'&quot;' -f4 | sed 's/^v//'">{{ form.upstream_version_script.value|default_if_none:'' }}</textarea>
+                        {% if form.upstream_version_script.errors %}
+                        <div class="invalid-feedback">{{ form.upstream_version_script.errors|join:", " }}</div>
+                        {% endif %}
+                        <div class="form-text">{{ form.upstream_version_script.help_text }} If both URL and script are provided, the script is tried first.</div>
+                    </div>
+
+                    <hr class="my-3">
+
+                    <div class="mb-4">
+                        <label class="form-label fw-semibold">
+                            Build targets <span class="text-danger">*</span>
+                        </label>
+                        {% if form.distributions.errors %}
+                        <div class="text-danger small mb-1">{{ form.distributions.errors|join:", " }}</div>
+                        {% endif %}
+                        <div class="d-flex flex-wrap gap-3">
+                            {% for choice in form.distributions %}
+                            <div class="form-check">
+                                {{ choice.tag }}
+                                <label class="form-check-label" for="{{ choice.id_for_label }}">
+                                    {{ choice.choice_label }}
+                                </label>
+                            </div>
+                            {% empty %}
+                            <div class="text-muted small">
+                                No active distributions found.
+                                <a href="{% url 'rpm:distribution_list' %}">Sync them first.</a>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-save"></i>
+                            {% if object.pk %}Save Changes{% else %}Create &amp; Build{% endif %}
+                        </button>
+                        {% if object.pk %}
+                        <a href="{% url 'rpm:package_detail' object.pk %}" class="btn btn-outline-secondary">Cancel</a>
+                        {% else %}
+                        <a href="{% url 'rpm:package_list' %}" class="btn btn-outline-secondary">Cancel</a>
+                        {% endif %}
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-5 mt-4 mt-lg-0">
+        <div class="card border-info">
+            <div class="card-header bg-info bg-opacity-10">
+                <h6 class="mb-0"><i class="bi bi-info-circle"></i> How it works</h6>
+            </div>
+            <div class="card-body small">
+                <ol class="mb-0 ps-3">
+                    <li class="mb-2">The repository is cloned at the specified branch.</li>
+                    <li class="mb-2">The SPEC file is found at the path you provide.</li>
+                    <li class="mb-2">An SRPM is built first using <strong>Mock</strong>, then binary RPMs are built from it.</li>
+                    <li class="mb-2">Built RPMs are stored in the distribution's local repo and <code>createrepo</code> is run so they can be used as build dependencies for future packages.</li>
+                    <li>One build record is created per selected distribution.</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const urlInput       = document.getElementById('{{ form.git_repo_url.id_for_label }}');
+    const branchText     = document.getElementById('{{ form.git_branch.id_for_label }}');
+    const branchSelect   = document.getElementById('id_git_branch_select');
+    const fetchBtn       = document.getElementById('btn-fetch-specs');
+    const fetchIcon      = document.getElementById('fetch-specs-icon');
+    const specText       = document.getElementById('id_spec_file_text');
+    const specSelect     = document.getElementById('id_spec_file_select');
+    const errEl          = document.getElementById('spec-fetch-error');
+    const specHint       = document.getElementById('spec-file-hint');
+    const branchHint     = document.getElementById('branch-hint');
+    const branchesUrl    = '{% url "rpm:scan_branches" %}';
+    const scanUrl        = '{% url "rpm:scan_spec_files" %}';
+
+    function showError(msg) { errEl.textContent = msg; errEl.style.display = ''; }
+    function hideError()    { errEl.style.display = 'none'; }
+
+    function setLoading(on) {
+        fetchBtn.disabled = on;
+        fetchIcon.className = on ? 'spinner-border spinner-border-sm' : 'bi bi-arrow-repeat';
+    }
+
+    function activeBranch() {
+        // Return the currently chosen branch: select value if visible, else text value
+        if (branchSelect.style.display !== 'none') return branchSelect.value || 'main';
+        return (branchText.value || '').trim() || 'main';
+    }
+
+    function populateBranchSelect(branches) {
+        const current = (branchText.value || '').trim() || 'main';
+        branchSelect.innerHTML = '';
+        branches.forEach(function (b) {
+            const opt = document.createElement('option');
+            opt.value = b;
+            opt.textContent = b;
+            if (b === current) opt.selected = true;
+            branchSelect.appendChild(opt);
+        });
+        if (!branchSelect.value && branches.length) branchSelect.value = branches[0];
+        branchText.disabled = true;
+        branchText.style.display = 'none';
+        branchSelect.style.display = '';
+        branchSelect.disabled = false;
+        branchHint.textContent = branches.length + ' branch(es) found.';
+    }
+
+    function populateSpecSelect(specs) {
+        const currentVal = specText.value.trim();
+        specSelect.innerHTML = '';
+        specs.forEach(function (s) {
+            const opt = document.createElement('option');
+            opt.value = s;
+            opt.textContent = s;
+            if (s === currentVal) opt.selected = true;
+            specSelect.appendChild(opt);
+        });
+        if (!specSelect.value && specs.length) specSelect.value = specs[0];
+        specText.disabled = true;
+        specText.style.display = 'none';
+        specSelect.style.display = '';
+        specSelect.disabled = false;
+        specHint.textContent = specs.length + ' .spec file(s) found.';
+    }
+
+    async function fetchSpecFiles() {
+        const url    = (urlInput.value || '').trim();
+        const branch = activeBranch();
+        if (!url) return;
+
+        try {
+            const r = await fetch(scanUrl + '?url=' + encodeURIComponent(url) + '&branch=' + encodeURIComponent(branch));
+            const data = await r.json();
+            if (!r.ok) { showError(data.error || 'Failed to fetch spec files.'); return; }
+            if (!data.spec_files || !data.spec_files.length) {
+                showError('No .spec files found in the "' + branch + '" branch.');
+                return;
+            }
+            hideError();
+            populateSpecSelect(data.spec_files);
+        } catch (e) {
+            showError('Network error: ' + e.message);
+        }
+    }
+
+    async function fetchBranchesAndSpecs() {
+        const url = (urlInput.value || '').trim();
+        if (!url) { showError('Enter a Git Repository URL first.'); return; }
+
+        hideError();
+        setLoading(true);
+        try {
+            const r = await fetch(branchesUrl + '?url=' + encodeURIComponent(url));
+            const data = await r.json();
+            if (!r.ok) { showError(data.error || 'Failed to list branches.'); return; }
+            if (!data.branches || !data.branches.length) {
+                showError('No branches found in the repository.');
+                return;
+            }
+            populateBranchSelect(data.branches);
+            await fetchSpecFiles();
+        } catch (e) {
+            showError('Network error: ' + e.message);
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    // Manual refresh button — always re-fetches everything
+    fetchBtn.addEventListener('click', fetchBranchesAndSpecs);
+
+    // Auto-trigger when URL loses focus
+    urlInput.addEventListener('blur', function () {
+        if ((urlInput.value || '').trim()) fetchBranchesAndSpecs();
+    });
+
+    // Re-fetch spec files when branch selection changes
+    branchSelect.addEventListener('change', function () {
+        setLoading(true);
+        fetchSpecFiles().finally(function () { setLoading(false); });
+    });
+})();
+</script>
+{% endblock %}

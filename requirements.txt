@@ -28,6 +28,7 @@ django-cors-headers>=4.3.0
 
 # Security
 django-ratelimit>=4.1.0
+cryptography>=42.0.0  # Fernet token encryption (Satellite/Katello PATs)
 
 # Utilities
 python-dateutil>=2.8.2
