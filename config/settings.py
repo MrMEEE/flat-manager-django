@@ -209,6 +209,12 @@ FLATPAK_BUILD_PATH = os.environ.get('FLATPAK_BUILD_PATH', str(BASE_DIR / 'builds
 # RPM Repository Settings
 RPM_REPO_BASE_PATH = os.environ.get('RPM_REPO_BASE_PATH', str(BASE_DIR / 'rpm-repos'))
 
+# Temporary directory for git clones and other short-lived work.
+# Defaults to a sub-folder of the app directory so that the service user
+# always has write access (avoids SELinux / sticky-bit issues with /tmp).
+TEMP_DIR = os.environ.get('TEMP_DIR', str(BASE_DIR / 'tmp'))
+os.makedirs(TEMP_DIR, exist_ok=True)
+
 # BuildStream 1 venv path (BST 1 and BST 2 have incompatible project.conf formats).
 # Set to the root of a virtualenv that has BuildStream 1 installed.
 # BST 2 is assumed to be available as 'bst' in the primary virtualenv.

@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import tempfile
 
+from django.conf import settings
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView
 from django.views import View
@@ -315,7 +316,7 @@ class RpmScanSpecFilesView(LoginRequiredMixin, View):
         if not url:
             return JsonResponse({'error': 'url is required'}, status=400)
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(dir=settings.TEMP_DIR) as tmpdir:
             result = subprocess.run(
                 ['git', 'clone', '--depth', '1', '--branch', branch, '--', url, tmpdir],
                 capture_output=True, text=True, timeout=120,
@@ -408,7 +409,7 @@ class RpmPackageCheckAvailableView(LoginRequiredMixin, View):
         branch = (package.git_branch or 'main').strip()
 
         try:
-            with tempfile.TemporaryDirectory() as tmpdir:
+            with tempfile.TemporaryDirectory(dir=settings.TEMP_DIR) as tmpdir:
                 result = subprocess.run(
                     ['git', 'clone', '--depth', '1', '--branch', branch,
                      '--', package.git_repo_url, tmpdir],
