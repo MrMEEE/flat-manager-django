@@ -73,11 +73,50 @@
 
                     <dt class="col-sm-4">Distributions</dt>
                     <dd class="col-sm-8">
+                        {% if dist_destinations %}
+                        <table class="table table-sm table-bordered mb-0 small">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Distribution</th>
+                                    <th>Signing Key</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            {% for entry in dist_destinations %}
+                            <tr>
+                                <td><span class="badge bg-secondary">{{ entry.distribution.display_name }}</span></td>
+                                <td>
+                                    {% if entry.signing_key %}
+                                        <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                            <i class="bi bi-key-fill"></i> {{ entry.signing_key.name }}
+                                        </span>
+                                    {% else %}
+                                        <span class="text-muted"><i class="bi bi-unlock"></i> unsigned</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary"
+                                            title="Change signing key"
+                                            data-bs-toggle="modal"
+                                            data-bs-target="#pkgSigningKeyModal"
+                                            data-dist-pk="{{ entry.distribution.pk }}"
+                                            data-dist-name="{{ entry.distribution.display_name }}"
+                                            data-current-key="{{ entry.signing_key.pk|default:'' }}">
+                                        <i class="bi bi-pencil"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                            </tbody>
+                        </table>
+                        {% else %}
                         {% for dist in package.distributions.all %}
                             <span class="badge bg-secondary me-1">{{ dist.display_name }}</span>
                         {% empty %}
                             <span class="text-muted">None configured</span>
                         {% endfor %}
+                        {% endif %}
                     </dd>
 
                     <dt class="col-sm-4">Last Built</dt>
@@ -472,5 +511,74 @@ function checkUpstreamVersion(pk) {
         btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Check now';
     });
 }
+</script>
+
+<!-- Signing Key modal (per package + distribution) -->
+<div class="modal fade" id="pkgSigningKeyModal" tabindex="-1" aria-labelledby="pkgSigningKeyModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="pkgSigningKeyModalLabel">
+                    <i class="bi bi-key"></i> Signing Key
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" id="pkgSigningKeyForm" action="">
+                {% csrf_token %}
+                <div class="modal-body">
+                    <p class="text-muted small mb-3">
+                        Select a GPG key to sign the built RPMs and
+                        <code>repodata/repomd.xml</code> for
+                        <strong id="pkgSigningKeyDistName"></strong>.
+                        Choose <em>None (unsigned)</em> to disable signing.
+                    </p>
+                    {% if gpg_keys %}
+                    <div class="mb-3">
+                        <label for="pkg_signing_key_id" class="form-label fw-semibold">GPG Key</label>
+                        <select name="signing_key_id" id="pkg_signing_key_id" class="form-select">
+                            <option value="">— None (unsigned) —</option>
+                            {% for key in gpg_keys %}
+                            <option value="{{ key.pk }}">
+                                {{ key.name }} &lt;{{ key.email }}&gt; ({{ key.key_id }})
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% else %}
+                    <div class="alert alert-warning mb-0">
+                        No active GPG keys found. <a href="{% url 'flatpak:gpgkey_generate' %}">Generate one</a> first.
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    {% if gpg_keys %}
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-lg"></i> Save
+                    </button>
+                    {% endif %}
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    'use strict';
+    const modal = document.getElementById('pkgSigningKeyModal');
+    if (!modal) return;
+    modal.addEventListener('show.bs.modal', function (event) {
+        const btn = event.relatedTarget;
+        const distPk = btn.getAttribute('data-dist-pk');
+        const distName = btn.getAttribute('data-dist-name');
+        const currentKey = btn.getAttribute('data-current-key') || '';
+        document.getElementById('pkgSigningKeyDistName').textContent = distName;
+        const form = document.getElementById('pkgSigningKeyForm');
+        form.action = '/rpms/{{ package.pk }}/signing-key/' + distPk + '/';
+        const select = document.getElementById('pkg_signing_key_id');
+        if (select) select.value = currentKey;
+    });
+})();
 </script>
 {% endblock %}

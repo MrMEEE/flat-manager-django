@@ -72,6 +72,15 @@ class RpmPackageDetailView(LoginRequiredMixin, DetailView):
         for e in existing:
             if e.distribution_id in dest_by_dist:
                 dest_by_dist[e.distribution_id]['destinations'].append(e)
+        from apps.flatpak.models import GPGKey
+        from apps.rpm.models import RpmPackageSigningKey
+        ctx['gpg_keys'] = GPGKey.objects.filter(is_active=True).order_by('name')
+        signing_key_records = RpmPackageSigningKey.objects.filter(
+            package=self.object, distribution__in=distributions
+        ).select_related('signing_key')
+        signing_key_by_dist_pk = {r.distribution_id: r.signing_key for r in signing_key_records}
+        for entry in dest_by_dist.values():
+            entry['signing_key'] = signing_key_by_dist_pk.get(entry['distribution'].pk)
         ctx['dist_destinations'] = list(dest_by_dist.values())
         ctx['available_repos'] = SatelliteRepository.objects.select_related('server').order_by('server__name', 'organization', 'name')
         return ctx
@@ -261,35 +270,37 @@ class RpmDistributionListView(LoginRequiredMixin, ListView):
     context_object_name = 'distributions'
     ordering = ['rhel_version', 'arch']
 
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
+
+class RpmPackageSigningKeyView(LoginRequiredMixin, View):
+    """POST — assign or clear the GPG signing key for a (package, distribution) pair."""
+
+    def post(self, request, pkg_pk, dist_pk):
         from apps.flatpak.models import GPGKey
-        context['gpg_keys'] = GPGKey.objects.filter(is_active=True).order_by('name')
-        return context
-
-
-class RpmDistributionSigningKeyView(LoginRequiredMixin, View):
-    """POST — assign or clear the GPG signing key for a distribution."""
-
-    def post(self, request, pk):
-        from apps.flatpak.models import GPGKey
-        dist = get_object_or_404(RpmDistribution, pk=pk)
+        from apps.rpm.models import RpmPackageSigningKey
+        package = get_object_or_404(RpmPackage, pk=pkg_pk)
+        dist = get_object_or_404(RpmDistribution, pk=dist_pk)
         key_id = request.POST.get('signing_key_id', '').strip()
+        obj, _ = RpmPackageSigningKey.objects.get_or_create(
+            package=package, distribution=dist,
+            defaults={'signing_key': None},
+        )
         if key_id:
             signing_key = get_object_or_404(GPGKey, pk=key_id)
-            dist.signing_key = signing_key
+            obj.signing_key = signing_key
+            obj.save(update_fields=['signing_key'])
             messages.success(
                 request,
-                f"Signing key '{signing_key.name}' assigned to {dist.display_name}.",
+                f"Signing key '{signing_key.name}' assigned to "
+                f"{package.name} / {dist.display_name}.",
             )
         else:
-            dist.signing_key = None
+            obj.signing_key = None
+            obj.save(update_fields=['signing_key'])
             messages.success(
                 request,
-                f"Signing key removed from {dist.display_name} — RPMs will be unsigned.",
+                f"Signing key removed from {package.name} / {dist.display_name} — RPMs will be unsigned.",
             )
-        dist.save(update_fields=['signing_key'])
-        return redirect('rpm:distribution_list')
+        return redirect('rpm:package_detail', pk=pkg_pk)
 
 
 class RpmScanSpecFilesView(LoginRequiredMixin, View):

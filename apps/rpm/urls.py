@@ -29,7 +29,9 @@ urlpatterns = [
     path('rpms/distributions/', views.RpmDistributionListView.as_view(), name='distribution_list'),
     path('rpms/distributions/sync/', views.RpmDistributionSyncView.as_view(), name='distribution_sync'),
     path('rpms/distributions/<int:pk>/toggle/', views.RpmDistributionToggleView.as_view(), name='distribution_toggle'),
-    path('rpms/distributions/<int:pk>/signing-key/', views.RpmDistributionSigningKeyView.as_view(), name='distribution_signing_key'),
+
+    # Package-level signing key assignment
+    path('rpms/<int:pkg_pk>/signing-key/<int:dist_pk>/', views.RpmPackageSigningKeyView.as_view(), name='package_signing_key'),
 
     # Satellite / Katello destinations
     path('rpms/destinations/', views.RpmDestinationListView.as_view(), name='destination_list'),

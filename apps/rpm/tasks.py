@@ -402,8 +402,14 @@ def rpm_build_task(self, build_id):
             copied.append(os.path.basename(rpm))
             log_rpm_build(build, 'info', f"Stored {os.path.basename(rpm)}")
 
-        # ---- Sign RPMs (if a key is configured for this distribution) ----
-        signing_key = dist.signing_key
+        # ---- Sign RPMs (if a key is configured for this package+distribution) ----
+        from apps.rpm.models import RpmPackageSigningKey
+        try:
+            _pkg_signing = RpmPackageSigningKey.objects.select_related('signing_key').get(
+                package=build.package, distribution=dist)
+            signing_key = _pkg_signing.signing_key
+        except RpmPackageSigningKey.DoesNotExist:
+            signing_key = None
         if signing_key and signing_key.is_active:
             log_rpm_build(build, 'info',
                           f"Signing RPMs with GPG key {signing_key.key_id} ({signing_key.name})")

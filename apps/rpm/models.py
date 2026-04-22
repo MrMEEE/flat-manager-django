@@ -23,14 +23,6 @@ class RpmDistribution(models.Model):
     arch = models.CharField(max_length=50, help_text="Architecture (e.g. x86_64)")
     rhel_version = models.CharField(max_length=20, help_text="RHEL major version (e.g. 9)")
     is_active = models.BooleanField(default=True)
-    signing_key = models.ForeignKey(
-        'flatpak.GPGKey',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='rpm_distributions',
-        help_text='GPG key used to sign built RPMs and repository metadata for this distribution',
-    )
 
     class Meta:
         ordering = ['rhel_version', 'arch']
@@ -313,3 +305,31 @@ class RpmPackageDistributionDestination(models.Model):
 
     def __str__(self):
         return f"{self.package.name} [{self.distribution.display_name}] → {self.repository}"
+
+class RpmPackageSigningKey(models.Model):
+    """
+    Maps an (RpmPackage, RpmDistribution) pair to a GPG key.  After a
+    successful build the RPMs and repomd.xml for that distribution will be
+    signed with this key.
+    """
+    package = models.ForeignKey(
+        RpmPackage, on_delete=models.CASCADE, related_name='signing_keys',
+    )
+    distribution = models.ForeignKey(
+        RpmDistribution, on_delete=models.CASCADE, related_name='package_signing_keys',
+    )
+    signing_key = models.ForeignKey(
+        'flatpak.GPGKey',
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='rpm_package_signing_keys',
+        help_text='GPG key used to sign built RPMs and repomd.xml',
+    )
+
+    class Meta:
+        unique_together = [('package', 'distribution')]
+        verbose_name = 'Package Signing Key'
+        verbose_name_plural = 'Package Signing Keys'
+
+    def __str__(self):
+        return f"{self.package.name} [{self.distribution.display_name}] \u2192 {self.signing_key}"
