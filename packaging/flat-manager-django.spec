@@ -442,6 +442,7 @@ cp -a %{_builddir}/tmp-static/. %{buildroot}%{data_dir}/staticfiles/ 2>/dev/null
 # ── Runtime data + log directories (owned by flat-manager) ───────────────────
 install -d -m 0755 %{buildroot}%{data_dir}/repos
 install -d -m 0750 %{buildroot}%{data_dir}/builds
+install -d -m 0750 %{buildroot}%{data_dir}/rpm-repos
 install -d -m 0755 %{buildroot}%{data_dir}/media
 install -d -m 0750 %{buildroot}%{data_dir}/tmp
 install -d -m 0750 %{buildroot}%{log_dir}
@@ -612,6 +613,7 @@ fi
 %dir %attr(0755, %{app_user}, %{app_group})    %{data_dir}
 %dir %attr(0755, %{app_user}, %{app_group})    %{data_dir}/repos
 %dir %attr(0750, %{app_user}, %{app_group})    %{data_dir}/builds
+%dir %attr(0750, %{app_user}, %{app_group})    %{data_dir}/rpm-repos
 %dir %attr(0755, %{app_user}, %{app_group})    %{data_dir}/media
 %dir %attr(0750, %{app_user}, %{app_group})    %{data_dir}/tmp
 %{data_dir}/staticfiles/

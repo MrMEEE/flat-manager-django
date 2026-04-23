@@ -207,13 +207,13 @@ FLATPAK_REPO_PATH = os.environ.get('REPOS_BASE_PATH', str(BASE_DIR / 'repos'))
 FLATPAK_BUILD_PATH = os.environ.get('FLATPAK_BUILD_PATH', str(BASE_DIR / 'builds'))
 
 # RPM Repository Settings
-RPM_REPO_BASE_PATH = os.environ.get('RPM_REPO_BASE_PATH', str(BASE_DIR / 'rpm-repos'))
+# Both RPM_REPO_BASE_PATH and TEMP_DIR default to siblings of REPOS_BASE_PATH
+# so they land under /var/lib/flat-manager/ in production (where the service
+# user has write access) rather than inside the read-only install tree.
+_data_parent = str(Path(REPOS_BASE_PATH).parent)
+RPM_REPO_BASE_PATH = os.environ.get('RPM_REPO_BASE_PATH', os.path.join(_data_parent, 'rpm-repos'))
 
 # Temporary directory for git clones and other short-lived work.
-# Derives from the parent of REPOS_BASE_PATH so that it sits under
-# /var/lib/flat-manager/tmp in production (where the service user has write
-# access) and under BASE_DIR/tmp in development.
-_data_parent = str(Path(REPOS_BASE_PATH).parent)
 TEMP_DIR = os.environ.get('TEMP_DIR', os.path.join(_data_parent, 'tmp'))
 
 # BuildStream 1 venv path (BST 1 and BST 2 have incompatible project.conf formats).
