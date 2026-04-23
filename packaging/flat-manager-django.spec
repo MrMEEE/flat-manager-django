@@ -516,20 +516,20 @@ getent group mock >/dev/null 2>&1 && usermod -aG mock %{app_user} || :
 # Label /var/run/flat-manager/ so nginx (httpd_t) can connect to the UNIX socket.
 # Without this SELinux denies httpd_t write access to var_run_t sock_file.
 # Note: use /var/run (not /run) — semanage requires the canonical path.
-if command -v semanage >/dev/null 2>&1; then
-    semanage fcontext -a -t httpd_var_run_t '/var/run/flat-manager(/.*)?' 2>/dev/null || \
-    semanage fcontext -m -t httpd_var_run_t '/var/run/flat-manager(/.*)?' 2>/dev/null || :
-    restorecon -Rv /run/flat-manager/ 2>/dev/null || :
-    # Label nginx-served data dirs so httpd_t can read them
-    for path in \
-        '%{data_dir}/repos(/.*)?'  \
-        '%{data_dir}/staticfiles(/.*)?'  \
-        '%{data_dir}/media(/.*)?' ; do
-        semanage fcontext -a -t httpd_sys_content_t "${path}" 2>/dev/null || \
-        semanage fcontext -m -t httpd_sys_content_t "${path}" 2>/dev/null || :
-    done
-    restorecon -Rv %{data_dir}/repos %{data_dir}/staticfiles %{data_dir}/media 2>/dev/null || :
-fi
+#if command -v semanage >/dev/null 2>&1; then
+#    semanage fcontext -a -t httpd_var_run_t '/var/run/flat-manager(/.*)?' 2>/dev/null || \
+#    semanage fcontext -m -t httpd_var_run_t '/var/run/flat-manager(/.*)?' 2>/dev/null || :
+#    restorecon -Rv /run/flat-manager/ 2>/dev/null || :
+#    # Label nginx-served data dirs so httpd_t can read them
+#    for path in \
+#        '%{data_dir}/repos(/.*)?'  \
+#        '%{data_dir}/staticfiles(/.*)?'  \
+#        '%{data_dir}/media(/.*)?' ; do
+#        semanage fcontext -a -t httpd_sys_content_t "${path}" 2>/dev/null || \
+#        semanage fcontext -m -t httpd_sys_content_t "${path}" 2>/dev/null || :
+#    done
+#    restorecon -Rv %{data_dir}/repos %{data_dir}/staticfiles %{data_dir}/media 2>/dev/null || :
+#fi
 
 # Install SELinux policy module (allows httpd_t to connect to daphne socket)
 if command -v semodule >/dev/null 2>&1; then
