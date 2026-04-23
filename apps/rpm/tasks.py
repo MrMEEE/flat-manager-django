@@ -106,10 +106,17 @@ def _create_mock_config(base_config, build, local_repo_path, cfg_path=None):
 
     selected_repos = list(build.selected_repos.all())
 
-    # Bind-mount RHSM entitlement certs into the chroot when any subscription
-    # repo is selected, so that dnf inside mock can resolve baseurls.
+    # Bind-mount RHSM entitlement certs when any subscription repo is selected.
+    # nspawn_args applies to ALL systemd-nspawn calls (bootstrap + main chroot),
+    # so the certs are available in both stages.  The bind_mount plugin covers
+    # any non-nspawn execution paths inside the main chroot as well.
     has_subscription_repos = any(r.source == 'subscription' for r in selected_repos)
     if has_subscription_repos:
+        cfg += "\nconfig_opts['nspawn_args'] += [\n"
+        cfg += "    '--bind=/etc/pki/entitlement',\n"
+        cfg += "    '--bind=/etc/pki/consumer',\n"
+        cfg += "    '--bind=/etc/rhsm',\n"
+        cfg += "]\n"
         cfg += "\nconfig_opts['plugin_conf']['bind_mount_enable'] = True\n"
         cfg += "config_opts['plugin_conf']['bind_mount_opts']['dirs'] += [\n"
         cfg += "    ('/etc/pki/entitlement', '/etc/pki/entitlement'),\n"
