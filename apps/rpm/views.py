@@ -1,6 +1,7 @@
 import logging
 import os
 import shutil
+import shlex
 import subprocess
 import tempfile
 
@@ -21,6 +22,28 @@ from .models import (
 from .forms import RpmPackageForm
 
 logger = logging.getLogger(__name__)
+
+
+def _get_writable_temp_base() -> str:
+    """Return a temp base directory that is writable by the current process."""
+    candidates = []
+    configured = (getattr(settings, 'TEMP_DIR', '') or '').strip()
+    if configured:
+        candidates.append(configured)
+    candidates.append(os.path.join(tempfile.gettempdir(), 'flat-manager'))
+
+    errors = []
+    for base in candidates:
+        try:
+            os.makedirs(base, exist_ok=True)
+            probe = tempfile.mkdtemp(prefix='probe-', dir=base)
+            shutil.rmtree(probe, ignore_errors=True)
+            return base
+        except OSError as exc:
+            errors.append(f"{base}: {exc}")
+
+    details = '; '.join(errors) if errors else 'no candidate directories available'
+    raise OSError(f"No writable temp directory for RPM git operations ({details})")
 
 
 # ---------------------------------------------------------------------------
@@ -317,10 +340,14 @@ class RpmScanSpecFilesView(LoginRequiredMixin, View):
             return JsonResponse({'error': 'url is required'}, status=400)
 
         try:
-            os.makedirs(settings.TEMP_DIR, exist_ok=True)
-            with tempfile.TemporaryDirectory(dir=settings.TEMP_DIR) as tmpdir:
+            tmp_base = _get_writable_temp_base()
+            with tempfile.TemporaryDirectory(dir=tmp_base) as tmpdir:
+                git_cmd = (
+                    f"umask 0022 && git clone --depth 1 --branch {shlex.quote(branch)} "
+                    f"-- {shlex.quote(url)} {shlex.quote(tmpdir)}"
+                )
                 result = subprocess.run(
-                    ['git', 'clone', '--depth', '1', '--branch', branch, '--', url, tmpdir],
+                    ['bash', '-c', git_cmd],
                     capture_output=True, text=True, timeout=120,
                 )
                 if result.returncode != 0:
@@ -423,10 +450,14 @@ class RpmPackageCheckAvailableView(LoginRequiredMixin, View):
         branch = (package.git_branch or 'main').strip()
 
         try:
-            with tempfile.TemporaryDirectory(dir=settings.TEMP_DIR) as tmpdir:
+            tmp_base = _get_writable_temp_base()
+            with tempfile.TemporaryDirectory(dir=tmp_base) as tmpdir:
+                git_cmd = (
+                    f"umask 0022 && git clone --depth 1 --branch {shlex.quote(branch)} "
+                    f"-- {shlex.quote(package.git_repo_url)} {shlex.quote(tmpdir)}"
+                )
                 result = subprocess.run(
-                    ['git', 'clone', '--depth', '1', '--branch', branch,
-                     '--', package.git_repo_url, tmpdir],
+                    ['bash', '-c', git_cmd],
                     capture_output=True, text=True, timeout=120,
                 )
                 if result.returncode != 0:
