@@ -28,6 +28,10 @@
 {% endif %}
 
 {% if distributions %}
+<div class="mb-3">
+    <input type="search" id="repoFilter" class="form-control"
+           placeholder="Filter repos by ID or name across all distributions…">
+</div>
 <div class="accordion" id="distributionsAccordion">
     {% for dist in distributions %}
     <div class="accordion-item{% if not dist.is_active %} border-secondary opacity-75{% endif %}">
@@ -163,6 +167,26 @@
 
 {# ---- Repo toggle script ---- #}
 <script>
+// Live filter across all repo rows
+document.getElementById('repoFilter').addEventListener('input', function() {
+    var q = this.value.toLowerCase();
+    document.querySelectorAll('#distributionsAccordion tbody tr').forEach(function(row) {
+        var text = row.textContent.toLowerCase();
+        row.style.display = (!q || text.includes(q)) ? '' : 'none';
+    });
+    // Expand accordions that have visible rows
+    document.querySelectorAll('#distributionsAccordion .accordion-item').forEach(function(item) {
+        if (!q) return;
+        var visible = Array.from(item.querySelectorAll('tbody tr')).some(function(r) {
+            return r.style.display !== 'none';
+        });
+        var collapse = item.querySelector('.accordion-collapse');
+        if (visible) {
+            collapse.classList.add('show');
+        }
+    });
+});
+
 document.querySelectorAll('.repo-toggle-btn').forEach(function(btn) {
     btn.addEventListener('click', function() {
         var url = btn.dataset.url;

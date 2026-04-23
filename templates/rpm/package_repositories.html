@@ -33,6 +33,10 @@
 {% endif %}
 
 {% if dist_repos %}
+<div class="mb-3">
+    <input type="search" id="repoFilter" class="form-control"
+           placeholder="Filter repos by ID or name…">
+</div>
 <div class="accordion" id="reposAccordion">
     {% for item in dist_repos %}
     {% with dist=item.dist repos=item.repos %}
@@ -136,6 +140,26 @@
 {% endif %}
 
 <script>
+// Live filter across all repo rows
+document.getElementById('repoFilter').addEventListener('input', function() {
+    var q = this.value.toLowerCase();
+    document.querySelectorAll('#reposAccordion tbody tr').forEach(function(row) {
+        var text = row.textContent.toLowerCase();
+        row.style.display = (!q || text.includes(q)) ? '' : 'none';
+    });
+    // Expand accordions that have visible rows
+    document.querySelectorAll('#reposAccordion .accordion-item').forEach(function(item) {
+        if (!q) return;
+        var visible = Array.from(item.querySelectorAll('tbody tr')).some(function(r) {
+            return r.style.display !== 'none';
+        });
+        var collapse = item.querySelector('.accordion-collapse');
+        if (visible) {
+            collapse.classList.add('show');
+        }
+    });
+});
+
 document.querySelectorAll('.pkg-repo-toggle-btn').forEach(function(btn) {
     btn.addEventListener('click', function() {
         var url = btn.dataset.url;
