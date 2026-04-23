@@ -12,7 +12,7 @@ from django.views import View
 from django.http import JsonResponse
 from django.urls import reverse_lazy, reverse
 from django.contrib import messages
-from django.shortcuts import get_object_or_404, redirect
+from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
 from .models import (
@@ -220,14 +220,45 @@ class RpmPackageDeleteView(LoginRequiredMixin, DeleteView):
 
 
 class RpmPackageBuildView(LoginRequiredMixin, View):
-    """POST — trigger new builds for a package (one per active distribution)."""
+    """
+    GET  — show the build-configuration page (per-distribution repo checkboxes).
+    POST — create RpmBuild records with the selected repos and queue them.
+    """
+
+    def get(self, request, pk):
+        from apps.rpm.models import RpmRepository
+        package = get_object_or_404(RpmPackage, pk=pk)
+        active_dists = list(
+            package.distributions
+            .filter(is_active=True)
+            .prefetch_related('repositories')
+            .order_by('rhel_version', 'arch')
+        )
+        # Build per-distribution repo lists with their default-enabled state
+        dist_repos = [
+            {
+                'dist': dist,
+                'repos': list(
+                    dist.repositories
+                    .order_by('-enabled', 'source', 'name')
+                ),
+            }
+            for dist in active_dists
+        ]
+        return render(request, 'rpm/build_configure.html', {
+            'package': package,
+            'dist_repos': dist_repos,
+        })
 
     def post(self, request, pk):
         package = get_object_or_404(RpmPackage, pk=pk)
         from apps.rpm.tasks import rpm_build_task
+        from apps.rpm.models import RpmRepository
 
         queued = 0
         for dist in package.distributions.filter(is_active=True):
+            repo_key = f'repos_{dist.pk}'
+            selected_repo_pks = request.POST.getlist(repo_key)
             last = (
                 RpmBuild.objects
                 .filter(package=package, distribution=dist)
@@ -241,6 +272,12 @@ class RpmPackageBuildView(LoginRequiredMixin, View):
                 build_number=next_number,
                 status='pending',
             )
+            if selected_repo_pks:
+                valid_repos = RpmRepository.objects.filter(
+                    pk__in=selected_repo_pks,
+                    distribution=dist,
+                )
+                build.selected_repos.set(valid_repos)
             rpm_build_task.delay(build.pk)
             queued += 1
 
@@ -286,7 +323,7 @@ class RpmBuildLogsApiView(LoginRequiredMixin, View):
 
 
 class RpmBuildRetryView(LoginRequiredMixin, View):
-    """POST — create a new build record and queue it."""
+    """POST — create a new build record (copying repo selection) and queue it."""
 
     def post(self, request, pk):
         old_build = get_object_or_404(RpmBuild, pk=pk)
@@ -304,6 +341,8 @@ class RpmBuildRetryView(LoginRequiredMixin, View):
             build_number=(last.build_number + 1) if last else 1,
             status='pending',
         )
+        # Copy the repo selection from the original build
+        new_build.selected_repos.set(old_build.selected_repos.all())
         rpm_build_task.delay(new_build.pk)
         messages.success(request, "Retry queued.")
         return redirect('rpm:build_detail', pk=new_build.pk)

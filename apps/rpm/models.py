@@ -182,6 +182,12 @@ class RpmBuild(models.Model):
     distribution = models.ForeignKey(RpmDistribution, on_delete=models.CASCADE, related_name='builds')
     build_number = models.IntegerField(default=1)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    selected_repos = models.ManyToManyField(
+        'RpmRepository',
+        blank=True,
+        related_name='builds',
+        help_text='Repositories enabled for this specific build run',
+    )
     version = models.CharField(max_length=255, blank=True, help_text="Version extracted from the SPEC file")
     source_commit = models.CharField(max_length=255, blank=True, help_text="Git commit that was built")
     rpm_files = models.JSONField(default=list, blank=True, help_text="Filenames of built RPMs")
@@ -366,7 +372,7 @@ class RpmRepository(models.Model):
     gpgcheck = models.BooleanField(default=True)
     enabled = models.BooleanField(
         default=False,
-        help_text="Include this repository in mock builds for this distribution",
+        help_text="Pre-selected by default when configuring a new build for this distribution",
     )
     source = models.CharField(max_length=50, choices=SOURCE_CHOICES, default='subscription')
     last_synced = models.DateTimeField(null=True, blank=True)

@@ -89,7 +89,7 @@
                                 <th>Name</th>
                                 <th>Source</th>
                                 <th>URL</th>
-                                <th class="text-center">Enable in builds</th>
+                                <th class="text-center">Default for new builds</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -124,7 +124,8 @@
                                             class="btn btn-sm repo-toggle-btn
                                                    {% if repo.enabled %}btn-success{% else %}btn-outline-secondary{% endif %}"
                                             data-url="{% url 'rpm:repository_toggle' repo.pk %}"
-                                            data-repo-pk="{{ repo.pk }}">
+                                            data-repo-pk="{{ repo.pk }}"
+                                            title="Pre-selected by default in new build configurations">
                                         {% if repo.enabled %}
                                         <i class="bi bi-toggle-on"></i>
                                         {% else %}

@@ -32,6 +32,7 @@ class RpmBuildAdmin(admin.ModelAdmin):
     list_filter = ['status', 'distribution']
     search_fields = ['package__name']
     readonly_fields = ['started_at', 'completed_at', 'celery_task_id']
+    filter_horizontal = ['selected_repos']
 
 
 @admin.register(RpmBuildLog)

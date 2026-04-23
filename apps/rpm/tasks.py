@@ -87,50 +87,38 @@ def _update_package_status(package):
 # Mock helpers
 # ---------------------------------------------------------------------------
 
-def _create_mock_config(base_config, build_id, local_repo_path, cfg_path=None, distribution=None):
+def _create_mock_config(base_config, build, local_repo_path, cfg_path=None):
     """
     Write a temporary Mock config that inherits from the stock RHEL config and
-    adds the distribution's enabled repositories plus our local built-RPMs repo.
+    adds the repos selected for *build* plus the distribution's local built-RPMs
+    repo (when it already has metadata).
 
-    Subscription-managed repos (no URL stored) are added as `enabled=1` override
-    stanzas only — the RHEL base mock config already defines them with their
-    subscription-provided baseurl.  Repos with an explicit URL (EPEL, manual)
-    get a full stanza including the URL.
+    Subscription-managed repos (no stored URL) are emitted as `enabled=1`
+    override stanzas only — the base mock config's RHSM plugin already provides
+    the actual baseurl from the host entitlement certs.
 
-    Falls back to a simple EPEL-only stanza when no repositories are configured
-    in the database yet (e.g. before the first repo sync).
+    Repos with an explicit URL (EPEL, manual) get a full stanza including that
+    URL so that builds work on machines that are not RHSM-subscribed.
     """
+    build_id = build.pk
     cfg = f"include('/etc/mock/{base_config}.cfg')\n\n"
     cfg += f"config_opts['uniqueext'] = 'fmd{build_id}'\n"
 
-    # Gather enabled repos from the distribution DB record (if available).
-    enabled_repos = list(distribution.repositories.filter(enabled=True)) if distribution else []
+    selected_repos = list(build.selected_repos.all())
 
-    if enabled_repos:
-        for repo in enabled_repos:
-            cfg += "\nconfig_opts['yum.conf'] += \"\"\"\n"
-            cfg += f"[{repo.repo_id}]\n"
-            cfg += f"name={repo.name}\n"
-            if repo.baseurl:
-                cfg += f"baseurl={repo.baseurl}\n"
-            if repo.metalink:
-                cfg += f"metalink={repo.metalink}\n"
-            if repo.mirrorlist:
-                cfg += f"mirrorlist={repo.mirrorlist}\n"
-            cfg += "enabled=1\n"
-            cfg += f"gpgcheck={1 if repo.gpgcheck else 0}\n"
-            cfg += "\"\"\"\n"
-    else:
-        # No repos configured yet: fall back to EPEL only as a safe default.
-        cfg += (
-            "\nconfig_opts['yum.conf'] += \"\"\"\n"
-            "[epel]\n"
-            "name=Extra Packages for Enterprise Linux\n"
-            "metalink=https://mirrors.fedoraproject.org/metalink?repo=epel-$releasever&arch=$basearch\n"
-            "enabled=1\n"
-            "gpgcheck=1\n"
-            "\"\"\"\n"
-        )
+    for repo in selected_repos:
+        cfg += "\nconfig_opts['yum.conf'] += \"\"\"\n"
+        cfg += f"[{repo.repo_id}]\n"
+        cfg += f"name={repo.name}\n"
+        if repo.baseurl:
+            cfg += f"baseurl={repo.baseurl}\n"
+        if repo.metalink:
+            cfg += f"metalink={repo.metalink}\n"
+        if repo.mirrorlist:
+            cfg += f"mirrorlist={repo.mirrorlist}\n"
+        cfg += "enabled=1\n"
+        cfg += f"gpgcheck={1 if repo.gpgcheck else 0}\n"
+        cfg += "\"\"\"\n"
 
     repodata = os.path.join(local_repo_path, 'repodata', 'repomd.xml')
     if os.path.exists(repodata):
@@ -438,10 +426,9 @@ def rpm_build_task(self, build_id):
         os.makedirs(dist.repo_path, exist_ok=True)
         mock_cfg_path = _create_mock_config(
             dist.mock_config,
-            build.pk,
+            build,
             dist.repo_path,
             cfg_path=os.path.join(mock_cfg_dir, f'fmd-mock-{build.pk}.cfg'),
-            distribution=dist,
         )
 
         # ---- Build SRPM ----
@@ -543,10 +530,13 @@ def rpm_build_task(self, build_id):
 
 
 # ---------------------------------------------------------------------------
-# Repository discovery constants
+# Repository discovery
 # ---------------------------------------------------------------------------
 
 # EPEL metalink templates keyed by RHEL major version.
+# EPEL repos are always offered alongside subscription repos discovered from
+# the container; they are pre-populated with a public metalink so builds can
+# use them on machines without a full Red Hat subscription.
 _EPEL_REPOS: dict[str, dict] = {
     '7': {
         'repo_id': 'epel',
@@ -574,113 +564,115 @@ _EPEL_REPOS: dict[str, dict] = {
     },
 }
 
-# Well-known RHEL subscription repo ID + name patterns.
-# `default_enabled` determines whether a newly discovered repo starts enabled.
-_KNOWN_RHEL_REPOS: list[dict] = [
-    {
-        'id_template': 'rhel-{ver}-for-{arch}-baseos-rpms',
-        'name_template': 'Red Hat Enterprise Linux {ver} for {arch} - BaseOS',
-        'source': 'subscription', 'default_enabled': True,
-    },
-    {
-        'id_template': 'rhel-{ver}-for-{arch}-appstream-rpms',
-        'name_template': 'Red Hat Enterprise Linux {ver} for {arch} - AppStream',
-        'source': 'subscription', 'default_enabled': True,
-    },
-    {
-        'id_template': 'codeready-builder-for-rhel-{ver}-{arch}-rpms',
-        'name_template': 'Red Hat CodeReady Linux Builder for RHEL {ver} ({arch})',
-        'source': 'subscription', 'default_enabled': False,
-    },
-    {
-        'id_template': 'rhel-{ver}-for-{arch}-supplementary-rpms',
-        'name_template': 'Red Hat Enterprise Linux {ver} for {arch} - Supplementary',
-        'source': 'subscription', 'default_enabled': False,
-    },
-    {
-        'id_template': 'rhel-{ver}-for-{arch}-highavailability-rpms',
-        'name_template': 'Red Hat Enterprise Linux {ver} for {arch} - High Availability',
-        'source': 'subscription', 'default_enabled': False,
-    },
-]
-
-
-def _discover_repos_via_subscription_manager(rhel_version: str, arch: str) -> list[dict] | None:
+def _parse_dnf_repolist_all(output: str) -> list[dict]:
     """
-    Query subscription-manager for the available repos on this host.
-    Returns a list of repo dicts suitable for bulk upsert, or None if
-    subscription-manager is unavailable or not registered.
+    Parse the text output of ``dnf repolist --all`` into a list of
+    ``{'repo_id': ..., 'name': ...}`` dicts.
+
+    The command outputs lines like:
+
+        rhel-10-for-x86_64-baseos-rpms/x86_64   Red Hat ... - BaseOS   enabled
+        !codeready-builder-...                   CodeReady ...         disabled
+
+    A leading ``!`` marks disabled repos in some dnf versions; a trailing
+    ``enabled``/``disabled`` column may or may not be present.
     """
-    try:
-        result = subprocess.run(
-            ['subscription-manager', 'repos', '--list'],
-            capture_output=True, text=True, timeout=30,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return None
-
-    if result.returncode not in (0, 1):
-        return None
-
     repos: list[dict] = []
-    current: dict = {}
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if line.startswith('Repo ID:'):
-            if current.get('repo_id'):
-                repos.append(current)
-            current = {'repo_id': line.split(':', 1)[1].strip()}
-        elif line.startswith('Repo Name:') and current:
-            current['name'] = line.split(':', 1)[1].strip()
-    if current.get('repo_id'):
-        repos.append(current)
-
-    # Keep only repos relevant to this RHEL version and arch.
-    filtered = []
-    for r in repos:
-        repo_id = r['repo_id']
-        if f'rhel-{rhel_version}-for-{arch}' in repo_id or f'-rhel-{rhel_version}-' in repo_id:
-            filtered.append({
-                'repo_id': repo_id,
-                'name': r.get('name', repo_id),
-                'baseurl': '',
-                'source': 'subscription',
-                'default_enabled': (
-                    repo_id.endswith('-baseos-rpms') or repo_id.endswith('-appstream-rpms')
-                ),
-            })
-    return filtered or None
-
-
-def _get_known_rhel_repos(rhel_version: str, arch: str) -> list[dict]:
-    """Return hardcoded well-known repo entries for a RHEL version/arch (fallback)."""
-    repos = []
-    for tmpl in _KNOWN_RHEL_REPOS:
-        repos.append({
-            'repo_id': tmpl['id_template'].format(ver=rhel_version, arch=arch),
-            'name': tmpl['name_template'].format(ver=rhel_version, arch=arch),
-            'baseurl': '',
-            'source': tmpl['source'],
-            'default_enabled': tmpl['default_enabled'],
-        })
+    for line in output.splitlines():
+        stripped = line.strip().lstrip('!')
+        # Skip blank lines, the header row, and dnf metadata lines
+        if (
+            not stripped
+            or stripped.startswith('Last ')
+            or stripped.lower().startswith('repo id')
+            or stripped.startswith('Updating ')
+            or stripped.startswith('Red Hat Subscription')
+        ):
+            continue
+        parts = stripped.split()
+        if len(parts) < 2:
+            continue
+        repo_id = parts[0].split('/')[0]  # strip /arch suffix if present
+        last = parts[-1]
+        if last in ('enabled', 'disabled'):
+            name = ' '.join(parts[1:-1])
+        else:
+            name = ' '.join(parts[1:])
+        repos.append({'repo_id': repo_id, 'name': name or repo_id})
     return repos
+
+
+def _discover_repos_via_container(rhel_version: str, arch: str) -> list[dict] | None:
+    """
+    Start a UBI container matching *rhel_version*, bind-mount the host
+    RHSM entitlement certificates inside it, run ``dnf repolist --all``,
+    and return the detected repos as a list of dicts suitable for upsert
+    into ``RpmRepository``.
+
+    Returns ``None`` when podman is unavailable, the container image cannot
+    be pulled, or no repos are found (e.g. the host has no valid RHSM certs).
+    """
+    image = f'registry.access.redhat.com/ubi{rhel_version}/ubi:latest'
+    cmd = [
+        'podman', 'run', '--rm', '--quiet',
+        '-v', '/etc/rhsm:/etc/rhsm:ro',
+        '-v', '/etc/pki/entitlement:/etc/pki/entitlement:ro',
+        '-v', '/etc/pki/consumer:/etc/pki/consumer:ro',
+        image,
+        'bash', '-c', 'dnf repolist --all 2>/dev/null',
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning("Container repo discovery failed for RHEL %s: %s", rhel_version, exc)
+        return None
+
+    # returncode 1 can mean "no repos found" — still try to parse
+    if result.returncode not in (0, 1):
+        logger.warning(
+            "Container repo discovery: podman exited %d for RHEL %s",
+            result.returncode, rhel_version,
+        )
+        return None
+
+    parsed = _parse_dnf_repolist_all(result.stdout)
+    if not parsed:
+        return None
+
+    return [
+        {
+            'repo_id': r['repo_id'],
+            'name': r['name'],
+            'baseurl': '',
+            'source': 'subscription',
+            'default_enabled': (
+                r['repo_id'].endswith('-baseos-rpms')
+                or r['repo_id'].endswith('-appstream-rpms')
+            ),
+        }
+        for r in parsed
+    ]
 
 
 def sync_rpm_repositories_for_distribution(dist) -> tuple[int, int]:
     """
     Discover and upsert RpmRepository records for *dist*.
 
-    Tries subscription-manager first; falls back to known RHEL repo patterns.
-    Always adds the relevant EPEL repo.  The user's `enabled` flag is preserved
-    on existing records; only metadata (name, URLs) is updated.
+    Subscription repos are discovered by starting a UBI container for the
+    distribution's RHEL version with the host's RHSM entitlement certs
+    bind-mounted and running ``dnf repolist --all`` inside it.  EPEL is
+    always added as an extra option (disabled by default).
+
+    The user's ``enabled`` (default) flag is preserved on existing records;
+    only metadata (name, URLs) is updated on re-sync.
 
     Returns ``(created_count, updated_count)``.
     """
     from apps.rpm.models import RpmRepository
 
     repos_data: list[dict] = (
-        _discover_repos_via_subscription_manager(dist.rhel_version, dist.arch)
-        or _get_known_rhel_repos(dist.rhel_version, dist.arch)
+        _discover_repos_via_container(dist.rhel_version, dist.arch)
+        or []
     )
 
     epel = _EPEL_REPOS.get(dist.rhel_version)

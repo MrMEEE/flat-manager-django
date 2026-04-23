@@ -102,6 +102,20 @@
                         <span class="badge bg-secondary">{{ build.distribution.display_name }}</span>
                     </dd>
 
+                    <dt class="col-sm-5">Repositories</dt>
+                    <dd class="col-sm-7">
+                        {% with repos=build.selected_repos.all %}
+                        {% if repos %}
+                            {% for repo in repos %}
+                            <span class="badge {% if repo.source == 'subscription' %}bg-danger{% elif repo.source == 'epel' %}bg-info text-dark{% else %}bg-secondary{% endif %} me-1"
+                                  title="{{ repo.repo_id }}">{{ repo.name|truncatechars:30 }}</span>
+                            {% endfor %}
+                        {% else %}
+                            <span class="text-muted fst-italic">None selected</span>
+                        {% endif %}
+                        {% endwith %}
+                    </dd>
+
                     <dt class="col-sm-5">Version</dt>
                     <dd class="col-sm-7">{{ build.version|default:"—" }}</dd>
 

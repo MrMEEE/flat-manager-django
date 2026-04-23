@@ -1,0 +1,152 @@
+{% extends 'base.html' %}
+
+{% block title %}Configure Build — {{ package.name }} - Flat Manager{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'rpm:package_list' %}">RPM Packages</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'rpm:package_detail' package.pk %}">{{ package.name }}</a></li>
+        <li class="breadcrumb-item active">Configure Build</li>
+    </ol>
+</nav>
+
+<h2 class="mb-1"><i class="bi bi-hammer"></i> Configure Build</h2>
+<p class="text-muted mb-4">
+    Select which repositories to enable in the Mock environment for each
+    distribution.  Only repos that have been synced from the container will
+    appear here.
+</p>
+
+{% if not dist_repos %}
+<div class="alert alert-warning">
+    <i class="bi bi-exclamation-triangle-fill me-2"></i>
+    No active distributions are configured for <strong>{{ package.name }}</strong>.
+    Add one on the <a href="{% url 'rpm:package_edit' package.pk %}">Edit package</a> page
+    or activate a distribution on the
+    <a href="{% url 'rpm:distribution_list' %}">Distributions</a> page.
+</div>
+{% else %}
+
+<form method="post" action="{% url 'rpm:package_build' package.pk %}">
+    {% csrf_token %}
+
+    {% for entry in dist_repos %}
+    {% with dist=entry.dist repos=entry.repos %}
+    <div class="card mb-3">
+        <div class="card-header d-flex align-items-center gap-2">
+            <i class="bi bi-hdd-rack"></i>
+            <span class="fw-semibold">{{ dist.display_name }}</span>
+            <code class="text-muted small">{{ dist.mock_config }}</code>
+            {% if not repos %}
+            <span class="badge bg-warning text-dark ms-auto">No repos synced</span>
+            {% else %}
+            <span class="badge bg-secondary ms-auto">{{ repos|length }} available</span>
+            {% endif %}
+        </div>
+
+        {% if repos %}
+        <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0 align-middle small">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width:3rem" class="text-center">
+                            <input type="checkbox" class="form-check-input select-all-{{ dist.pk }}"
+                                   title="Select / deselect all"
+                                   onchange="toggleAll(this, '{{ dist.pk }}')">
+                        </th>
+                        <th>Repo ID</th>
+                        <th>Name</th>
+                        <th>Source</th>
+                        <th>URL</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for repo in repos %}
+                    <tr>
+                        <td class="text-center">
+                            <input type="checkbox"
+                                   class="form-check-input repo-check-{{ dist.pk }}"
+                                   name="repos_{{ dist.pk }}"
+                                   value="{{ repo.pk }}"
+                                   {% if repo.enabled %}checked{% endif %}>
+                        </td>
+                        <td><code>{{ repo.repo_id }}</code></td>
+                        <td>{{ repo.name }}</td>
+                        <td>
+                            {% if repo.source == 'subscription' %}
+                            <span class="badge bg-danger">RHSM</span>
+                            {% elif repo.source == 'epel' %}
+                            <span class="badge bg-info text-dark">EPEL</span>
+                            {% else %}
+                            <span class="badge bg-secondary">Manual</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-muted fst-italic">
+                            {% if repo.baseurl %}{{ repo.baseurl|truncatechars:50 }}
+                            {% elif repo.metalink %}metalink
+                            {% elif repo.mirrorlist %}mirrorlist
+                            {% else %}subscription
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="card-body text-muted">
+            <i class="bi bi-database-slash me-1"></i>
+            No repositories found for this distribution.
+            <a href="{% url 'rpm:distribution_sync_repos' dist.pk %}"
+               class="btn btn-sm btn-outline-primary ms-2">
+                <i class="bi bi-arrow-repeat"></i> Sync repos now
+            </a>
+        </div>
+        {% endif %}
+    </div>
+    {% endwith %}
+    {% endfor %}
+
+    <div class="d-flex gap-2 mt-3">
+        <button type="submit" class="btn btn-success">
+            <i class="bi bi-hammer"></i> Queue Build{{ dist_repos|length|pluralize }}
+        </button>
+        <a href="{% url 'rpm:package_detail' package.pk %}" class="btn btn-outline-secondary">
+            <i class="bi bi-x-circle"></i> Cancel
+        </a>
+    </div>
+</form>
+{% endif %}
+
+<script>
+function toggleAll(masterCheckbox, distPk) {
+    document.querySelectorAll('.repo-check-' + distPk).forEach(function(cb) {
+        cb.checked = masterCheckbox.checked;
+    });
+}
+// Keep "select all" checkbox in sync with individual checkboxes
+document.querySelectorAll('[class^="repo-check-"]').forEach(function(cb) {
+    cb.addEventListener('change', function() {
+        var distPk = cb.className.replace('form-check-input repo-check-', '').trim();
+        var all = document.querySelectorAll('.repo-check-' + distPk);
+        var checked = document.querySelectorAll('.repo-check-' + distPk + ':checked');
+        var master = document.querySelector('.select-all-' + distPk);
+        if (master) {
+            master.checked = (checked.length === all.length);
+            master.indeterminate = (checked.length > 0 && checked.length < all.length);
+        }
+    });
+});
+// Initialise indeterminate state on page load
+document.querySelectorAll('[class*="select-all-"]').forEach(function(master) {
+    var distPk = master.className.replace('form-check-input select-all-', '').trim();
+    var all = document.querySelectorAll('.repo-check-' + distPk);
+    var checked = document.querySelectorAll('.repo-check-' + distPk + ':checked');
+    if (all.length > 0) {
+        master.checked = (checked.length === all.length);
+        master.indeterminate = (checked.length > 0 && checked.length < all.length);
+    }
+});
+</script>
+{% endblock %}
