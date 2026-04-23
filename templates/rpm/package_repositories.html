@@ -1,0 +1,170 @@
+{% extends 'base.html' %}
+
+{% block title %}Repositories — {{ package.name }} - Flat Manager{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'rpm:package_list' %}">RPM Packages</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'rpm:package_detail' package.pk %}">{{ package.name }}</a></li>
+        <li class="breadcrumb-item active">Repositories</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-database"></i> Repositories — {{ package.name }}</h2>
+    <a href="{% url 'rpm:package_detail' package.pk %}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back to Package
+    </a>
+</div>
+
+<p class="text-muted">
+    Toggle which repositories are enabled by default when building <strong>{{ package.name }}</strong>.
+    These settings are per-package and do not affect other packages.
+</p>
+
+{% if messages %}
+    {% for message in messages %}
+    <div class="alert alert-{{ message.tags }} alert-dismissible fade show">
+        {{ message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endfor %}
+{% endif %}
+
+{% if dist_repos %}
+<div class="accordion" id="reposAccordion">
+    {% for item in dist_repos %}
+    {% with dist=item.dist repos=item.repos %}
+    <div class="accordion-item">
+        <h2 class="accordion-header">
+            <button class="accordion-button {% if not forloop.first %}collapsed{% endif %}" type="button"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#dist-{{ dist.pk }}"
+                    aria-expanded="{% if forloop.first %}true{% else %}false{% endif %}">
+                <span class="fw-semibold me-2">{{ dist.display_name }}</span>
+                <code class="text-muted me-2 small">{{ dist.mock_config }}</code>
+                <span class="badge bg-success me-2">Active</span>
+            </button>
+        </h2>
+        <div id="dist-{{ dist.pk }}"
+             class="accordion-collapse collapse {% if forloop.first %}show{% endif %}">
+            <div class="accordion-body p-0">
+                {% if repos %}
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover mb-0 align-middle small">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Repo ID</th>
+                                <th>Name</th>
+                                <th>Source</th>
+                                <th>URL</th>
+                                <th class="text-center">Enabled for this package</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for repo in repos %}
+                            {% with is_enabled=repo.pk|stringformat:"s" %}
+                            <tr id="pkg-repo-row-{{ repo.pk }}"
+                                class="{% if repo.pk not in default_repo_pks %}text-muted{% endif %}">
+                                <td><code>{{ repo.repo_id }}</code></td>
+                                <td>{{ repo.name }}</td>
+                                <td>
+                                    {% if repo.source == 'subscription' %}
+                                    <span class="badge bg-danger">RHSM</span>
+                                    {% elif repo.source == 'epel' %}
+                                    <span class="badge bg-info text-dark">EPEL</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">Manual</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if repo.baseurl %}
+                                    <span class="text-truncate d-inline-block" style="max-width:20rem"
+                                          title="{{ repo.baseurl }}">{{ repo.baseurl }}</span>
+                                    {% elif repo.metalink %}
+                                    <span class="text-muted fst-italic">metalink</span>
+                                    {% elif repo.mirrorlist %}
+                                    <span class="text-muted fst-italic">mirrorlist</span>
+                                    {% else %}
+                                    <span class="text-muted fst-italic">subscription</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    <button type="button"
+                                            class="btn btn-sm pkg-repo-toggle-btn
+                                                   {% if repo.pk in default_repo_pks %}btn-success{% else %}btn-outline-secondary{% endif %}"
+                                            data-url="{% url 'rpm:package_repository_toggle' package.pk repo.pk %}"
+                                            data-repo-pk="{{ repo.pk }}"
+                                            title="Toggle for {{ package.name }} only">
+                                        {% if repo.pk in default_repo_pks %}
+                                        <i class="bi bi-toggle-on"></i>
+                                        {% else %}
+                                        <i class="bi bi-toggle-off"></i>
+                                        {% endif %}
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endwith %}
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center text-muted py-3">
+                    <i class="bi bi-database-slash"></i>
+                    No repositories found for this distribution —
+                    <a href="{% url 'rpm:distribution_list' %}">sync repos</a> first.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endwith %}
+    {% endfor %}
+</div>
+{% else %}
+<div class="text-center py-5 text-muted card">
+    <div class="card-body">
+        <i class="bi bi-database-slash" style="font-size:3rem"></i>
+        <p class="mt-3">No active distributions assigned to this package.</p>
+        <a href="{% url 'rpm:package_edit' package.pk %}" class="btn btn-outline-primary mt-2">
+            <i class="bi bi-pencil"></i> Edit package
+        </a>
+    </div>
+</div>
+{% endif %}
+
+<script>
+document.querySelectorAll('.pkg-repo-toggle-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        var url = btn.dataset.url;
+        var repoPk = btn.dataset.repoPk;
+        fetch(url, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}',
+                'Content-Type': 'application/json',
+            },
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.ok) { return; }
+            var row = document.getElementById('pkg-repo-row-' + repoPk);
+            if (data.enabled) {
+                btn.classList.remove('btn-outline-secondary');
+                btn.classList.add('btn-success');
+                btn.innerHTML = '<i class="bi bi-toggle-on"></i>';
+                row.classList.remove('text-muted');
+            } else {
+                btn.classList.remove('btn-success');
+                btn.classList.add('btn-outline-secondary');
+                btn.innerHTML = '<i class="bi bi-toggle-off"></i>';
+                row.classList.add('text-muted');
+            }
+        })
+        .catch(function(err) { console.error('Repo toggle error:', err); });
+    });
+});
+</script>
+{% endblock %}

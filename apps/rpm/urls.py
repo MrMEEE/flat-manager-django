@@ -11,6 +11,8 @@ urlpatterns = [
     path('rpms/<int:pk>/edit/', views.RpmPackageUpdateView.as_view(), name='package_edit'),
     path('rpms/<int:pk>/delete/', views.RpmPackageDeleteView.as_view(), name='package_delete'),
     path('rpms/<int:pk>/build/', views.RpmPackageBuildView.as_view(), name='package_build'),
+    path('rpms/<int:pk>/repositories/', views.RpmPackageRepositoriesView.as_view(), name='package_repositories'),
+    path('rpms/<int:pk>/repositories/<int:repo_pk>/toggle/', views.RpmPackageRepositoryToggleView.as_view(), name='package_repository_toggle'),
     path('rpms/<int:pk>/check-upstream/', views.RpmPackageCheckUpstreamView.as_view(), name='package_check_upstream'),
     path('rpms/<int:pk>/check-available/', views.RpmPackageCheckAvailableView.as_view(), name='package_check_available'),
 

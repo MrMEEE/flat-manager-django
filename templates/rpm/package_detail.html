@@ -25,7 +25,7 @@
                 <i class="bi bi-hammer"></i> Build Now
             </button>
         </form>
-        <a href="{% url 'rpm:distribution_list' %}" class="btn btn-outline-info">
+        <a href="{% url 'rpm:package_repositories' package.pk %}" class="btn btn-outline-info">
             <i class="bi bi-database"></i> Repositories
         </a>
         <a href="{% url 'rpm:package_edit' package.pk %}" class="btn btn-outline-secondary">

@@ -241,7 +241,7 @@ class RpmPackageBuildView(LoginRequiredMixin, View):
                 build_number=next_number,
                 status='pending',
             )
-            build.selected_repos.set(dist.repositories.filter(enabled=True))
+            build.selected_repos.set(package.default_repos.filter(distribution=dist))
             rpm_build_task.delay(build.pk)
             queued += 1
 
@@ -363,6 +363,53 @@ class RpmDistributionListView(LoginRequiredMixin, ListView):
             )
             .order_by('rhel_version', 'arch')
         )
+
+
+class RpmPackageRepositoriesView(LoginRequiredMixin, View):
+    """GET — per-package repository configuration page.
+
+    Shows only the distributions assigned to this package (and active).
+    Toggle state reflects package.default_repos, not the global repo.enabled flag.
+    """
+
+    def get(self, request, pk):
+        package = get_object_or_404(RpmPackage, pk=pk)
+        from apps.rpm.models import RpmRepository
+        active_dists = list(
+            package.distributions
+            .filter(is_active=True)
+            .prefetch_related('repositories')
+            .order_by('rhel_version', 'arch')
+        )
+        default_repo_pks = set(package.default_repos.values_list('pk', flat=True))
+        dist_repos = [
+            {
+                'dist': dist,
+                'repos': list(dist.repositories.order_by('-source', 'name')),
+            }
+            for dist in active_dists
+        ]
+        return render(request, 'rpm/package_repositories.html', {
+            'package': package,
+            'dist_repos': dist_repos,
+            'default_repo_pks': default_repo_pks,
+        })
+
+
+class RpmPackageRepositoryToggleView(LoginRequiredMixin, View):
+    """POST (AJAX) — toggle a repo in/out of a package's default_repos."""
+
+    def post(self, request, pk, repo_pk):
+        from apps.rpm.models import RpmRepository
+        package = get_object_or_404(RpmPackage, pk=pk)
+        repo = get_object_or_404(RpmRepository, pk=repo_pk)
+        if package.default_repos.filter(pk=repo_pk).exists():
+            package.default_repos.remove(repo)
+            enabled = False
+        else:
+            package.default_repos.add(repo)
+            enabled = True
+        return JsonResponse({'ok': True, 'enabled': enabled})
 
 
 class RpmPackageSigningKeyView(LoginRequiredMixin, View):

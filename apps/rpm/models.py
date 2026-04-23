@@ -74,6 +74,12 @@ class RpmPackage(models.Model):
         related_name='packages',
         help_text="Distributions to build for",
     )
+    default_repos = models.ManyToManyField(
+        'RpmRepository',
+        blank=True,
+        related_name='default_for_packages',
+        help_text="Repositories pre-selected by default when building this package",
+    )
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='idle')
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
