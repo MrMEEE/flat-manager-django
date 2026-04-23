@@ -13,6 +13,7 @@ EnvironmentFile=/etc/flat-manager/flat-manager.env
 Environment=VIRTUAL_ENV=/opt/flat-manager/venv
 Environment=PATH=/opt/flat-manager/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 Environment=CELERY_OPS_WORKER_CONCURRENCY=4
+ExecStartPre=/usr/bin/podman system migrate
 ExecStart=/opt/flat-manager/venv/bin/celery \
     -A config worker \
     --queues=ops \

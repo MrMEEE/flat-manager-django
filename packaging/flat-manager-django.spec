@@ -513,6 +513,16 @@ getent passwd nginx >/dev/null 2>&1 && usermod -aG %{app_group} nginx || :
 # mock-based RPM builds without root privileges.
 getent group mock >/dev/null 2>&1 && usermod -aG mock %{app_user} || :
 
+# Ensure the flat-manager user has subuid/subgid ranges so that rootless
+# podman (used for container-based RPM repo discovery) can create user
+# namespaces.  Only adds the range if it is not already present.
+if ! grep -q '^%{app_user}:' /etc/subuid 2>/dev/null; then
+    usermod --add-subuids 100000-165535 %{app_user} || :
+fi
+if ! grep -q '^%{app_user}:' /etc/subgid 2>/dev/null; then
+    usermod --add-subgids 100000-165535 %{app_user} || :
+fi
+
 # Label /var/run/flat-manager/ so nginx (httpd_t) can connect to the UNIX socket.
 # Without this SELinux denies httpd_t write access to var_run_t sock_file.
 # Note: use /var/run (not /run) — semanage requires the canonical path.
