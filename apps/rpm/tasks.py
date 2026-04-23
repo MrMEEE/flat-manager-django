@@ -91,10 +91,28 @@ def _create_mock_config(base_config, build_id, local_repo_path, cfg_path=None):
     """
     Write a temporary Mock config that inherits from the stock RHEL config and
     adds our local built-RPMs repo as an extra yum source (if the repo metadata
-    already exists so that the createrepo has been run at least once before).
+    already exists so that the createrepo has been run at least once before),
+    and enables EPEL for external build dependencies.
     """
     cfg = f"include('/etc/mock/{base_config}.cfg')\n\n"
     cfg += f"config_opts['uniqueext'] = 'fmd{build_id}'\n"
+    cfg += (
+        "\nconfig_opts['yum.conf'] += \"\"\"\n"
+        "[epel]\n"
+        "name=Extra Packages for Enterprise Linux\n"
+        "metalink=https://mirrors.fedoraproject.org/metalink?repo=epel-$releasever&arch=$basearch\n"
+        "enabled=1\n"
+        "gpgcheck=1\n"
+        "\"\"\"\n"
+    )
+    cfg += (
+        "\nconfig_opts['yum.conf'] += \"\"\"\n"
+        "[codeready-builder-for-rhel-$releasever-$basearch-rpms]\n"
+        "name=CodeReady Linux Builder\n"
+        "enabled=1\n"
+        "gpgcheck=1\n"
+        "\"\"\"\n"
+    )
 
     repodata = os.path.join(local_repo_path, 'repodata', 'repomd.xml')
     if os.path.exists(repodata):
