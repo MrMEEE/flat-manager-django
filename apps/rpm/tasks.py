@@ -502,6 +502,7 @@ def rpm_build_task(self, build_id):
     finally:
         # Keep build_root artifacts for debugging/auditability.
         # They live under RPM_BUILD_PATH and are unique per build.
+        pass
 
 
 # ---------------------------------------------------------------------------
