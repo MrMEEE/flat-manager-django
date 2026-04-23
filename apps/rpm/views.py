@@ -220,45 +220,14 @@ class RpmPackageDeleteView(LoginRequiredMixin, DeleteView):
 
 
 class RpmPackageBuildView(LoginRequiredMixin, View):
-    """
-    GET  — show the build-configuration page (per-distribution repo checkboxes).
-    POST — create RpmBuild records with the selected repos and queue them.
-    """
-
-    def get(self, request, pk):
-        from apps.rpm.models import RpmRepository
-        package = get_object_or_404(RpmPackage, pk=pk)
-        active_dists = list(
-            package.distributions
-            .filter(is_active=True)
-            .prefetch_related('repositories')
-            .order_by('rhel_version', 'arch')
-        )
-        # Build per-distribution repo lists with their default-enabled state
-        dist_repos = [
-            {
-                'dist': dist,
-                'repos': list(
-                    dist.repositories
-                    .order_by('-enabled', 'source', 'name')
-                ),
-            }
-            for dist in active_dists
-        ]
-        return render(request, 'rpm/build_configure.html', {
-            'package': package,
-            'dist_repos': dist_repos,
-        })
+    """POST — trigger builds immediately using each distribution's default-enabled repos."""
 
     def post(self, request, pk):
         package = get_object_or_404(RpmPackage, pk=pk)
         from apps.rpm.tasks import rpm_build_task
-        from apps.rpm.models import RpmRepository
 
         queued = 0
         for dist in package.distributions.filter(is_active=True):
-            repo_key = f'repos_{dist.pk}'
-            selected_repo_pks = request.POST.getlist(repo_key)
             last = (
                 RpmBuild.objects
                 .filter(package=package, distribution=dist)
@@ -272,12 +241,7 @@ class RpmPackageBuildView(LoginRequiredMixin, View):
                 build_number=next_number,
                 status='pending',
             )
-            if selected_repo_pks:
-                valid_repos = RpmRepository.objects.filter(
-                    pk__in=selected_repo_pks,
-                    distribution=dist,
-                )
-                build.selected_repos.set(valid_repos)
+            build.selected_repos.set(dist.repositories.filter(enabled=True))
             rpm_build_task.delay(build.pk)
             queued += 1
 
@@ -668,21 +632,17 @@ class RpmDistributionToggleView(LoginRequiredMixin, View):
 
 
 class RpmDistributionSyncReposView(LoginRequiredMixin, View):
-    """POST — (re)sync the repository list for a single distribution."""
+    """POST — queue an async repo sync for a single distribution."""
 
     def post(self, request, pk):
-        from apps.rpm.models import RpmRepository
-        from apps.rpm.tasks import sync_rpm_repositories_for_distribution
+        from apps.rpm.tasks import sync_distribution_repos_task
         dist = get_object_or_404(RpmDistribution, pk=pk)
-        try:
-            created, updated = sync_rpm_repositories_for_distribution(dist)
-            messages.success(
-                request,
-                f"Repos synced for '{dist.display_name}': {created} added, {updated} updated.",
-            )
-        except Exception as exc:
-            logger.exception("Repo sync failed for distribution %s", dist.pk)
-            messages.error(request, f"Repo sync failed: {exc}")
+        sync_distribution_repos_task.delay(dist.pk)
+        messages.info(
+            request,
+            f"Repo sync queued for '{dist.display_name}'. "
+            "Results will be available after the task completes.",
+        )
         return redirect('rpm:distribution_list')
 
 

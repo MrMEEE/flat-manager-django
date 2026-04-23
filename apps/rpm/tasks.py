@@ -630,13 +630,19 @@ def _discover_repos_via_container(rhel_version: str, arch: str) -> list[dict] | 
     # returncode 1 can mean "no repos found" — still try to parse
     if result.returncode not in (0, 1):
         logger.warning(
-            "Container repo discovery: podman exited %d for RHEL %s",
+            "Container repo discovery: podman exited %d for RHEL %s\nstdout: %s\nstderr: %s",
             result.returncode, rhel_version,
+            result.stdout[:500], result.stderr[:500],
         )
         return None
 
     parsed = _parse_dnf_repolist_all(result.stdout)
     if not parsed:
+        logger.warning(
+            "Container repo discovery: dnf repolist produced no usable output for RHEL %s "
+            "(stdout=%r, stderr=%r)",
+            rhel_version, result.stdout[:300], result.stderr[:300],
+        )
         return None
 
     return [
@@ -718,6 +724,23 @@ def sync_rpm_repositories_for_distribution(dist) -> tuple[int, int]:
     dist.repos_synced_at = now
     dist.save(update_fields=['repos_synced_at'])
     return created_count, updated_count
+
+
+@shared_task(name='rpm.sync_distribution_repos', queue='ops')
+def sync_distribution_repos_task(dist_pk: int):
+    """
+    Queue-able task: sync repos for a single distribution by PK.
+    Called from the UI when the user clicks 'Sync repos'.
+    """
+    from apps.rpm.models import RpmDistribution
+    try:
+        dist = RpmDistribution.objects.get(pk=dist_pk)
+    except RpmDistribution.DoesNotExist:
+        logger.warning("sync_distribution_repos_task: dist %s not found", dist_pk)
+        return
+    created, updated = sync_rpm_repositories_for_distribution(dist)
+    logger.info("Synced repos for %s: +%d created, %d updated", dist.name, created, updated)
+    return {'created': created, 'updated': updated}
 
 
 @shared_task(name='rpm.sync_rpm_repositories', queue='ops')

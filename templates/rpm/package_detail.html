@@ -19,8 +19,14 @@
         </span>
     </h2>
     <div class="d-flex gap-2">
-        <a href="{% url 'rpm:package_build' package.pk %}" class="btn btn-success">
-            <i class="bi bi-hammer"></i> Build Now
+        <form method="post" action="{% url 'rpm:package_build' package.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-success">
+                <i class="bi bi-hammer"></i> Build Now
+            </button>
+        </form>
+        <a href="{% url 'rpm:distribution_list' %}" class="btn btn-outline-info">
+            <i class="bi bi-database"></i> Repositories
         </a>
         <a href="{% url 'rpm:package_edit' package.pk %}" class="btn btn-outline-secondary">
             <i class="bi bi-pencil"></i> Edit
