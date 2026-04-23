@@ -46,6 +46,61 @@ def _get_writable_temp_base() -> str:
     raise OSError(f"No writable temp directory for RPM git operations ({details})")
 
 
+def _get_rpm_build_base_path() -> str:
+    return (getattr(settings, 'RPM_BUILD_PATH', '') or os.path.join(settings.FLATPAK_BUILD_PATH, 'rpms'))
+
+
+def _decode_mountinfo_path(value: str) -> str:
+    return (
+        value.replace('\\040', ' ')
+        .replace('\\011', '\t')
+        .replace('\\012', '\n')
+        .replace('\\134', '\\')
+    )
+
+
+def _get_mount_entry(path: str):
+    """Return the longest matching mount entry from /proc/self/mountinfo for path."""
+    target = os.path.abspath(path)
+    best = None
+    best_len = -1
+
+    try:
+        with open('/proc/self/mountinfo', 'r', encoding='utf-8', errors='replace') as fh:
+            for line in fh:
+                left, _, _right = line.partition(' - ')
+                parts = left.split()
+                if len(parts) < 6:
+                    continue
+                mount_point = _decode_mountinfo_path(parts[4])
+                mount_opts = parts[5].split(',')
+                prefix = mount_point.rstrip('/') + '/'
+                if target == mount_point or target.startswith(prefix):
+                    if len(mount_point) > best_len:
+                        best = {
+                            'mount_point': mount_point,
+                            'options': mount_opts,
+                        }
+                        best_len = len(mount_point)
+    except OSError:
+        return None
+
+    return best
+
+
+def _get_rpm_build_path_warning():
+    build_path = _get_rpm_build_base_path()
+    mount_entry = _get_mount_entry(build_path)
+    if not mount_entry:
+        return None
+    if 'nosuid' not in mount_entry['options']:
+        return None
+    return {
+        'build_path': build_path,
+        'mount_point': mount_entry['mount_point'],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Package views
 # ---------------------------------------------------------------------------
@@ -68,6 +123,7 @@ class RpmPackageListView(LoginRequiredMixin, ListView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx['mock_installed'] = bool(shutil.which('mock'))
+        ctx['rpm_build_path_warning'] = _get_rpm_build_path_warning()
         return ctx
 
 
