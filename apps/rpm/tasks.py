@@ -1,6 +1,7 @@
 import os
 import re
 import glob
+import shlex
 import shutil
 import tempfile
 import subprocess
@@ -86,7 +87,7 @@ def _update_package_status(package):
 # Mock helpers
 # ---------------------------------------------------------------------------
 
-def _create_mock_config(base_config, build_id, local_repo_path):
+def _create_mock_config(base_config, build_id, local_repo_path, cfg_path=None):
     """
     Write a temporary Mock config that inherits from the stock RHEL config and
     adds our local built-RPMs repo as an extra yum source (if the repo metadata
@@ -108,10 +109,42 @@ def _create_mock_config(base_config, build_id, local_repo_path):
             "\"\"\"\n"
         )
 
-    cfg_path = f'/tmp/fmd-mock-{build_id}.cfg'
+    if cfg_path is None:
+        cfg_root = tempfile.gettempdir()
+        cfg_path = os.path.join(cfg_root, f'fmd-mock-{build_id}.cfg')
+    os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
     with open(cfg_path, 'w') as fh:
         fh.write(cfg)
     return cfg_path
+
+
+def _ensure_spec_release_matches_build_number(spec_path: str, build_number: int) -> bool:
+    """Set SPEC Release field to '<build_number>%{?dist}'."""
+    try:
+        with open(spec_path, 'r', encoding='utf-8', errors='replace') as fh:
+            lines = fh.readlines()
+
+        replaced = False
+        release_line = f"Release:        {build_number}%{{?dist}}\n"
+        for idx, line in enumerate(lines):
+            if re.match(r'^\s*Release\s*:', line, re.IGNORECASE):
+                lines[idx] = release_line
+                replaced = True
+                break
+
+        if not replaced:
+            insert_at = 0
+            for idx, line in enumerate(lines):
+                if re.match(r'^\s*Version\s*:', line, re.IGNORECASE):
+                    insert_at = idx + 1
+                    break
+            lines.insert(insert_at, release_line)
+
+        with open(spec_path, 'w', encoding='utf-8') as fh:
+            fh.writelines(lines)
+        return True
+    except Exception:
+        return False
 
 
 def _run_mock(cfg_path, extra_args, build):
@@ -315,25 +348,31 @@ def rpm_build_task(self, build_id):
     work_dir = None
     result_dir = None
     mock_cfg_path = None
+    build_root = None
 
     try:
-        work_dir = tempfile.mkdtemp(prefix=f'fmd-rpm-{build.pk}-')
-        result_dir = tempfile.mkdtemp(prefix=f'fmd-rpm-result-{build.pk}-')
+        rpm_build_base = getattr(settings, 'RPM_BUILD_PATH', '') or os.path.join(settings.FLATPAK_BUILD_PATH, 'rpms')
+        os.makedirs(rpm_build_base, exist_ok=True)
+        build_root = tempfile.mkdtemp(prefix=f'fmd-rpm-{build.pk}-', dir=rpm_build_base)
+        os.chmod(build_root, 0o700)
+
+        work_dir = os.path.join(build_root, 'sources')
+        result_dir = os.path.join(build_root, 'result')
+        mock_cfg_dir = os.path.join(build_root, 'mock')
+        os.makedirs(work_dir, exist_ok=True)
+        os.makedirs(result_dir, exist_ok=True)
+        os.makedirs(mock_cfg_dir, exist_ok=True)
 
         # ---- Clone ----
         log_rpm_build(
             build, 'info',
             f"Cloning {build.package.git_repo_url} @ {build.package.git_branch}",
         )
-        r = subprocess.run(
-            [
-                'git', 'clone', '--depth=1',
-                '--branch', build.package.git_branch,
-                build.package.git_repo_url,
-                work_dir,
-            ],
-            capture_output=True, text=True, timeout=300,
+        git_cmd = (
+            f"umask 0022 && git clone --depth=1 --branch {shlex.quote(build.package.git_branch)} "
+            f"{shlex.quote(build.package.git_repo_url)} {shlex.quote(work_dir)}"
         )
+        r = subprocess.run(['bash', '-c', git_cmd], capture_output=True, text=True, timeout=300)
         if r.returncode != 0:
             raise RuntimeError(f"git clone failed: {r.stderr.strip()}")
 
@@ -352,12 +391,21 @@ def rpm_build_task(self, build_id):
             raise RuntimeError(
                 f"SPEC file not found in repo: {build.package.spec_file}"
             )
+        if _ensure_spec_release_matches_build_number(spec_path, build.build_number):
+            log_rpm_build(build, 'info', f"Adjusted SPEC Release to {build.build_number}%{{?dist}}")
+        else:
+            log_rpm_build(build, 'warning', 'Could not adjust SPEC Release field automatically')
         sources_dir = os.path.dirname(spec_path)
 
         # ---- Create Mock config ----
         dist = build.distribution
         os.makedirs(dist.repo_path, exist_ok=True)
-        mock_cfg_path = _create_mock_config(dist.mock_config, build.pk, dist.repo_path)
+        mock_cfg_path = _create_mock_config(
+            dist.mock_config,
+            build.pk,
+            dist.repo_path,
+            cfg_path=os.path.join(mock_cfg_dir, f'fmd-mock-{build.pk}.cfg'),
+        )
 
         # ---- Build SRPM ----
         log_rpm_build(build, 'info', f"Building SRPM ({dist.display_name})")
@@ -433,6 +481,7 @@ def rpm_build_task(self, build_id):
         build.completed_at = timezone.now()
         build.save(update_fields=['status', 'version', 'rpm_files', 'completed_at'])
         log_rpm_build(build, 'info', f"Done — {len(copied)} RPM(s) produced.")
+        log_rpm_build(build, 'info', f"Build artifacts stored in: {build_root}")
 
         # ---- Push to Satellite/Katello destinations ----
         _push_to_satellite_destinations(build, dist, copied)
@@ -451,11 +500,8 @@ def rpm_build_task(self, build_id):
         send_rpm_build_status_update(build.pk, 'failed', str(exc))
 
     finally:
-        for path in (work_dir, result_dir):
-            if path and os.path.exists(path):
-                shutil.rmtree(path, ignore_errors=True)
-        if mock_cfg_path and os.path.exists(mock_cfg_path):
-            os.unlink(mock_cfg_path)
+        # Keep build_root artifacts for debugging/auditability.
+        # They live under RPM_BUILD_PATH and are unique per build.
 
 
 # ---------------------------------------------------------------------------

@@ -6,6 +6,41 @@ import os
 from django.conf import settings
 
 
+def _get_writable_temp_base() -> str:
+    """Return a temp base directory that is writable by the current process."""
+    import tempfile
+
+    candidates = []
+    configured = (getattr(settings, 'TEMP_DIR', '') or '').strip()
+    if configured:
+        candidates.append(configured)
+    candidates.append(os.path.join(tempfile.gettempdir(), 'flat-manager'))
+
+    errors = []
+    for base in candidates:
+        try:
+            os.makedirs(base, exist_ok=True)
+            probe = tempfile.mkdtemp(prefix='probe-', dir=base)
+            os.chmod(probe, 0o700)
+            os.rmdir(probe)
+            return base
+        except OSError as exc:
+            errors.append(f"{base}: {exc}")
+
+    details = '; '.join(errors) if errors else 'no candidate directories available'
+    raise OSError(f"No writable temp directory for GPG operations ({details})")
+
+
+def _mk_secure_tempdir(prefix: str) -> str:
+    """Create a temp dir with explicit 0700 permissions (systemd UMask safe)."""
+    import tempfile
+
+    base = _get_writable_temp_base()
+    temp_dir = tempfile.mkdtemp(prefix=prefix, dir=base)
+    os.chmod(temp_dir, 0o700)
+    return temp_dir
+
+
 def _duration_to_date(duration):
     """
     Convert a GPG duration string ('0', '1y', '2y', '5y', '10y') to a
@@ -47,12 +82,11 @@ def generate_gpg_key(name, email, passphrase=None, key_type='RSA', key_length=40
             - private_key: ASCII armored private key
             - expires_at: datetime.date or None
     """
-    import tempfile
     import shutil
     import os
     import subprocess
-    
-    temp_dir = tempfile.mkdtemp(prefix='gpg_')
+
+    temp_dir = _mk_secure_tempdir('gpg_')
     
     try:
         # Create a batch file for unattended key generation
@@ -149,10 +183,9 @@ def import_gpg_key(public_key, private_key=None, passphrase=None):
     Returns:
         dict with key information
     """
-    import tempfile
     import shutil
-    
-    temp_dir = tempfile.mkdtemp(prefix='gpg_')
+
+    temp_dir = _mk_secure_tempdir('gpg_')
     
     try:
         # Initialize GPG with custom home directory to avoid system keyring
@@ -206,15 +239,11 @@ def renew_gpg_key(gpg_key, duration):
             - public_key:  Updated ASCII armored public key
             - expires_at:  datetime.date or None
     """
-    import tempfile
     import shutil
-    import stat
     import subprocess as _sp
 
-    temp_dir = tempfile.mkdtemp(prefix='gpg_renew_')
+    temp_dir = _mk_secure_tempdir('gpg_renew_')
     try:
-        os.chmod(temp_dir, stat.S_IRWXU)
-
         # Import the private key so we can edit it
         private_key_data = gpg_key.private_key
         if isinstance(private_key_data, bytes):

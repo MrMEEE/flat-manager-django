@@ -213,6 +213,10 @@ FLATPAK_BUILD_PATH = os.environ.get('FLATPAK_BUILD_PATH', str(BASE_DIR / 'builds
 _data_parent = str(Path(REPOS_BASE_PATH).parent)
 RPM_REPO_BASE_PATH = os.environ.get('RPM_REPO_BASE_PATH', os.path.join(_data_parent, 'rpm-repos'))
 
+# Base path for per-build RPM artifacts (sources/spec, mock cfg, and results).
+# If not explicitly configured, keep it alongside Flatpak build artifacts.
+RPM_BUILD_PATH = os.environ.get('RPM_BUILD_PATH', os.path.join(FLATPAK_BUILD_PATH, 'rpms'))
+
 # Temporary directory for git clones and other short-lived work.
 TEMP_DIR = os.environ.get('TEMP_DIR', os.path.join(_data_parent, 'tmp'))
 

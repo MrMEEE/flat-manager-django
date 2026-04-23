@@ -339,29 +339,36 @@ class RpmScanSpecFilesView(LoginRequiredMixin, View):
         if not url:
             return JsonResponse({'error': 'url is required'}, status=400)
 
+        temp_dir = None
         try:
             tmp_base = _get_writable_temp_base()
-            with tempfile.TemporaryDirectory(dir=tmp_base) as tmpdir:
-                git_cmd = (
-                    f"umask 0022 && git clone --depth 1 --branch {shlex.quote(branch)} "
-                    f"-- {shlex.quote(url)} {shlex.quote(tmpdir)}"
-                )
-                result = subprocess.run(
-                    ['bash', '-c', git_cmd],
-                    capture_output=True, text=True, timeout=120,
-                )
-                if result.returncode != 0:
-                    msg = (result.stderr or result.stdout or 'Clone failed').strip()
-                    return JsonResponse({'error': msg}, status=400)
+            temp_dir = tempfile.mkdtemp(dir=tmp_base, prefix='rpm-scan-')
+            os.chmod(temp_dir, 0o700)
+            source_dir = os.path.join(temp_dir, 'source')
 
-                spec_files = _glob.glob(os.path.join(tmpdir, '**', '*.spec'), recursive=True)
-                rel_paths = sorted(os.path.relpath(f, tmpdir) for f in spec_files)
+            git_cmd = (
+                f"umask 0022 && git clone --depth 1 --branch {shlex.quote(branch)} "
+                f"-- {shlex.quote(url)} {shlex.quote(source_dir)}"
+            )
+            result = subprocess.run(
+                ['bash', '-c', git_cmd],
+                capture_output=True, text=True, timeout=120,
+            )
+            if result.returncode != 0:
+                msg = (result.stderr or result.stdout or 'Clone failed').strip()
+                return JsonResponse({'error': msg}, status=400)
+
+            spec_files = _glob.glob(os.path.join(source_dir, '**', '*.spec'), recursive=True)
+            rel_paths = sorted(os.path.relpath(f, source_dir) for f in spec_files)
         except subprocess.TimeoutExpired:
             return JsonResponse({'error': 'Git clone timed out after 120 seconds.'}, status=504)
         except FileNotFoundError:
             return JsonResponse({'error': 'git executable not found on this server.'}, status=500)
         except OSError as exc:
             return JsonResponse({'error': f'Server filesystem error: {exc}'}, status=500)
+        finally:
+            if temp_dir and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
         return JsonResponse({'spec_files': rel_paths})
 
@@ -449,29 +456,33 @@ class RpmPackageCheckAvailableView(LoginRequiredMixin, View):
 
         branch = (package.git_branch or 'main').strip()
 
+        temp_dir = None
         try:
             tmp_base = _get_writable_temp_base()
-            with tempfile.TemporaryDirectory(dir=tmp_base) as tmpdir:
-                git_cmd = (
-                    f"umask 0022 && git clone --depth 1 --branch {shlex.quote(branch)} "
-                    f"-- {shlex.quote(package.git_repo_url)} {shlex.quote(tmpdir)}"
-                )
-                result = subprocess.run(
-                    ['bash', '-c', git_cmd],
-                    capture_output=True, text=True, timeout=120,
-                )
-                if result.returncode != 0:
-                    msg = (result.stderr or result.stdout or 'Clone failed').strip()
-                    return JsonResponse({'error': msg}, status=502)
+            temp_dir = tempfile.mkdtemp(dir=tmp_base, prefix='rpm-avail-')
+            os.chmod(temp_dir, 0o700)
+            source_dir = os.path.join(temp_dir, 'source')
 
-                spec_path = os.path.join(tmpdir, package.spec_file)
-                if not os.path.isfile(spec_path):
-                    return JsonResponse(
-                        {'error': f'Spec file not found: {package.spec_file}'}, status=400
-                    )
+            git_cmd = (
+                f"umask 0022 && git clone --depth 1 --branch {shlex.quote(branch)} "
+                f"-- {shlex.quote(package.git_repo_url)} {shlex.quote(source_dir)}"
+            )
+            result = subprocess.run(
+                ['bash', '-c', git_cmd],
+                capture_output=True, text=True, timeout=120,
+            )
+            if result.returncode != 0:
+                msg = (result.stderr or result.stdout or 'Clone failed').strip()
+                return JsonResponse({'error': msg}, status=502)
 
-                with open(spec_path, 'r', errors='replace') as fh:
-                    spec_text = fh.read()
+            spec_path = os.path.join(source_dir, package.spec_file)
+            if not os.path.isfile(spec_path):
+                return JsonResponse(
+                    {'error': f'Spec file not found: {package.spec_file}'}, status=400
+                )
+
+            with open(spec_path, 'r', errors='replace') as fh:
+                spec_text = fh.read()
 
             version = None
             requires = []
@@ -516,6 +527,9 @@ class RpmPackageCheckAvailableView(LoginRequiredMixin, View):
         except Exception as exc:
             logger.exception("RpmPackageCheckAvailableView error for package %s", pk)
             return JsonResponse({'error': str(exc)}, status=500)
+        finally:
+            if temp_dir and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 class RpmDistributionSyncView(LoginRequiredMixin, View):
