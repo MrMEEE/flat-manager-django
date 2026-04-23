@@ -220,6 +220,9 @@ RPM_BUILD_PATH = os.environ.get('RPM_BUILD_PATH', os.path.join(FLATPAK_BUILD_PAT
 # Temporary directory for git clones and other short-lived work.
 TEMP_DIR = os.environ.get('TEMP_DIR', os.path.join(_data_parent, 'tmp'))
 
+# How often to auto-sync RPM repository lists from subscription-manager (hours).
+RPM_REPO_SYNC_INTERVAL_HOURS = int(os.environ.get('RPM_REPO_SYNC_INTERVAL_HOURS', '24'))
+
 # BuildStream 1 venv path (BST 1 and BST 2 have incompatible project.conf formats).
 # Set to the root of a virtualenv that has BuildStream 1 installed.
 # BST 2 is assumed to be available as 'bst' in the primary virtualenv.

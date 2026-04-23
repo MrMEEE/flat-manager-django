@@ -87,32 +87,50 @@ def _update_package_status(package):
 # Mock helpers
 # ---------------------------------------------------------------------------
 
-def _create_mock_config(base_config, build_id, local_repo_path, cfg_path=None):
+def _create_mock_config(base_config, build_id, local_repo_path, cfg_path=None, distribution=None):
     """
     Write a temporary Mock config that inherits from the stock RHEL config and
-    adds our local built-RPMs repo as an extra yum source (if the repo metadata
-    already exists so that the createrepo has been run at least once before),
-    and enables EPEL for external build dependencies.
+    adds the distribution's enabled repositories plus our local built-RPMs repo.
+
+    Subscription-managed repos (no URL stored) are added as `enabled=1` override
+    stanzas only — the RHEL base mock config already defines them with their
+    subscription-provided baseurl.  Repos with an explicit URL (EPEL, manual)
+    get a full stanza including the URL.
+
+    Falls back to a simple EPEL-only stanza when no repositories are configured
+    in the database yet (e.g. before the first repo sync).
     """
     cfg = f"include('/etc/mock/{base_config}.cfg')\n\n"
     cfg += f"config_opts['uniqueext'] = 'fmd{build_id}'\n"
-    cfg += (
-        "\nconfig_opts['yum.conf'] += \"\"\"\n"
-        "[epel]\n"
-        "name=Extra Packages for Enterprise Linux\n"
-        "metalink=https://mirrors.fedoraproject.org/metalink?repo=epel-$releasever&arch=$basearch\n"
-        "enabled=1\n"
-        "gpgcheck=1\n"
-        "\"\"\"\n"
-    )
-    cfg += (
-        "\nconfig_opts['yum.conf'] += \"\"\"\n"
-        "[codeready-builder-for-rhel-$releasever-$basearch-rpms]\n"
-        "name=CodeReady Linux Builder\n"
-        "enabled=1\n"
-        "gpgcheck=1\n"
-        "\"\"\"\n"
-    )
+
+    # Gather enabled repos from the distribution DB record (if available).
+    enabled_repos = list(distribution.repositories.filter(enabled=True)) if distribution else []
+
+    if enabled_repos:
+        for repo in enabled_repos:
+            cfg += "\nconfig_opts['yum.conf'] += \"\"\"\n"
+            cfg += f"[{repo.repo_id}]\n"
+            cfg += f"name={repo.name}\n"
+            if repo.baseurl:
+                cfg += f"baseurl={repo.baseurl}\n"
+            if repo.metalink:
+                cfg += f"metalink={repo.metalink}\n"
+            if repo.mirrorlist:
+                cfg += f"mirrorlist={repo.mirrorlist}\n"
+            cfg += "enabled=1\n"
+            cfg += f"gpgcheck={1 if repo.gpgcheck else 0}\n"
+            cfg += "\"\"\"\n"
+    else:
+        # No repos configured yet: fall back to EPEL only as a safe default.
+        cfg += (
+            "\nconfig_opts['yum.conf'] += \"\"\"\n"
+            "[epel]\n"
+            "name=Extra Packages for Enterprise Linux\n"
+            "metalink=https://mirrors.fedoraproject.org/metalink?repo=epel-$releasever&arch=$basearch\n"
+            "enabled=1\n"
+            "gpgcheck=1\n"
+            "\"\"\"\n"
+        )
 
     repodata = os.path.join(local_repo_path, 'repodata', 'repomd.xml')
     if os.path.exists(repodata):
@@ -423,6 +441,7 @@ def rpm_build_task(self, build_id):
             build.pk,
             dist.repo_path,
             cfg_path=os.path.join(mock_cfg_dir, f'fmd-mock-{build.pk}.cfg'),
+            distribution=dist,
         )
 
         # ---- Build SRPM ----
@@ -524,12 +543,231 @@ def rpm_build_task(self, build_id):
 
 
 # ---------------------------------------------------------------------------
+# Repository discovery constants
+# ---------------------------------------------------------------------------
+
+# EPEL metalink templates keyed by RHEL major version.
+_EPEL_REPOS: dict[str, dict] = {
+    '7': {
+        'repo_id': 'epel',
+        'name': 'Extra Packages for Enterprise Linux 7',
+        'metalink': 'https://mirrors.fedoraproject.org/metalink?repo=epel-7&arch=$basearch',
+        'gpgcheck': True, 'source': 'epel', 'default_enabled': False,
+    },
+    '8': {
+        'repo_id': 'epel',
+        'name': 'Extra Packages for Enterprise Linux 8',
+        'metalink': 'https://mirrors.fedoraproject.org/metalink?repo=epel-8&arch=$basearch',
+        'gpgcheck': True, 'source': 'epel', 'default_enabled': False,
+    },
+    '9': {
+        'repo_id': 'epel',
+        'name': 'Extra Packages for Enterprise Linux 9',
+        'metalink': 'https://mirrors.fedoraproject.org/metalink?repo=epel-9&arch=$basearch',
+        'gpgcheck': True, 'source': 'epel', 'default_enabled': False,
+    },
+    '10': {
+        'repo_id': 'epel',
+        'name': 'Extra Packages for Enterprise Linux 10',
+        'metalink': 'https://mirrors.fedoraproject.org/metalink?repo=epel-10&arch=$basearch',
+        'gpgcheck': True, 'source': 'epel', 'default_enabled': False,
+    },
+}
+
+# Well-known RHEL subscription repo ID + name patterns.
+# `default_enabled` determines whether a newly discovered repo starts enabled.
+_KNOWN_RHEL_REPOS: list[dict] = [
+    {
+        'id_template': 'rhel-{ver}-for-{arch}-baseos-rpms',
+        'name_template': 'Red Hat Enterprise Linux {ver} for {arch} - BaseOS',
+        'source': 'subscription', 'default_enabled': True,
+    },
+    {
+        'id_template': 'rhel-{ver}-for-{arch}-appstream-rpms',
+        'name_template': 'Red Hat Enterprise Linux {ver} for {arch} - AppStream',
+        'source': 'subscription', 'default_enabled': True,
+    },
+    {
+        'id_template': 'codeready-builder-for-rhel-{ver}-{arch}-rpms',
+        'name_template': 'Red Hat CodeReady Linux Builder for RHEL {ver} ({arch})',
+        'source': 'subscription', 'default_enabled': False,
+    },
+    {
+        'id_template': 'rhel-{ver}-for-{arch}-supplementary-rpms',
+        'name_template': 'Red Hat Enterprise Linux {ver} for {arch} - Supplementary',
+        'source': 'subscription', 'default_enabled': False,
+    },
+    {
+        'id_template': 'rhel-{ver}-for-{arch}-highavailability-rpms',
+        'name_template': 'Red Hat Enterprise Linux {ver} for {arch} - High Availability',
+        'source': 'subscription', 'default_enabled': False,
+    },
+]
+
+
+def _discover_repos_via_subscription_manager(rhel_version: str, arch: str) -> list[dict] | None:
+    """
+    Query subscription-manager for the available repos on this host.
+    Returns a list of repo dicts suitable for bulk upsert, or None if
+    subscription-manager is unavailable or not registered.
+    """
+    try:
+        result = subprocess.run(
+            ['subscription-manager', 'repos', '--list'],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+
+    if result.returncode not in (0, 1):
+        return None
+
+    repos: list[dict] = []
+    current: dict = {}
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if line.startswith('Repo ID:'):
+            if current.get('repo_id'):
+                repos.append(current)
+            current = {'repo_id': line.split(':', 1)[1].strip()}
+        elif line.startswith('Repo Name:') and current:
+            current['name'] = line.split(':', 1)[1].strip()
+    if current.get('repo_id'):
+        repos.append(current)
+
+    # Keep only repos relevant to this RHEL version and arch.
+    filtered = []
+    for r in repos:
+        repo_id = r['repo_id']
+        if f'rhel-{rhel_version}-for-{arch}' in repo_id or f'-rhel-{rhel_version}-' in repo_id:
+            filtered.append({
+                'repo_id': repo_id,
+                'name': r.get('name', repo_id),
+                'baseurl': '',
+                'source': 'subscription',
+                'default_enabled': (
+                    repo_id.endswith('-baseos-rpms') or repo_id.endswith('-appstream-rpms')
+                ),
+            })
+    return filtered or None
+
+
+def _get_known_rhel_repos(rhel_version: str, arch: str) -> list[dict]:
+    """Return hardcoded well-known repo entries for a RHEL version/arch (fallback)."""
+    repos = []
+    for tmpl in _KNOWN_RHEL_REPOS:
+        repos.append({
+            'repo_id': tmpl['id_template'].format(ver=rhel_version, arch=arch),
+            'name': tmpl['name_template'].format(ver=rhel_version, arch=arch),
+            'baseurl': '',
+            'source': tmpl['source'],
+            'default_enabled': tmpl['default_enabled'],
+        })
+    return repos
+
+
+def sync_rpm_repositories_for_distribution(dist) -> tuple[int, int]:
+    """
+    Discover and upsert RpmRepository records for *dist*.
+
+    Tries subscription-manager first; falls back to known RHEL repo patterns.
+    Always adds the relevant EPEL repo.  The user's `enabled` flag is preserved
+    on existing records; only metadata (name, URLs) is updated.
+
+    Returns ``(created_count, updated_count)``.
+    """
+    from apps.rpm.models import RpmRepository
+
+    repos_data: list[dict] = (
+        _discover_repos_via_subscription_manager(dist.rhel_version, dist.arch)
+        or _get_known_rhel_repos(dist.rhel_version, dist.arch)
+    )
+
+    epel = _EPEL_REPOS.get(dist.rhel_version)
+    if epel:
+        repos_data.append(epel)
+
+    now = timezone.now()
+    created_count = 0
+    updated_count = 0
+
+    for data in repos_data:
+        repo, created = RpmRepository.objects.get_or_create(
+            distribution=dist,
+            repo_id=data['repo_id'],
+            defaults={
+                'name': data.get('name', data['repo_id']),
+                'baseurl': data.get('baseurl', ''),
+                'mirrorlist': data.get('mirrorlist', ''),
+                'metalink': data.get('metalink', ''),
+                'gpgcheck': data.get('gpgcheck', True),
+                'enabled': data.get('default_enabled', False),
+                'source': data.get('source', 'subscription'),
+                'last_synced': now,
+            },
+        )
+        if created:
+            created_count += 1
+        else:
+            # Preserve user's enabled choice; update only metadata.
+            meta_fields = ['name', 'baseurl', 'mirrorlist', 'metalink', 'gpgcheck', 'source']
+            changed = False
+            for field in meta_fields:
+                new_val = data.get(field)
+                if new_val is not None and getattr(repo, field) != new_val:
+                    setattr(repo, field, new_val)
+                    changed = True
+            repo.last_synced = now
+            save_fields = ['last_synced'] + (meta_fields if changed else [])
+            repo.save(update_fields=save_fields)
+            if changed:
+                updated_count += 1
+
+    dist.repos_synced_at = now
+    dist.save(update_fields=['repos_synced_at'])
+    return created_count, updated_count
+
+
+@shared_task(name='rpm.sync_rpm_repositories', queue='ops')
+def sync_rpm_repositories_task():
+    """
+    Periodic task: sync available yum/dnf repositories for all active RPM
+    distributions.  Re-registers its own beat schedule on each run.
+    """
+    from apps.rpm.models import RpmDistribution
+
+    total_created = total_updated = 0
+    for dist in RpmDistribution.objects.filter(is_active=True):
+        try:
+            created, updated = sync_rpm_repositories_for_distribution(dist)
+            total_created += created
+            total_updated += updated
+            logger.info("Synced repos for %s: +%d created, %d updated", dist.name, created, updated)
+        except Exception:
+            logger.exception("Failed to sync repos for distribution %s", dist.name)
+
+    _sync_rpm_repo_periodic_task()
+    return {'created': total_created, 'updated': total_updated}
+
+
+def _sync_rpm_repo_periodic_task():
+    """Ensure the repo-sync celery beat task is scheduled at the configured interval."""
+    interval_hours = getattr(settings, 'RPM_REPO_SYNC_INTERVAL_HOURS', 24)
+    _sync_rpm_periodic_task(
+        'rpm.sync_rpm_repositories',
+        'sync-rpm-repositories',
+        interval_hours,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Distribution sync helper (called from views)
 # ---------------------------------------------------------------------------
 
 def sync_distributions_from_mock():
     """
     Scan /etc/mock/ for rhel-*.cfg files and upsert RpmDistribution records.
+    Newly created distributions have their repositories seeded automatically.
     Returns a list of (RpmDistribution, created) tuples.
     """
     from apps.rpm.models import RpmDistribution
@@ -557,6 +795,11 @@ def sync_distributions_from_mock():
                 'is_active': True,
             },
         )
+        if created:
+            try:
+                sync_rpm_repositories_for_distribution(dist)
+            except Exception:
+                logger.exception("Could not seed repos for new distribution %s", dist.name)
         results.append((dist, created))
 
     return results

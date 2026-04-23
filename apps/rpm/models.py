@@ -23,6 +23,10 @@ class RpmDistribution(models.Model):
     arch = models.CharField(max_length=50, help_text="Architecture (e.g. x86_64)")
     rhel_version = models.CharField(max_length=20, help_text="RHEL major version (e.g. 9)")
     is_active = models.BooleanField(default=True)
+    repos_synced_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="When build repositories were last synced for this distribution",
+    )
 
     class Meta:
         ordering = ['rhel_version', 'arch']
@@ -333,3 +337,56 @@ class RpmPackageSigningKey(models.Model):
 
     def __str__(self):
         return f"{self.package.name} [{self.distribution.display_name}] \u2192 {self.signing_key}"
+
+
+class RpmRepository(models.Model):
+    """
+    A yum/dnf repository that can be included in mock builds for a given
+    distribution.  Populated by the repo-sync task (subscription-manager or
+    well-known RHEL patterns) and the built-in EPEL definition.
+
+    Subscription-managed repos (source='subscription') have no baseurl/metalink
+    stored here — they rely on the RHSM plugin inside the mock chroot.  Repos
+    with an explicit URL (EPEL, manual) include the full address.
+    """
+    SOURCE_CHOICES = [
+        ('subscription', 'RHSM Subscription'),
+        ('epel', 'EPEL'),
+        ('manual', 'Manual / Custom'),
+    ]
+
+    distribution = models.ForeignKey(
+        RpmDistribution, on_delete=models.CASCADE, related_name='repositories',
+    )
+    repo_id = models.CharField(max_length=255, help_text="DNF/yum repo ID")
+    name = models.CharField(max_length=500, help_text="Human-readable repository name")
+    baseurl = models.TextField(blank=True, help_text="Base URL (blank for subscription repos)")
+    mirrorlist = models.TextField(blank=True)
+    metalink = models.TextField(blank=True)
+    gpgcheck = models.BooleanField(default=True)
+    enabled = models.BooleanField(
+        default=False,
+        help_text="Include this repository in mock builds for this distribution",
+    )
+    source = models.CharField(max_length=50, choices=SOURCE_CHOICES, default='subscription')
+    last_synced = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        unique_together = [('distribution', 'repo_id')]
+        ordering = ['-enabled', 'source', 'name']
+        verbose_name = 'RPM Build Repository'
+        verbose_name_plural = 'RPM Build Repositories'
+
+    def __str__(self):
+        return f"{self.distribution.name} / {self.repo_id}"
+
+    @property
+    def has_url(self):
+        return bool(self.baseurl or self.mirrorlist or self.metalink)
+
+    def get_source_badge(self):
+        return {
+            'subscription': 'warning',
+            'epel': 'info',
+            'manual': 'secondary',
+        }.get(self.source, 'secondary')

@@ -350,6 +350,17 @@ class RpmDistributionListView(LoginRequiredMixin, ListView):
     context_object_name = 'distributions'
     ordering = ['rhel_version', 'arch']
 
+    def get_queryset(self):
+        from django.db.models import Count, Q
+        return (
+            RpmDistribution.objects
+            .annotate(
+                repo_count=Count('repositories'),
+                enabled_repo_count=Count('repositories', filter=Q(repositories__enabled=True)),
+            )
+            .order_by('rhel_version', 'arch')
+        )
+
 
 class RpmPackageSigningKeyView(LoginRequiredMixin, View):
     """POST — assign or clear the GPG signing key for a (package, distribution) pair."""
@@ -615,6 +626,37 @@ class RpmDistributionToggleView(LoginRequiredMixin, View):
         state = "enabled" if dist.is_active else "disabled"
         messages.success(request, f"Distribution '{dist.display_name}' {state}.")
         return redirect('rpm:distribution_list')
+
+
+class RpmDistributionSyncReposView(LoginRequiredMixin, View):
+    """POST — (re)sync the repository list for a single distribution."""
+
+    def post(self, request, pk):
+        from apps.rpm.models import RpmRepository
+        from apps.rpm.tasks import sync_rpm_repositories_for_distribution
+        dist = get_object_or_404(RpmDistribution, pk=pk)
+        try:
+            created, updated = sync_rpm_repositories_for_distribution(dist)
+            messages.success(
+                request,
+                f"Repos synced for '{dist.display_name}': {created} added, {updated} updated.",
+            )
+        except Exception as exc:
+            logger.exception("Repo sync failed for distribution %s", dist.pk)
+            messages.error(request, f"Repo sync failed: {exc}")
+        return redirect('rpm:distribution_list')
+
+
+class RpmRepositoryToggleView(LoginRequiredMixin, View):
+    """POST — toggle the enabled flag on a single RpmRepository."""
+
+    def post(self, request, repo_pk):
+        from apps.rpm.models import RpmRepository
+        repo = get_object_or_404(RpmRepository, pk=repo_pk)
+        repo.enabled = not repo.enabled
+        repo.save(update_fields=['enabled'])
+        state = "enabled" if repo.enabled else "disabled"
+        return JsonResponse({'ok': True, 'enabled': repo.enabled, 'state': state})
 
 
 # ---------------------------------------------------------------------------

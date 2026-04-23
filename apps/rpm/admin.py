@@ -1,12 +1,20 @@
 from django.contrib import admin
-from .models import RpmDistribution, RpmPackage, RpmBuild, RpmBuildLog
+from .models import RpmDistribution, RpmPackage, RpmBuild, RpmBuildLog, RpmRepository
 
 
 @admin.register(RpmDistribution)
 class RpmDistributionAdmin(admin.ModelAdmin):
-    list_display = ['name', 'display_name', 'arch', 'rhel_version', 'is_active']
+    list_display = ['name', 'display_name', 'arch', 'rhel_version', 'is_active', 'repos_synced_at']
     list_filter = ['is_active', 'rhel_version']
     search_fields = ['name', 'display_name']
+
+
+@admin.register(RpmRepository)
+class RpmRepositoryAdmin(admin.ModelAdmin):
+    list_display = ['distribution', 'repo_id', 'name', 'source', 'enabled', 'last_synced']
+    list_filter = ['distribution', 'source', 'enabled']
+    search_fields = ['repo_id', 'name']
+    list_select_related = ['distribution']
 
 
 @admin.register(RpmPackage)

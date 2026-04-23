@@ -29,6 +29,8 @@ urlpatterns = [
     path('rpms/distributions/', views.RpmDistributionListView.as_view(), name='distribution_list'),
     path('rpms/distributions/sync/', views.RpmDistributionSyncView.as_view(), name='distribution_sync'),
     path('rpms/distributions/<int:pk>/toggle/', views.RpmDistributionToggleView.as_view(), name='distribution_toggle'),
+    path('rpms/distributions/<int:pk>/sync-repos/', views.RpmDistributionSyncReposView.as_view(), name='distribution_sync_repos'),
+    path('rpms/distributions/repos/<int:repo_pk>/toggle/', views.RpmRepositoryToggleView.as_view(), name='repository_toggle'),
 
     # Package-level signing key assignment
     path('rpms/<int:pkg_pk>/signing-key/<int:dist_pk>/', views.RpmPackageSigningKeyView.as_view(), name='package_signing_key'),
