@@ -316,17 +316,25 @@ class RpmScanSpecFilesView(LoginRequiredMixin, View):
         if not url:
             return JsonResponse({'error': 'url is required'}, status=400)
 
-        with tempfile.TemporaryDirectory(dir=settings.TEMP_DIR) as tmpdir:
-            result = subprocess.run(
-                ['git', 'clone', '--depth', '1', '--branch', branch, '--', url, tmpdir],
-                capture_output=True, text=True, timeout=120,
-            )
-            if result.returncode != 0:
-                msg = (result.stderr or result.stdout or 'Clone failed').strip()
-                return JsonResponse({'error': msg}, status=400)
+        try:
+            os.makedirs(settings.TEMP_DIR, exist_ok=True)
+            with tempfile.TemporaryDirectory(dir=settings.TEMP_DIR) as tmpdir:
+                result = subprocess.run(
+                    ['git', 'clone', '--depth', '1', '--branch', branch, '--', url, tmpdir],
+                    capture_output=True, text=True, timeout=120,
+                )
+                if result.returncode != 0:
+                    msg = (result.stderr or result.stdout or 'Clone failed').strip()
+                    return JsonResponse({'error': msg}, status=400)
 
-            spec_files = _glob.glob(os.path.join(tmpdir, '**', '*.spec'), recursive=True)
-            rel_paths = sorted(os.path.relpath(f, tmpdir) for f in spec_files)
+                spec_files = _glob.glob(os.path.join(tmpdir, '**', '*.spec'), recursive=True)
+                rel_paths = sorted(os.path.relpath(f, tmpdir) for f in spec_files)
+        except subprocess.TimeoutExpired:
+            return JsonResponse({'error': 'Git clone timed out after 120 seconds.'}, status=504)
+        except FileNotFoundError:
+            return JsonResponse({'error': 'git executable not found on this server.'}, status=500)
+        except OSError as exc:
+            return JsonResponse({'error': f'Server filesystem error: {exc}'}, status=500)
 
         return JsonResponse({'spec_files': rel_paths})
 
@@ -339,10 +347,16 @@ class RpmScanBranchesView(LoginRequiredMixin, View):
         if not url:
             return JsonResponse({'error': 'url is required'}, status=400)
 
-        result = subprocess.run(
-            ['git', 'ls-remote', '--heads', '--', url],
-            capture_output=True, text=True, timeout=30,
-        )
+        try:
+            result = subprocess.run(
+                ['git', 'ls-remote', '--heads', '--', url],
+                capture_output=True, text=True, timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            return JsonResponse({'error': 'Git timed out listing remote branches.'}, status=504)
+        except FileNotFoundError:
+            return JsonResponse({'error': 'git executable not found on this server.'}, status=500)
+
         if result.returncode != 0:
             msg = (result.stderr or result.stdout or 'Failed to list branches').strip()
             return JsonResponse({'error': msg}, status=400)

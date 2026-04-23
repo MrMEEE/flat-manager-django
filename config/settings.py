@@ -210,10 +210,11 @@ FLATPAK_BUILD_PATH = os.environ.get('FLATPAK_BUILD_PATH', str(BASE_DIR / 'builds
 RPM_REPO_BASE_PATH = os.environ.get('RPM_REPO_BASE_PATH', str(BASE_DIR / 'rpm-repos'))
 
 # Temporary directory for git clones and other short-lived work.
-# Defaults to a sub-folder of the app directory so that the service user
-# always has write access (avoids SELinux / sticky-bit issues with /tmp).
-TEMP_DIR = os.environ.get('TEMP_DIR', str(BASE_DIR / 'tmp'))
-os.makedirs(TEMP_DIR, exist_ok=True)
+# Derives from the parent of REPOS_BASE_PATH so that it sits under
+# /var/lib/flat-manager/tmp in production (where the service user has write
+# access) and under BASE_DIR/tmp in development.
+_data_parent = str(Path(REPOS_BASE_PATH).parent)
+TEMP_DIR = os.environ.get('TEMP_DIR', os.path.join(_data_parent, 'tmp'))
 
 # BuildStream 1 venv path (BST 1 and BST 2 have incompatible project.conf formats).
 # Set to the root of a virtualenv that has BuildStream 1 installed.
