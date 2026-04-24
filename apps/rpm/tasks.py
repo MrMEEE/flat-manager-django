@@ -106,24 +106,22 @@ def _create_mock_config(base_config, build, local_repo_path, cfg_path=None):
 
     selected_repos = list(build.selected_repos.all())
 
-    # When subscription repos are selected, switch to podman isolation so that
-    # mock's bind_mount plugin passes -v flags to podman for every invocation
-    # (bootstrap + main build), giving dnf access to the host RHSM certs.
-    # systemd-nspawn mode is unreliable for RHSM because the bootstrap chroot
-    # sees the certs but subscription-manager still reports "not registered".
+    # When subscription repos are selected, enable mock's subscription_manager
+    # plugin.  This plugin is specifically designed to make RHSM entitlement
+    # certs available inside both the bootstrap and the main chroot so that dnf
+    # can resolve baseurls for subscription-gated repos.
+    #
+    # Subscription repos must NOT be written to yum.conf: they have no stored
+    # baseurl, and adding an empty stanza would silently override whatever the
+    # RHSM dnf plugin injects, causing "Cannot find a valid baseurl".  The base
+    # mock config + subscription_manager plugin handle these repos automatically.
     has_subscription_repos = any(r.source == 'subscription' for r in selected_repos)
     if has_subscription_repos:
-        rhel_version = build.distribution.rhel_version
-        cfg += "\nconfig_opts['isolation'] = 'podman'\n"
-        cfg += f"config_opts['bootstrap_image'] = 'registry.access.redhat.com/ubi{rhel_version}/ubi:latest'\n"
-        cfg += "\nconfig_opts['plugin_conf']['bind_mount_enable'] = True\n"
-        cfg += "config_opts['plugin_conf']['bind_mount_opts']['dirs'] += [\n"
-        cfg += "    ('/etc/pki/entitlement', '/etc/pki/entitlement'),\n"
-        cfg += "    ('/etc/pki/consumer', '/etc/pki/consumer'),\n"
-        cfg += "    ('/etc/rhsm', '/etc/rhsm'),\n"
-        cfg += "]\n"
+        cfg += "\nconfig_opts['plugin_conf']['subscription_manager_enable'] = True\n"
 
     for repo in selected_repos:
+        if repo.source == 'subscription':
+            continue  # handled by base config + subscription_manager plugin
         cfg += "\nconfig_opts['yum.conf'] += \"\"\"\n"
         cfg += f"[{repo.repo_id}]\n"
         cfg += f"name={repo.name}\n"
@@ -135,6 +133,9 @@ def _create_mock_config(base_config, build, local_repo_path, cfg_path=None):
             cfg += f"mirrorlist={repo.mirrorlist}\n"
         cfg += "enabled=1\n"
         cfg += f"gpgcheck={1 if repo.gpgcheck else 0}\n"
+        if repo.source == 'epel' and repo.gpgcheck:
+            rhel_ver = build.distribution.rhel_version
+            cfg += f"gpgkey=https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-{rhel_ver}\n"
         cfg += "\"\"\"\n"
 
     repodata = os.path.join(local_repo_path, 'repodata', 'repomd.xml')
@@ -220,6 +221,21 @@ def _run_mock(cfg_path, extra_args, build):
 
     proc.wait()
     if proc.returncode != 0:
+        # Surface the detailed rpmbuild output from mock's build.log, which is
+        # written to the resultdir but never streamed to mock's stdout.
+        try:
+            rd_idx = extra_args.index('--resultdir')
+            resultdir = extra_args[rd_idx + 1]
+            build_log = os.path.join(resultdir, 'build.log')
+            if os.path.exists(build_log):
+                log_rpm_build(build, 'info', '--- build.log ---')
+                with open(build_log, encoding='utf-8', errors='replace') as fh:
+                    for line in fh:
+                        line = line.rstrip('\n')
+                        if line:
+                            log_rpm_build(build, 'info', line)
+        except (ValueError, IndexError, OSError):
+            pass
         raise RuntimeError(f"mock exited with code {proc.returncode}")
 
 
