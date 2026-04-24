@@ -25,6 +25,9 @@
                 <i class="bi bi-hammer"></i> Build Now
             </button>
         </form>
+        <button type="button" class="btn btn-outline-success" data-bs-toggle="modal" data-bs-target="#setBuildNumberModal">
+            <i class="bi bi-123"></i> Set Build Number
+        </button>
         <a href="{% url 'rpm:package_repositories' package.pk %}" class="btn btn-outline-info">
             <i class="bi bi-database"></i> Repositories
         </a>
@@ -384,6 +387,32 @@ function confirmRemoveDest(pk, repoName, distName) {
 </div>
 {% endif %}
 
+<!-- Set Build Number modal -->
+<div class="modal fade" id="setBuildNumberModal" tabindex="-1" aria-labelledby="setBuildNumberModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="setBuildNumberModalLabel"><i class="bi bi-123"></i> Set Build Number</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small">Enter a build number greater than the current highest build number. Builds will be queued for all active distributions using this number.</p>
+                <div class="mb-3">
+                    <label for="setBuildNumberInput" class="form-label">Build Number</label>
+                    <input type="number" class="form-control" id="setBuildNumberInput" min="1" placeholder="e.g. 42">
+                    <div class="invalid-feedback" id="setBuildNumberError"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-success" id="setBuildNumberOk">
+                    <i class="bi bi-hammer"></i> Queue Build
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Error modal -->
 <div class="modal fade" id="errorModal" tabindex="-1">
     <div class="modal-dialog">
@@ -505,6 +534,57 @@ function checkUpstreamVersion(pk) {
         btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Check now';
     });
 }
+
+document.getElementById('setBuildNumberOk').addEventListener('click', function () {
+    const input = document.getElementById('setBuildNumberInput');
+    const errDiv = document.getElementById('setBuildNumberError');
+    const val = parseInt(input.value, 10);
+    input.classList.remove('is-invalid');
+    errDiv.textContent = '';
+
+    if (!input.value || isNaN(val) || val < 1) {
+        input.classList.add('is-invalid');
+        errDiv.textContent = 'Please enter a valid build number (≥ 1).';
+        return;
+    }
+
+    const btn = this;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Queuing…';
+
+    const formData = new FormData();
+    formData.append('build_number', val);
+    formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+
+    fetch('{% url "rpm:package_build_with_number" package.pk %}', {
+        method: 'POST',
+        body: formData,
+    })
+    .then(r => r.json().then(data => ({ ok: r.ok, data })))
+    .then(({ ok, data }) => {
+        if (!ok) {
+            input.classList.add('is-invalid');
+            errDiv.textContent = data.error || 'An error occurred.';
+        } else {
+            bootstrap.Modal.getInstance(document.getElementById('setBuildNumberModal')).hide();
+            input.value = '';
+            window.location.reload();
+        }
+    })
+    .catch(e => showErrorModal('Network Error', e.message))
+    .finally(() => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-hammer"></i> Queue Build';
+    });
+});
+
+// Reset modal state when closed
+document.getElementById('setBuildNumberModal').addEventListener('hidden.bs.modal', function () {
+    const input = document.getElementById('setBuildNumberInput');
+    input.value = '';
+    input.classList.remove('is-invalid');
+    document.getElementById('setBuildNumberError').textContent = '';
+});
 </script>
 
 <!-- Signing Key modal (per package + distribution) -->

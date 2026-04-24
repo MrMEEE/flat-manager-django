@@ -253,6 +253,55 @@ class RpmPackageBuildView(LoginRequiredMixin, View):
         return redirect('rpm:package_detail', pk=pk)
 
 
+class RpmPackageBuildWithNumberView(LoginRequiredMixin, View):
+    """POST — trigger builds with a user-specified build number (JSON response)."""
+
+    def post(self, request, pk):
+        package = get_object_or_404(RpmPackage, pk=pk)
+        from apps.rpm.tasks import rpm_build_task
+
+        try:
+            build_number = int(request.POST.get('build_number', ''))
+        except (TypeError, ValueError):
+            return JsonResponse({'error': 'Build number must be an integer.'}, status=400)
+
+        if build_number < 1:
+            return JsonResponse({'error': 'Build number must be at least 1.'}, status=400)
+
+        # Determine the current maximum build number across all distributions.
+        from django.db.models import Max
+        max_existing = (
+            RpmBuild.objects
+            .filter(package=package)
+            .aggregate(m=Max('build_number'))['m']
+        ) or 0
+
+        if build_number <= max_existing:
+            return JsonResponse(
+                {'error': f'Build number must be greater than the current highest build number ({max_existing}).'},
+                status=400,
+            )
+
+        dists = list(package.distributions.filter(is_active=True))
+        if not dists:
+            return JsonResponse(
+                {'error': 'No active distributions configured for this package.'},
+                status=400,
+            )
+
+        for dist in dists:
+            build = RpmBuild.objects.create(
+                package=package,
+                distribution=dist,
+                build_number=build_number,
+                status='pending',
+            )
+            build.selected_repos.set(package.default_repos.filter(distribution=dist))
+            rpm_build_task.delay(build.pk)
+
+        return JsonResponse({'queued': len(dists), 'build_number': build_number})
+
+
 # ---------------------------------------------------------------------------
 # Build views
 # ---------------------------------------------------------------------------
