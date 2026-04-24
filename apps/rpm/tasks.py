@@ -106,17 +106,16 @@ def _create_mock_config(base_config, build, local_repo_path, cfg_path=None):
 
     selected_repos = list(build.selected_repos.all())
 
-    # Bind-mount RHSM entitlement certs when any subscription repo is selected.
-    # nspawn_args applies to ALL systemd-nspawn calls (bootstrap + main chroot),
-    # so the certs are available in both stages.  The bind_mount plugin covers
-    # any non-nspawn execution paths inside the main chroot as well.
+    # When subscription repos are selected, switch to podman isolation so that
+    # mock's bind_mount plugin passes -v flags to podman for every invocation
+    # (bootstrap + main build), giving dnf access to the host RHSM certs.
+    # systemd-nspawn mode is unreliable for RHSM because the bootstrap chroot
+    # sees the certs but subscription-manager still reports "not registered".
     has_subscription_repos = any(r.source == 'subscription' for r in selected_repos)
     if has_subscription_repos:
-        cfg += "\nconfig_opts['nspawn_args'] += [\n"
-        cfg += "    '--bind=/etc/pki/entitlement',\n"
-        cfg += "    '--bind=/etc/pki/consumer',\n"
-        cfg += "    '--bind=/etc/rhsm',\n"
-        cfg += "]\n"
+        rhel_version = build.distribution.rhel_version
+        cfg += "\nconfig_opts['isolation'] = 'podman'\n"
+        cfg += f"config_opts['bootstrap_image'] = 'registry.access.redhat.com/ubi{rhel_version}/ubi:latest'\n"
         cfg += "\nconfig_opts['plugin_conf']['bind_mount_enable'] = True\n"
         cfg += "config_opts['plugin_conf']['bind_mount_opts']['dirs'] += [\n"
         cfg += "    ('/etc/pki/entitlement', '/etc/pki/entitlement'),\n"
