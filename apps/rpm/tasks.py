@@ -1078,3 +1078,64 @@ def _sync_rpm_periodic_task(task_name: str, schedule_name: str, interval_hours: 
             task_obj.save(update_fields=['interval'])
     except Exception:
         logger.exception("Could not sync periodic task %s", task_name)
+
+
+# ---------------------------------------------------------------------------
+# Failed-build cleanup
+# ---------------------------------------------------------------------------
+
+@shared_task(name='rpm.cleanup_failed_rpm_builds', queue='ops')
+def cleanup_failed_rpm_builds():
+    """
+    Periodic task: for every RPM package keep only the N most recent failed
+    builds, deleting older records and their on-disk build artifacts.
+
+    N is taken from SiteConfig.failed_builds_to_keep (the same setting used
+    for flatpak builds).  A value of 0 means keep all.
+    """
+    from apps.rpm.models import RpmPackage, RpmBuild
+    from apps.flatpak.models import SiteConfig
+
+    config = SiteConfig.get_solo()
+    keep = config.failed_builds_to_keep
+
+    if keep == 0:
+        return "Cleanup skipped: keeping all failed RPM builds"
+
+    rpm_build_base = (
+        getattr(settings, 'RPM_BUILD_PATH', '')
+        or os.path.join(settings.FLATPAK_BUILD_PATH, 'rpms')
+    )
+
+    total_deleted = 0
+    for package in RpmPackage.objects.all():
+        failed_ids = list(
+            RpmBuild.objects.filter(package=package, status='failed')
+            .order_by('-build_number')
+            .values_list('id', flat=True)
+        )
+        to_delete = failed_ids[keep:]
+        if not to_delete:
+            continue
+
+        # Clean up on-disk build artifacts before removing DB records.
+        for build_id in to_delete:
+            pattern = os.path.join(rpm_build_base, f'fmd-rpm-{build_id}-*')
+            for build_dir in glob.glob(pattern):
+                try:
+                    shutil.rmtree(build_dir)
+                    logger.info("Removed RPM build artifacts: %s", build_dir)
+                except OSError as exc:
+                    logger.warning("Could not remove %s: %s", build_dir, exc)
+
+        deleted, _ = RpmBuild.objects.filter(id__in=to_delete).delete()
+        total_deleted += deleted
+        logger.info(
+            "Deleted %d old failed build(s) for RPM package %s",
+            deleted, package.name,
+        )
+
+    if total_deleted:
+        logger.info("cleanup_failed_rpm_builds: removed %d build record(s)", total_deleted)
+
+    return f"Cleaned up {total_deleted} old failed RPM build(s)"

@@ -54,6 +54,14 @@ app.conf.beat_schedule = {
             'queue': 'ops',
         }
     },
+    'cleanup-failed-rpm-builds': {
+        'task': 'rpm.cleanup_failed_rpm_builds',
+        'schedule': 3600.0,  # Run every hour
+        'options': {
+            'expires': 300.0,
+            'queue': 'ops',
+        }
+    },
     'sync-repo-state': {
         'task': 'apps.flatpak.tasks.sync_repo_state',
         'schedule': 300.0,  # Run every 5 minutes to catch external drift
