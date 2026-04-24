@@ -189,6 +189,33 @@ def _ensure_spec_release_matches_build_number(spec_path: str, build_number: int)
         return False
 
 
+def _fetch_spec_sources(spec_path: str, sources_dir: str, build) -> None:
+    """
+    Download URL-based Source/Patch entries from a SPEC file into *sources_dir*
+    using ``spectool --get-files`` (from the ``rpmdevtools`` package).
+
+    If spectool is not installed the step is skipped with a warning — mock will
+    then fail with a clear "source not found" error rather than a silent no-op.
+    If spectool is installed but exits non-zero (e.g. a URL is unreachable) a
+    RuntimeError is raised so the build fails with a meaningful message.
+    """
+    spectool = shutil.which('spectool')
+    if not spectool:
+        log_rpm_build(build, 'warning',
+                      'spectool not found (install rpmdevtools) — URL sources will not be fetched automatically')
+        return
+
+    cmd = [spectool, '--get-files', '--directory', sources_dir, spec_path]
+    log_rpm_build(build, 'info', 'Fetching sources: ' + ' '.join(cmd))
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    for line in (result.stdout + result.stderr).splitlines():
+        line = line.strip()
+        if line:
+            log_rpm_build(build, 'info', line)
+    if result.returncode != 0:
+        raise RuntimeError(f"spectool failed (exit {result.returncode}) — could not fetch sources")
+
+
 def _run_mock(cfg_path, extra_args, build):
     """Run mock, streaming output line-by-line into build logs."""
     cmd = ['mock', '-r', cfg_path] + extra_args
@@ -453,6 +480,12 @@ def rpm_build_task(self, build_id):
         else:
             log_rpm_build(build, 'warning', 'Could not adjust SPEC Release field automatically')
         sources_dir = os.path.dirname(spec_path)
+
+        # ---- Fetch URL sources ----
+        # Download any SourceN / PatchN entries that are http(s):// URLs and
+        # are not already present in the cloned repo.  This is a no-op when
+        # all sources are bundled in git (e.g. patches + tarball committed).
+        _fetch_spec_sources(spec_path, sources_dir, build)
 
         # ---- Create Mock config ----
         dist = build.distribution

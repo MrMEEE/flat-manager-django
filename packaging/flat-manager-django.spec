@@ -80,6 +80,9 @@ Requires:       flatpak-builder
 Requires:       ostree
 Requires:       openssl
 Requires:       policycoreutils-python-utils
+# RPM build support (optional but needed for mock-based builds)
+Requires:       mock
+Requires:       rpmdevtools
 
 Requires(pre):  shadow-utils
 %{?systemd_requires}
