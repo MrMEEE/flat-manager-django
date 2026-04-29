@@ -63,6 +63,7 @@
                     <th>Status</th>
                     <th>Update</th>
                     <th>Commit</th>
+                    <th>Source</th>
                     <th>Organisations</th>
                     <th>Last Pulled</th>
                     <th></th>
@@ -128,6 +129,23 @@
                         <br><small class="text-muted" title="Last checked {{ ext.upstream_checked_at|date:'Y-m-d H:i' }}">
                             <i class="bi bi-clock"></i> {{ ext.upstream_checked_at|timesince }} ago
                         </small>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if ext.remote and ext.remote.url %}
+                            {% if "flathub" in ext.remote.url|lower %}
+                            <span class="badge bg-warning text-dark source-badge"
+                                  data-url="{{ ext.remote.url|escapejs }}"
+                                  title="{{ ext.remote.url }}"
+                                  role="button">Flathub</span>
+                            {% else %}
+                            <span class="badge bg-secondary source-badge"
+                                  data-url="{{ ext.remote.url|escapejs }}"
+                                  title="{{ ext.remote.url }}"
+                                  role="button">Other</span>
+                            {% endif %}
+                        {% else %}
+                            <span class="text-muted">—</span>
                         {% endif %}
                     </td>
                     <td>
@@ -397,6 +415,23 @@
     }
 
     // Start watching any row that is currently in-progress.
+// ── Source badge: click to copy URL ─────────────────────────────────────────
+(function () {
+    document.addEventListener('click', function (e) {
+        var badge = e.target.closest('.source-badge');
+        if (!badge) return;
+        var url = badge.dataset.url;
+        if (!url) return;
+        navigator.clipboard.writeText(url).then(function () {
+            var orig = badge.textContent;
+            badge.textContent = 'Copied!';
+            setTimeout(function () { badge.textContent = orig; }, 1200);
+        }).catch(function () {
+            /* clipboard unavailable — silently ignore */
+        });
+    });
+})();
+
     document.querySelectorAll('[data-ext-status="pulling"], [data-ext-status="publishing"]').forEach(function (el) {
         watchRow(el.dataset.extPk);
     });

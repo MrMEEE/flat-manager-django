@@ -88,6 +88,7 @@
                         <th>Branch</th>
                         <th>Arch</th>
                         <th>Dependencies</th>
+                        <th>Source</th>
                         <th>Organisations</th>
                         <th>Created</th>
                         <th>Actions</th>
@@ -174,6 +175,23 @@
                             {% endif %}
                         </td>
                         <td>
+                            {% if package.git_repo_url %}
+                                {% if "flathub" in package.git_repo_url|lower %}
+                                <span class="badge bg-warning text-dark source-badge"
+                                      data-url="{{ package.git_repo_url|escapejs }}"
+                                      title="{{ package.git_repo_url }}"
+                                      role="button">Flathub</span>
+                                {% else %}
+                                <span class="badge bg-secondary source-badge"
+                                      data-url="{{ package.git_repo_url|escapejs }}"
+                                      title="{{ package.git_repo_url }}"
+                                      role="button">Other</span>
+                                {% endif %}
+                            {% else %}
+                                <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                        <td>
                             {% for org in package.organisations.all %}
                             <span class="badge bg-secondary">{{ org.name }}</span>
                             {% empty %}
@@ -237,6 +255,21 @@
 </div>
 </div>
 <script>
+// ── Source badge: click to copy URL ──────────────────────────────────────────
+(function () {
+    document.addEventListener('click', function (e) {
+        var badge = e.target.closest('.source-badge');
+        if (!badge) return;
+        var url = badge.dataset.url;
+        if (!url) return;
+        navigator.clipboard.writeText(url).then(function () {
+            var orig = badge.textContent;
+            badge.textContent = 'Copied!';
+            setTimeout(function () { badge.textContent = orig; }, 1200);
+        }).catch(function () { /* clipboard unavailable */ });
+    });
+})();
+
 // Persists pkg-checkbox selections across AJAX page navigation.
 var _pkgSel = new Set();
 

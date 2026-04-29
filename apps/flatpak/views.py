@@ -10,7 +10,7 @@ from django.urls import reverse_lazy, reverse
 from django.contrib import messages
 from django.shortcuts import render, redirect, get_object_or_404
 from django.conf import settings
-from .models import GPGKey, Repository, RepositorySubset, Package, Build, Promotion, BuildStreamSource, Client, ExternalRef, ExternalRefPromotion, Organisation
+from .models import GPGKey, Repository, RepositorySubset, Package, Build, Promotion, BuildStreamSource, Client, ExternalRef, ExternalRefVersion, ExternalRefPromotion, Organisation
 from .forms import GPGKeyGenerateForm, GPGKeyImportForm, GPGKeyRenewForm
 from .utils.gpg import generate_gpg_key, import_gpg_key, renew_gpg_key
 from .utils.ostree import init_ostree_repo, sign_repo_summary, delete_ostree_repo, temp_gpg_homedir, update_repo_metadata
@@ -1461,13 +1461,63 @@ class PromotionListView(LoginRequiredMixin, ListView):
         if pub_repo:
             pub_qs = pub_qs.filter(package__repository_id=pub_repo)
         context['published_builds'] = pub_qs
-        context['published_externals'] = (
+        # Build source_externals list (used by both ready_to_promote loop and published table).
+        # Prefetch the latest published ExternalRefVersion per ref so the Unpublish button works.
+        from django.db.models import Prefetch as _Prefetch
+        import datetime as _dt
+        _source_externals = list(
             ExternalRef.objects
             .filter(status='published')
             .select_related('repository', 'remote', 'created_by')
-            .prefetch_related('promotions', 'promotions__target_repo')
+            .prefetch_related(
+                'promotions', 'promotions__target_repo',
+                _Prefetch(
+                    'versions',
+                    queryset=ExternalRefVersion.objects.filter(
+                        status='published'
+                    ).order_by('-pulled_at'),
+                    to_attr='_published_versions',
+                ),
+            )
             .order_by('-updated_at')
         )
+        # Build placement rows for the Published Externals table.
+        # Row shape: {external_ref, external_ref_version, repository, remote,
+        #             placement_kind ('source'|'promoted'), placed_at, promotion}.
+        _pub_ext_rows = []
+        for _ext in _source_externals:
+            _ver = _ext._published_versions[0] if _ext._published_versions else None
+            _pub_ext_rows.append({
+                'external_ref': _ext,
+                'external_ref_version': _ver,
+                'repository': _ext.repository,
+                'remote': _ext.remote,
+                'placement_kind': 'source',
+                'placed_at': (_ver.source_published_at if _ver else None) or _ext.updated_at,
+                'promotion': None,
+            })
+        # Add promoted ExternalRef rows (promotions to child repos).
+        for _promo in (
+            ExternalRefPromotion.objects
+            .filter(status='promoted')
+            .select_related(
+                'external_ref', 'external_ref__remote', 'external_ref__repository',
+                'external_ref_version', 'target_repo',
+            )
+            .order_by('-completed_at')
+        ):
+            _pub_ext_rows.append({
+                'external_ref': _promo.external_ref,
+                'external_ref_version': _promo.external_ref_version,
+                'repository': _promo.target_repo,
+                'remote': _promo.external_ref.remote,
+                'placement_kind': 'promoted',
+                'placed_at': _promo.completed_at,
+                'promotion': _promo,
+            })
+        _epoch = _dt.datetime(2000, 1, 1, tzinfo=_dt.timezone.utc)
+        _pub_ext_rows.sort(key=lambda r: r['placed_at'] or _epoch, reverse=True)
+        context['published_externals'] = _pub_ext_rows
         # Use Package.status (canonical truth) so we always see the current
         # state of each package, not stale Build rows from previous attempts.
         context['ready_to_commit'] = (
@@ -1513,7 +1563,7 @@ class PromotionListView(LoginRequiredMixin, ListView):
                 seen_packages.add(build.package_id)
         context['ready_to_promote'] = ready_to_promote
         ready_to_promote_externals = []
-        for ext in context['published_externals']:
+        for ext in _source_externals:
             targets = get_available_external_ref_promotion_targets(ext)
             if targets:
                 ready_to_promote_externals.append({'external_ref': ext, 'targets': targets})
