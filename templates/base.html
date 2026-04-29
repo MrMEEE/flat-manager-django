@@ -73,6 +73,26 @@
         .ws-disconnected {
             background: #dc3545;
         }
+
+        /* ── Table sorting ─────────────────────────────────────────────── */
+        th.sortable {
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+        }
+        th.sortable::after {
+            content: ' \2195'; /* ↕ */
+            opacity: 0.35;
+            font-size: 0.75em;
+        }
+        th.sort-asc::after {
+            content: ' \2191'; /* ↑ */
+            opacity: 0.9;
+        }
+        th.sort-desc::after {
+            content: ' \2193'; /* ↓ */
+            opacity: 0.9;
+        }
     </style>
     
     {% block extra_css %}{% endblock %}
@@ -250,6 +270,71 @@
     </script>
     {% endif %}
     
+    <!-- Table sorting (auto-applied to every table with a thead) -->
+    <script>
+    (function () {
+      'use strict';
+
+      function cellText(row, colIdx) {
+        var cell = row.cells[colIdx];
+        if (!cell) return '';
+        if (cell.dataset.sort !== undefined) return cell.dataset.sort;
+        return cell.textContent.trim();
+      }
+
+      function makeComparer(colIdx, asc) {
+        return function (a, b) {
+          var va = cellText(a, colIdx);
+          var vb = cellText(b, colIdx);
+          var na = parseFloat(va.replace(/[^\d.-]/g, ''));
+          var nb = parseFloat(vb.replace(/[^\d.-]/g, ''));
+          if (!isNaN(na) && !isNaN(nb)) return asc ? na - nb : nb - na;
+          return asc
+            ? va.localeCompare(vb, undefined, { numeric: true, sensitivity: 'base' })
+            : vb.localeCompare(va, undefined, { numeric: true, sensitivity: 'base' });
+        };
+      }
+
+      function initSortableTable(table) {
+        var thead = table.tHead;
+        if (!thead) return;
+        var headerRow = thead.rows[thead.rows.length - 1];
+        if (!headerRow) return;
+        var tbody = table.tBodies[0];
+        if (!tbody) return;
+
+        Array.from(headerRow.cells).forEach(function (th, colIdx) {
+          if (th.colSpan > 1) return;
+          if (th.dataset.nosort !== undefined) return;
+          if (th.querySelector('input[type="checkbox"]')) return;
+          if (!th.textContent.trim()) return;
+
+          th.classList.add('sortable');
+          th.title = 'Click to sort';
+
+          th.addEventListener('click', function () {
+            var asc = !th.classList.contains('sort-asc');
+            Array.from(headerRow.cells).forEach(function (s) {
+              s.classList.remove('sort-asc', 'sort-desc');
+            });
+            th.classList.toggle('sort-asc', asc);
+            th.classList.toggle('sort-desc', !asc);
+            Array.from(tbody.rows)
+              .sort(makeComparer(colIdx, asc))
+              .forEach(function (row) { tbody.appendChild(row); });
+          });
+        });
+      }
+
+      document.addEventListener('DOMContentLoaded', function () {
+        document.querySelectorAll('table').forEach(initSortableTable);
+      });
+
+      // Expose for tables added dynamically after page load
+      window.initSortableTable = initSortableTable;
+    })();
+    </script>
+
     {% block extra_js %}{% endblock %}
 </body>
 </html>
