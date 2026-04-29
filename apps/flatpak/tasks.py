@@ -756,13 +756,27 @@ def package_from_git_task(self, package_id):
         else:
             log_build(build, 'info', "Submodule update completed (no output)")
 
-        # Verify shared-modules directory if the manifest uses it
+        # Verify shared-modules directory only if it is actually declared as a submodule
         shared_modules_path = os.path.join(source_dir, 'shared-modules')
         if os.path.exists(shared_modules_path):
             log_build(build, 'info', f"shared-modules directory exists: {os.listdir(shared_modules_path)[:10]}")
-        elif os.path.exists(os.path.join(source_dir, '.gitmodules')):
-            # .gitmodules present → submodules were expected; raise so the cause is clear
-            raise RuntimeError("shared-modules directory NOT FOUND after submodule init — check that all submodule URLs are accessible")
+        else:
+            gitmodules_path = os.path.join(source_dir, '.gitmodules')
+            if os.path.exists(gitmodules_path):
+                try:
+                    with open(gitmodules_path, 'r') as f:
+                        gitmodules_content = f.read()
+                    if 'shared-modules' in gitmodules_content:
+                        raise RuntimeError(
+                            "shared-modules directory NOT FOUND after submodule init — "
+                            "check that all submodule URLs are accessible"
+                        )
+                    else:
+                        log_build(build, 'info', "shared-modules not used by this repo (not in .gitmodules)")
+                except RuntimeError:
+                    raise
+                except Exception as e:
+                    log_build(build, 'warning', f"Could not verify shared-modules: {e}")
         
         # Get commit hash
         commit_result = subprocess.run(
