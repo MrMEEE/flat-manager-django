@@ -4104,7 +4104,7 @@ def _run_version_script(script_text, package_id):
         with tempfile.NamedTemporaryFile(
             mode='w', suffix='.sh', prefix='fmd_verscript_', delete=False
         ) as tmp:
-            tmp.write(script_text)
+            tmp.write(script_text.replace('\r\n', '\n').replace('\r', '\n'))
             tmp_path = tmp.name
 
         os.chmod(tmp_path, stat.S_IRWXU)
