@@ -68,6 +68,10 @@ class RpmPackage(models.Model):
         max_length=500,
         help_text="Relative path to the .spec file within the repo (e.g. SPECS/mypackage.spec)"
     )
+    allow_internet_access = models.BooleanField(
+        default=False,
+        help_text="Allow mock builds for this package to access the internet.",
+    )
     distributions = models.ManyToManyField(
         RpmDistribution,
         blank=True,

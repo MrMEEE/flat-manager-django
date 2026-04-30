@@ -131,6 +131,23 @@
                     </div>
                     <div id="spec-fetch-error" class="alert alert-danger py-2 mb-3" style="display:none"></div>
 
+                    <div class="mb-3">
+                        <div class="form-check form-switch">
+                            <input type="checkbox"
+                                   name="{{ form.allow_internet_access.html_name }}"
+                                   id="{{ form.allow_internet_access.id_for_label }}"
+                                   class="form-check-input {% if form.allow_internet_access.errors %}is-invalid{% endif %}"
+                                   {% if form.allow_internet_access.value %}checked{% endif %}>
+                            <label for="{{ form.allow_internet_access.id_for_label }}" class="form-check-label fw-semibold">
+                                Allow internet access during mock builds
+                            </label>
+                            {% if form.allow_internet_access.errors %}
+                            <div class="invalid-feedback d-block">{{ form.allow_internet_access.errors|join:", " }}</div>
+                            {% endif %}
+                            <div class="form-text">{{ form.allow_internet_access.help_text }}</div>
+                        </div>
+                    </div>
+
                     <hr class="my-3">
                     <h6 class="text-muted mb-3"><i class="bi bi-arrow-up-circle"></i> Upstream Version Tracking <span class="badge bg-secondary fw-normal">optional</span></h6>
 

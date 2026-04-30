@@ -18,6 +18,14 @@ logger = logging.getLogger(__name__)
 _ANSI_ESC_RE = re.compile(r'\x1b\[[0-9;]*[mKGHJAB]')
 
 
+def _sanitize_log_message(message):
+    message = _ANSI_ESC_RE.sub('', message)
+    if '\r' in message:
+        message = message.split('\r')[-1]
+    message = ''.join(ch for ch in message if ord(ch) <= 0xFFFF)
+    return message.strip()
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -25,10 +33,7 @@ _ANSI_ESC_RE = re.compile(r'\x1b\[[0-9;]*[mKGHJAB]')
 def log_rpm_build(build, level, message):
     """Persist a log line for an RPM build and echo it to the Python logger."""
     from apps.rpm.models import RpmBuildLog
-    message = _ANSI_ESC_RE.sub('', message)
-    if '\r' in message:
-        message = message.split('\r')[-1]
-    message = message.strip()
+    message = _sanitize_log_message(message)
     if not message:
         return
     RpmBuildLog.objects.create(build=build, message=message, level=level)
@@ -87,7 +92,7 @@ def _update_package_status(package):
 # Mock helpers
 # ---------------------------------------------------------------------------
 
-def _create_mock_config(base_config, build, local_repo_path, cfg_path=None):
+def _create_mock_config(base_config, build, local_repo_path, allow_internet_access=False, cfg_path=None):
     """
     Write a temporary Mock config that inherits from the stock RHEL config and
     adds the repos selected for *build* plus the distribution's local built-RPMs
@@ -103,6 +108,8 @@ def _create_mock_config(base_config, build, local_repo_path, cfg_path=None):
     build_id = build.pk
     cfg = f"include('/etc/mock/{base_config}.cfg')\n\n"
     cfg += f"config_opts['uniqueext'] = 'fmd{build_id}'\n"
+    cfg += f"config_opts['rpmbuild_networking'] = {bool(allow_internet_access)}\n"
+    cfg += f"config_opts['use_host_resolv'] = {bool(allow_internet_access)}\n"
 
     selected_repos = list(build.selected_repos.all())
 
@@ -494,7 +501,13 @@ def rpm_build_task(self, build_id):
             dist.mock_config,
             build,
             dist.repo_path,
+            allow_internet_access=build.package.allow_internet_access,
             cfg_path=os.path.join(mock_cfg_dir, f'fmd-mock-{build.pk}.cfg'),
+        )
+        log_rpm_build(
+            build,
+            'info',
+            f"Internet access {'enabled' if build.package.allow_internet_access else 'disabled'} for this build",
         )
 
         # ---- Build SRPM ----

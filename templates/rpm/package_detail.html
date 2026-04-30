@@ -68,6 +68,19 @@
                     <dt class="col-sm-4">SPEC File</dt>
                     <dd class="col-sm-8"><code>{{ package.spec_file }}</code></dd>
 
+                    <dt class="col-sm-4">Internet Access</dt>
+                    <dd class="col-sm-8">
+                        {% if package.allow_internet_access %}
+                        <span class="badge bg-warning text-dark">
+                            <i class="bi bi-wifi"></i> Enabled
+                        </span>
+                        {% else %}
+                        <span class="badge bg-secondary">
+                            <i class="bi bi-wifi-off"></i> Disabled
+                        </span>
+                        {% endif %}
+                    </dd>
+
                     <dt class="col-sm-4">Distributions</dt>
                     <dd class="col-sm-8">
                         {% if dist_destinations %}
