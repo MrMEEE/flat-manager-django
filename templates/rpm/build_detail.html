@@ -4,9 +4,8 @@
 
 {% block extra_css %}
 <style>
-#log-container {
+.log-container {
     background: #1e1e1e;
-    border-radius: 4px;
     padding: 1rem;
     height: 500px;
     overflow-y: auto;
@@ -158,17 +157,71 @@
 </div>
 {% endif %}
 
-<!-- Log viewer -->
+<!-- Log viewer with tabs -->
 <div class="card">
-    <div class="card-header d-flex justify-content-between align-items-center">
-        <h6 class="mb-0"><i class="bi bi-terminal"></i> Build Log</h6>
-        <button class="btn btn-sm btn-outline-secondary" onclick="scrollLogsToBottom()">
-            <i class="bi bi-arrow-down"></i> Bottom
-        </button>
+    <div class="card-header p-0">
+        <div class="d-flex align-items-center">
+            <ul class="nav nav-tabs border-bottom-0 flex-grow-1 px-2 pt-2" id="log-tabs">
+                <li class="nav-item">
+                    <button class="nav-link active" id="tab-btn-stream" onclick="showLogTab('stream')">
+                        <i class="bi bi-terminal"></i> Build Log
+                    </button>
+                </li>
+                <li class="nav-item">
+                    <button class="nav-link" id="tab-btn-build.log" onclick="showLogTab('build.log')">build.log</button>
+                </li>
+                <li class="nav-item">
+                    <button class="nav-link" id="tab-btn-root.log" onclick="showLogTab('root.log')">root.log</button>
+                </li>
+                <li class="nav-item">
+                    <button class="nav-link" id="tab-btn-installed_pkgs.log" onclick="showLogTab('installed_pkgs.log')">installed_pkgs.log</button>
+                </li>
+                <li class="nav-item">
+                    <button class="nav-link" id="tab-btn-hw_info.log" onclick="showLogTab('hw_info.log')">hw_info.log</button>
+                </li>
+                <li class="nav-item">
+                    <button class="nav-link" id="tab-btn-state.log" onclick="showLogTab('state.log')">state.log</button>
+                </li>
+            </ul>
+            <div class="px-2 pb-1 flex-shrink-0">
+                <button class="btn btn-sm btn-outline-secondary" onclick="scrollActiveLogToBottom()">
+                    <i class="bi bi-arrow-down"></i> Bottom
+                </button>
+            </div>
+        </div>
     </div>
     <div class="card-body p-0">
-        <div id="log-container">
-            <div id="logs-placeholder" style="color:#858585">Loading logs&hellip;</div>
+        <!-- Tab: streaming DB log -->
+        <div id="log-pane-stream" class="log-pane">
+            <div id="log-container" class="log-container">
+                <div id="logs-placeholder" style="color:#858585">Loading logs&hellip;</div>
+            </div>
+        </div>
+        <!-- Tabs: mock log files -->
+        <div id="log-pane-build.log" class="log-pane" style="display:none">
+            <div id="mock-log-container-build.log" class="log-container">
+                <span style="color:#858585">Select this tab to load the log file.</span>
+            </div>
+        </div>
+        <div id="log-pane-root.log" class="log-pane" style="display:none">
+            <div id="mock-log-container-root.log" class="log-container">
+                <span style="color:#858585">Select this tab to load the log file.</span>
+            </div>
+        </div>
+        <div id="log-pane-installed_pkgs.log" class="log-pane" style="display:none">
+            <div id="mock-log-container-installed_pkgs.log" class="log-container">
+                <span style="color:#858585">Select this tab to load the log file.</span>
+            </div>
+        </div>
+        <div id="log-pane-hw_info.log" class="log-pane" style="display:none">
+            <div id="mock-log-container-hw_info.log" class="log-container">
+                <span style="color:#858585">Select this tab to load the log file.</span>
+            </div>
+        </div>
+        <div id="log-pane-state.log" class="log-pane" style="display:none">
+            <div id="mock-log-container-state.log" class="log-container">
+                <span style="color:#858585">Select this tab to load the log file.</span>
+            </div>
         </div>
     </div>
 </div>
@@ -193,16 +246,66 @@
 <script>
 const buildId = {{ build.pk }};
 const logsApiUrl = '{% url "rpm:build_logs" build.pk %}';
+const mockLogApiUrl = '{% url "rpm:build_mock_log" build.pk %}';
 let buildStatus = '{{ build.status }}';
 let lastLogCount = 0;
 const logsDiv = document.getElementById('log-container');
+let activeTab = 'stream';
+const loadedMockLogs = new Set();
+const MOCK_LOG_FILES = ['build.log', 'root.log', 'installed_pkgs.log', 'hw_info.log', 'state.log'];
 
 const activeStatuses = ['building', 'pending'];
 
-function scrollLogsToBottom() {
-    logsDiv.scrollTop = logsDiv.scrollHeight;
+// ---------------------------------------------------------------------------
+// Tab switching
+// ---------------------------------------------------------------------------
+function showLogTab(tabName) {
+    document.querySelectorAll('.log-pane').forEach(p => { p.style.display = 'none'; });
+    document.querySelectorAll('#log-tabs .nav-link').forEach(b => b.classList.remove('active'));
+
+    document.getElementById('log-pane-' + tabName).style.display = 'block';
+    document.getElementById('tab-btn-' + tabName).classList.add('active');
+    activeTab = tabName;
+
+    if (MOCK_LOG_FILES.includes(tabName) && !loadedMockLogs.has(tabName)) {
+        loadMockLog(tabName);
+    }
 }
 
+function scrollActiveLogToBottom() {
+    const pane = document.getElementById('log-pane-' + activeTab);
+    if (!pane) return;
+    const container = pane.querySelector('.log-container');
+    if (container) container.scrollTop = container.scrollHeight;
+}
+
+// ---------------------------------------------------------------------------
+// Mock log file loading
+// ---------------------------------------------------------------------------
+async function loadMockLog(filename) {
+    const container = document.getElementById('mock-log-container-' + filename);
+    container.innerHTML = '<span style="color:#858585">Loading&hellip;</span>';
+    try {
+        const resp = await fetch(mockLogApiUrl + '?file=' + encodeURIComponent(filename));
+        const data = await resp.json();
+        if (!data.available) {
+            container.innerHTML = '<span style="color:#858585">Log file not available — build may not have reached this stage or the result directory was cleaned up.</span>';
+            return;
+        }
+        container.textContent = '';
+        const pre = document.createElement('pre');
+        pre.style.cssText = 'color:#d4d4d4;margin:0;white-space:pre-wrap;word-break:break-all;font-family:inherit;font-size:inherit;';
+        pre.textContent = data.content;
+        container.appendChild(pre);
+        loadedMockLogs.add(filename);
+    } catch (e) {
+        container.innerHTML = '<span style="color:#f48771">Error loading log file.</span>';
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Streaming DB log (Build Log tab)
+// ---------------------------------------------------------------------------
 function statusBadgeHtml(status) {
     const colors = {
         pending: 'secondary', building: 'primary', built: 'success',
@@ -233,7 +336,7 @@ async function updateLogs() {
                 const empty = document.createElement('div');
                 empty.id = 'logs-empty';
                 empty.style.color = '#858585';
-                empty.textContent = activeStatuses.includes(buildStatus) ? 'Waiting for logs…' : 'No logs available.';
+                empty.textContent = activeStatuses.includes(buildStatus) ? 'Waiting for logs\u2026' : 'No logs available.';
                 logsDiv.appendChild(empty);
             }
         } else {
@@ -270,7 +373,7 @@ async function updateLogs() {
                 logsDiv.appendChild(entry);
             }
             lastLogCount = newLogs.length;
-            scrollLogsToBottom();
+            if (activeTab === 'stream') scrollActiveLogToBottom();
         }
 
         // Update status if changed

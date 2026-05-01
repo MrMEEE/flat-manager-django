@@ -20,6 +20,7 @@ urlpatterns = [
     # Builds
     path('rpms/builds/<int:pk>/', views.RpmBuildDetailView.as_view(), name='build_detail'),
     path('rpms/builds/<int:pk>/logs/', views.RpmBuildLogsApiView.as_view(), name='build_logs'),
+    path('rpms/builds/<int:pk>/mock-log/', views.RpmBuildMockLogView.as_view(), name='build_mock_log'),
     path('rpms/builds/<int:pk>/retry/', views.RpmBuildRetryView.as_view(), name='build_retry'),
     path('rpms/builds/<int:pk>/cancel/', views.RpmBuildCancelView.as_view(), name='build_cancel'),
     path('rpms/builds/<int:pk>/delete/', views.RpmBuildDeleteView.as_view(), name='build_delete'),

@@ -207,6 +207,7 @@ class RpmBuild(models.Model):
     rpm_files = models.JSONField(default=list, blank=True, help_text="Filenames of built RPMs")
     error_message = models.TextField(blank=True)
     celery_task_id = models.CharField(max_length=255, blank=True)
+    result_dir = models.CharField(max_length=2000, blank=True, help_text="Path to the mock build result directory on disk")
     started_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 

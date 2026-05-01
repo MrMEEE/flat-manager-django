@@ -335,6 +335,34 @@ class RpmBuildLogsApiView(LoginRequiredMixin, View):
         return JsonResponse({'status': build.status, 'logs': log_data})
 
 
+class RpmBuildMockLogView(LoginRequiredMixin, View):
+    """AJAX — return the content of a mock log file from the build result directory."""
+    ALLOWED_FILES = frozenset({
+        'build.log', 'hw_info.log', 'installed_pkgs.log', 'root.log', 'state.log',
+    })
+
+    def get(self, request, pk):
+        build = get_object_or_404(RpmBuild, pk=pk)
+        filename = request.GET.get('file', '')
+        if filename not in self.ALLOWED_FILES:
+            return JsonResponse({'error': 'Invalid log file name.'}, status=400)
+
+        if not build.result_dir:
+            return JsonResponse({'available': False, 'content': None})
+
+        for subdir in ('rpms', 'srpm'):
+            candidate = os.path.join(build.result_dir, subdir, filename)
+            if os.path.isfile(candidate):
+                try:
+                    with open(candidate, encoding='utf-8', errors='replace') as fh:
+                        content = fh.read()
+                    return JsonResponse({'available': True, 'content': content})
+                except OSError:
+                    break
+
+        return JsonResponse({'available': False, 'content': None})
+
+
 class RpmBuildRetryView(LoginRequiredMixin, View):
     """POST — create a new build record (copying repo selection) and queue it."""
 

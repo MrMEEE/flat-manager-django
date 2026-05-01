@@ -454,6 +454,8 @@ def rpm_build_task(self, build_id):
         os.makedirs(work_dir, exist_ok=True)
         os.makedirs(result_dir, exist_ok=True)
         os.makedirs(mock_cfg_dir, exist_ok=True)
+        build.result_dir = result_dir
+        build.save(update_fields=['result_dir'])
 
         # ---- Clone ----
         log_rpm_build(
