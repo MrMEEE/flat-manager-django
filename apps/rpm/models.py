@@ -72,6 +72,10 @@ class RpmPackage(models.Model):
         default=False,
         help_text="Allow mock builds for this package to access the internet.",
     )
+    cleanup_on_success = models.BooleanField(
+        default=True,
+        help_text="Remove the mock chroot after a successful build (saves disk space). Disable to inspect the chroot after a successful build.",
+    )
     distributions = models.ManyToManyField(
         RpmDistribution,
         blank=True,

@@ -14,7 +14,7 @@ class RpmPackageForm(forms.ModelForm):
     class Meta:
         model = RpmPackage
         fields = ['name', 'description', 'git_repo_url', 'git_branch', 'spec_file',
-                  'allow_internet_access',
+                  'allow_internet_access', 'cleanup_on_success',
                   'upstream_url', 'upstream_version_script', 'distributions']
         widgets = {
             'description': forms.Textarea(attrs={'rows': 3, 'placeholder': 'Optional notes about this package…'}),
@@ -38,4 +38,5 @@ class RpmPackageForm(forms.ModelForm):
             'git_branch': 'Branch to clone when building.',
             'spec_file': 'Relative path to the .spec file within the repository.',
             'allow_internet_access': 'Disabled by default. Enable only for packages that must fetch dependencies during the mock build.',
+            'cleanup_on_success': 'Enabled by default. Disable to keep the mock chroot around after a successful build for inspection.',
         }

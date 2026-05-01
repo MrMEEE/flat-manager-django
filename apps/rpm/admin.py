@@ -19,8 +19,8 @@ class RpmRepositoryAdmin(admin.ModelAdmin):
 
 @admin.register(RpmPackage)
 class RpmPackageAdmin(admin.ModelAdmin):
-    list_display = ['name', 'git_repo_url', 'git_branch', 'spec_file', 'allow_internet_access', 'status', 'created_at']
-    list_filter = ['status', 'allow_internet_access']
+    list_display = ['name', 'git_repo_url', 'git_branch', 'spec_file', 'allow_internet_access', 'cleanup_on_success', 'status', 'created_at']
+    list_filter = ['status', 'allow_internet_access', 'cleanup_on_success']
     search_fields = ['name', 'git_repo_url']
     readonly_fields = ['created_at', 'updated_at', 'status']
     filter_horizontal = ['distributions']

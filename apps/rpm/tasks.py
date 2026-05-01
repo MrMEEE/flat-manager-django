@@ -92,7 +92,7 @@ def _update_package_status(package):
 # Mock helpers
 # ---------------------------------------------------------------------------
 
-def _create_mock_config(base_config, build, local_repo_path, allow_internet_access=False, cfg_path=None):
+def _create_mock_config(base_config, build, local_repo_path, allow_internet_access=False, cleanup_on_success=True, cfg_path=None):
     """
     Write a temporary Mock config that inherits from the stock RHEL config and
     adds the repos selected for *build* plus the distribution's local built-RPMs
@@ -110,6 +110,7 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
     cfg += f"config_opts['uniqueext'] = 'fmd{build_id}'\n"
     cfg += f"config_opts['rpmbuild_networking'] = {bool(allow_internet_access)}\n"
     cfg += f"config_opts['use_host_resolv'] = {bool(allow_internet_access)}\n"
+    cfg += f"config_opts['cleanup_on_success'] = {bool(cleanup_on_success)}\n"
 
     selected_repos = list(build.selected_repos.all())
 
@@ -502,12 +503,18 @@ def rpm_build_task(self, build_id):
             build,
             dist.repo_path,
             allow_internet_access=build.package.allow_internet_access,
+            cleanup_on_success=build.package.cleanup_on_success,
             cfg_path=os.path.join(mock_cfg_dir, f'fmd-mock-{build.pk}.cfg'),
         )
         log_rpm_build(
             build,
             'info',
             f"Internet access {'enabled' if build.package.allow_internet_access else 'disabled'} for this build",
+        )
+        log_rpm_build(
+            build,
+            'info',
+            f"Chroot cleanup on success: {'enabled' if build.package.cleanup_on_success else 'disabled'}",
         )
 
         # ---- Build SRPM ----

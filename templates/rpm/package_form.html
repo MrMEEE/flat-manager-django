@@ -148,6 +148,23 @@
                         </div>
                     </div>
 
+                    <div class="mb-3">
+                        <div class="form-check form-switch">
+                            <input type="checkbox"
+                                   name="{{ form.cleanup_on_success.html_name }}"
+                                   id="{{ form.cleanup_on_success.id_for_label }}"
+                                   class="form-check-input {% if form.cleanup_on_success.errors %}is-invalid{% endif %}"
+                                   {% if form.cleanup_on_success.value %}checked{% endif %}>
+                            <label for="{{ form.cleanup_on_success.id_for_label }}" class="form-check-label fw-semibold">
+                                Clean up mock chroot after successful builds
+                            </label>
+                            {% if form.cleanup_on_success.errors %}
+                            <div class="invalid-feedback d-block">{{ form.cleanup_on_success.errors|join:", " }}</div>
+                            {% endif %}
+                            <div class="form-text">{{ form.cleanup_on_success.help_text }}</div>
+                        </div>
+                    </div>
+
                     <hr class="my-3">
                     <h6 class="text-muted mb-3"><i class="bi bi-arrow-up-circle"></i> Upstream Version Tracking <span class="badge bg-secondary fw-normal">optional</span></h6>
 

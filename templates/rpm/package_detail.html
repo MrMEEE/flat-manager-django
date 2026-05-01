@@ -81,6 +81,19 @@
                         {% endif %}
                     </dd>
 
+                    <dt class="col-sm-4">Cleanup on Success</dt>
+                    <dd class="col-sm-8">
+                        {% if package.cleanup_on_success %}
+                        <span class="badge bg-success">
+                            <i class="bi bi-trash3"></i> Enabled
+                        </span>
+                        {% else %}
+                        <span class="badge bg-secondary">
+                            <i class="bi bi-trash3"></i> Disabled
+                        </span>
+                        {% endif %}
+                    </dd>
+
                     <dt class="col-sm-4">Distributions</dt>
                     <dd class="col-sm-8">
                         {% if dist_destinations %}
