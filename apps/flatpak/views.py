@@ -3262,6 +3262,9 @@ class ClientCheckinView(View):
                     'name':            pkg.get('name', ''),
                 })
 
+        serial_number = data.get('serial_number', '').strip()
+        machine_type = data.get('machine_type', '').strip()
+
         client, _ = Client.objects.get_or_create(hostname=hostname)
         client.last_checkin = timezone.now()
         client.remotes = remotes
@@ -3273,6 +3276,13 @@ class ClientCheckinView(View):
         client.outdated_flatpaks = outdated_flatpaks
         client.outdated_count = len(outdated_flatpaks)
         client.user_flatpaks = user_flatpaks
+        # Only overwrite serial_number / machine_type when the client sends a
+        # non-empty value — avoids blanking a previously stored value when
+        # dmidecode is unavailable (e.g. VM without DMI access).
+        if serial_number:
+            client.serial_number = serial_number
+        if machine_type:
+            client.machine_type = machine_type
         client.save()
 
         # Notify the clients page in real-time so it can update without reload.
