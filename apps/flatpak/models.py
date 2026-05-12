@@ -890,6 +890,10 @@ class Client(models.Model):
         default=0,
         help_text="Flatpaks that have an update available (any remote)."
     )
+    commit_outdated_count = models.IntegerField(
+        default=0,
+        help_text="Managed flatpaks whose deployed commit differs from the server's published commit."
+    )
     installed_flatpaks = models.JSONField(
         default=list,
         help_text="All installed flatpaks: [{app_id, version, origin}, ...]."

@@ -3066,7 +3066,7 @@ class ClientListView(LoginRequiredMixin, ListView):
         for client in clients:
             if client.last_checkin is None or client.last_checkin < threshold:
                 client.status = 'red'
-            elif client.outdated_count > 0 or client.foreign_count > 0:
+            elif client.outdated_count > 0 or client.foreign_count > 0 or client.commit_outdated_count > 0:
                 client.status = 'yellow'
             else:
                 client.status = 'green'
@@ -3169,7 +3169,7 @@ class ClientDetailView(LoginRequiredMixin, DetailView):
                 # Commit-based check for regular managed packages
                 if client_commit and pkg['app_id'] in pkg_commit_map:
                     server_commit = pkg_commit_map[pkg['app_id']]
-                    if client_commit != server_commit:
+                    if not server_commit.startswith(client_commit):
                         entry['pkg_status'] = 'commit_outdated'
                         entry['server_commit'] = server_commit
                         commit_outdated_count += 1
@@ -3178,7 +3178,7 @@ class ClientDetailView(LoginRequiredMixin, DetailView):
                     ext_key = (pkg['app_id'], pkg.get('branch', ''))
                     if ext_key in ext_commit_map:
                         server_commit = ext_commit_map[ext_key]
-                        if client_commit != server_commit:
+                        if not server_commit.startswith(client_commit):
                             entry['pkg_status'] = 'commit_outdated'
                             entry['server_commit'] = server_commit
                             commit_outdated_count += 1
@@ -3192,12 +3192,12 @@ class ClientDetailView(LoginRequiredMixin, DetailView):
             (p.get('name') or p['app_id']).lower(),
         ))
         context['installed_annotated'] = annotated
-        context['commit_outdated_count'] = commit_outdated_count
+        context['commit_outdated_count'] = client.commit_outdated_count
 
-        # Determine client health status (after annotation so commit_outdated is counted)
+        # Determine client health status
         if client.last_checkin is None or client.last_checkin < threshold:
             client.status = 'red'
-        elif client.outdated_count > 0 or client.foreign_count > 0 or commit_outdated_count > 0:
+        elif client.outdated_count > 0 or client.foreign_count > 0 or client.commit_outdated_count > 0:
             client.status = 'yellow'
         else:
             client.status = 'green'
@@ -3342,6 +3342,52 @@ class ClientCheckinView(View):
                     'name':            pkg.get('name', ''),
                 })
 
+        # Compute commit-based outdated count.
+        # The client sends a short (12-char) commit hash from `flatpak list
+        # --columns=active`; the server stores full 64-char hashes.
+        # Use startswith() to compare.
+        commit_outdated_count = 0
+        if managed_app_ids:
+            # Build a map of app_id → full commit hash for published packages.
+            _pkg_commit_map = {}
+            for b in (
+                Build.objects
+                .filter(package__package_id__in=managed_app_ids, status='published')
+                .select_related('package')
+                .order_by('package__package_id', '-build_number')
+            ):
+                if b.package.package_id not in _pkg_commit_map and b.commit_hash:
+                    _pkg_commit_map[b.package.package_id] = b.commit_hash
+
+            # Build a map of (app_id, branch) → full commit hash for published ExternalRefs.
+            _ext_commit_map = {}
+            for ext in ExternalRef.objects.filter(status='published').only('ref', 'commit_hash'):
+                parts = ext.ref.split('/')
+                if len(parts) >= 4 and ext.commit_hash:
+                    key = (parts[1], parts[3])
+                    if key not in _ext_commit_map:
+                        _ext_commit_map[key] = ext.commit_hash
+
+            already_outdated = {p['app_id'] for p in outdated_flatpaks}
+            for pkg in installed:
+                if pkg.get('origin') not in managed_set:
+                    continue
+                if pkg['app_id'] in already_outdated:
+                    continue
+                client_commit = (pkg.get('commit') or '').strip()
+                if not client_commit:
+                    continue
+                # Check regular package
+                server_commit = _pkg_commit_map.get(pkg['app_id'], '')
+                if server_commit and not server_commit.startswith(client_commit):
+                    commit_outdated_count += 1
+                    continue
+                # Check external ref (runtime/SDK)
+                ext_key = (pkg['app_id'], pkg.get('branch', ''))
+                server_commit = _ext_commit_map.get(ext_key, '')
+                if server_commit and not server_commit.startswith(client_commit):
+                    commit_outdated_count += 1
+
         serial_number = data.get('serial_number', '').strip()
         machine_type = data.get('machine_type', '').strip()
 
@@ -3355,6 +3401,7 @@ class ClientCheckinView(View):
         client.foreign_count = len(foreign_flatpaks)
         client.outdated_flatpaks = outdated_flatpaks
         client.outdated_count = len(outdated_flatpaks)
+        client.commit_outdated_count = commit_outdated_count
         client.user_flatpaks = user_flatpaks
         # Only overwrite serial_number / machine_type when the client sends a
         # non-empty value — avoids blanking a previously stored value when

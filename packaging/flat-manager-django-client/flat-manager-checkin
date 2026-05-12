@@ -152,7 +152,7 @@ def refresh_appstream(users=None):
 
 
 def get_system_installed():
-    out = run(['flatpak', 'list', '--system', '--columns=application,version,origin,name,branch,active-commit'])
+    out = run(['flatpak', 'list', '--system', '--columns=application,version,origin,name,branch,active'])
     return parse_installed(out)
 
 
@@ -227,7 +227,7 @@ def collect_user_flatpaks(users=None):
     for username, _ in users:
         installed = parse_installed(
             run_as_user(username, ['flatpak', 'list', '--user',
-                                   '--columns=application,version,origin,name,branch,active-commit'])
+                                   '--columns=application,version,origin,name,branch,active'])
         )
         if installed:
             result.append({
