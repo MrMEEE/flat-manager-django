@@ -45,6 +45,7 @@
                         <th class="text-center">Installed</th>
                         <th class="text-center">Foreign</th>
                         <th class="text-center">Outdated</th>
+                        <th class="text-center">Outdated (commit)</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -136,6 +137,15 @@
                                     onclick="showFlatpakList('{{ client.hostname|escapejs }}', 'outdated', {{ client.pk }})">
                                 {{ client.outdated_count }}
                             </button>
+                            {% else %}
+                            <span class="text-muted">0</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center" id="commit-outdated-{{ client.pk }}">
+                            {% if client.commit_outdated_count > 0 %}
+                            <a href="{% url 'flatpak:client_detail' client.pk %}" class="btn btn-sm btn-outline-warning text-warning">
+                                {{ client.commit_outdated_count }}
+                            </a>
                             {% else %}
                             <span class="text-muted">0</span>
                             {% endif %}
@@ -400,6 +410,16 @@ function onWebSocketMessage(data) {
     _updateCount('foreign',   data.foreign_count,    'btn-outline-warning text-warning');
     _updateCount('outdated',  data.outdated_count,   'btn-outline-danger text-danger');
 
+    // Update commit-outdated cell.
+    const commitCell = document.getElementById('commit-outdated-' + pk);
+    if (commitCell !== null) {
+        if (data.commit_outdated_count > 0) {
+            commitCell.innerHTML = `<a href="/flatpak/clients/${pk}/" class="btn btn-sm btn-outline-warning text-warning">${data.commit_outdated_count}</a>`;
+        } else {
+            commitCell.innerHTML = '<span class="text-muted">0</span>';
+        }
+    }
+
     // Update serial number cell (col 3).
     if (visibleRow.cells[3]) {
         visibleRow.cells[3].innerHTML = data.serial_number
@@ -411,7 +431,7 @@ function onWebSocketMessage(data) {
     let badgeHtml;
     if (!data.last_checkin) {
         badgeHtml = '<span class="badge bg-danger"><i class="bi bi-x-circle"></i> Offline</span>';
-    } else if (data.outdated_count > 0 || data.foreign_count > 0) {
+    } else if (data.outdated_count > 0 || data.foreign_count > 0 || data.commit_outdated_count > 0) {
         badgeHtml = '<span class="badge bg-warning text-dark"><i class="bi bi-exclamation-triangle"></i> Issues</span>';
     } else {
         badgeHtml = '<span class="badge bg-success"><i class="bi bi-check-circle"></i> OK</span>';

@@ -3428,6 +3428,7 @@ class ClientCheckinView(View):
                         'installed_count': client.installed_count,
                         'foreign_count': client.foreign_count,
                         'outdated_count': client.outdated_count,
+                        'commit_outdated_count': client.commit_outdated_count,
                         'installed_flatpaks': installed,
                         'foreign_flatpaks': foreign_flatpaks,
                         'outdated_flatpaks': outdated_flatpaks,
