@@ -801,17 +801,25 @@ def get_available_bst_promotion_targets(build):
     return available
 
 
-def get_available_external_ref_promotion_targets(external_ref):
+def get_available_external_ref_promotion_targets(external_ref, current_version=None):
     """
     Returns list of Repository objects that this ExternalRef can currently be
     promoted to. Same chain logic as package/BST promotions.
+
+    When *current_version* (an ExternalRefVersion instance) is supplied only
+    promotions for that specific version are considered, so a newly-pulled
+    commit is not blocked by older-version promotion records.
     """
     source_repo = external_ref.repository
+    if current_version is not None:
+        version_promotions = external_ref.promotions.filter(external_ref_version=current_version)
+    else:
+        version_promotions = external_ref.promotions.all()
     completed_ids = set(
-        external_ref.promotions.filter(status='promoted').values_list('target_repo_id', flat=True)
+        version_promotions.filter(status='promoted').values_list('target_repo_id', flat=True)
     )
     taken_ids = set(
-        external_ref.promotions.exclude(status='failed').values_list('target_repo_id', flat=True)
+        version_promotions.exclude(status='failed').values_list('target_repo_id', flat=True)
     )
     available = []
     visited = {source_repo.id}
@@ -1564,9 +1572,14 @@ class PromotionListView(LoginRequiredMixin, ListView):
         context['ready_to_promote'] = ready_to_promote
         ready_to_promote_externals = []
         for ext in _source_externals:
-            targets = get_available_external_ref_promotion_targets(ext)
+            current_ver = ext._published_versions[0] if ext._published_versions else None
+            targets = get_available_external_ref_promotion_targets(ext, current_version=current_ver)
             if targets:
-                ready_to_promote_externals.append({'external_ref': ext, 'targets': targets})
+                ready_to_promote_externals.append({
+                    'external_ref': ext,
+                    'external_ref_version': current_ver,
+                    'targets': targets,
+                })
         context['ready_to_promote_externals'] = ready_to_promote_externals
         context['repositories'] = Repository.objects.filter(is_active=True)
         context['promo_status_choices'] = Promotion.STATUS_CHOICES
