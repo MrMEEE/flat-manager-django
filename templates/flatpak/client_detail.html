@@ -177,9 +177,17 @@
                         {% if pkg.pkg_status == 'outdated' %}
                         <i class="bi bi-arrow-right text-danger ms-1"></i>
                         <span class="text-danger fw-semibold">{{ pkg.new_version }}</span>
-                        {% elif pkg.pkg_status == 'commit_outdated' %}
-                        <br><small class="text-muted">client: <code>{{ pkg.commit|slice:":12" }}</code></small>
-                        <br><small class="text-warning">server: <code>{{ pkg.server_commit|slice:":12" }}</code></small>
+                        {% endif %}
+                        {% if pkg.commit or pkg.server_commit %}
+                        <details class="mt-1">
+                            <summary class="text-muted small" style="cursor:pointer;">commits</summary>
+                            <small class="text-muted">client: <code>{{ pkg.commit|slice:":12"|default:"—" }}</code></small><br>
+                            {% if pkg.pkg_status == 'commit_outdated' %}
+                            <small class="text-warning">server: <code>{{ pkg.server_commit|slice:":12" }}</code></small>
+                            {% else %}
+                            <small class="text-muted">server: <code>{{ pkg.server_commit|slice:":12"|default:"—" }}</code></small>
+                            {% endif %}
+                        </details>
                         {% endif %}
                     </td>
                     <td>{{ pkg.origin }}</td>

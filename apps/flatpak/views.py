@@ -3167,20 +3167,20 @@ class ClientDetailView(LoginRequiredMixin, DetailView):
             else:
                 entry['pkg_status'] = 'uptodate'
                 # Commit-based check for regular managed packages
-                if client_commit and pkg['app_id'] in pkg_commit_map:
+                if pkg['app_id'] in pkg_commit_map:
                     server_commit = pkg_commit_map[pkg['app_id']]
-                    if not server_commit.startswith(client_commit):
+                    entry['server_commit'] = server_commit
+                    if client_commit and not server_commit.startswith(client_commit):
                         entry['pkg_status'] = 'commit_outdated'
-                        entry['server_commit'] = server_commit
                         commit_outdated_count += 1
                 # Commit-based check for external refs (runtimes/SDKs)
-                if entry['pkg_status'] == 'uptodate' and client_commit:
+                if entry['pkg_status'] == 'uptodate':
                     ext_key = (pkg['app_id'], pkg.get('branch', ''))
                     if ext_key in ext_commit_map:
                         server_commit = ext_commit_map[ext_key]
-                        if not server_commit.startswith(client_commit):
+                        entry['server_commit'] = server_commit
+                        if client_commit and not server_commit.startswith(client_commit):
                             entry['pkg_status'] = 'commit_outdated'
-                            entry['server_commit'] = server_commit
                             commit_outdated_count += 1
 
             if entry['pkg_status'] != 'foreign' and pkg['app_id'] in pkg_pk_map:
