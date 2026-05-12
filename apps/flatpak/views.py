@@ -1046,13 +1046,33 @@ class ExternalRefPromoteView(LoginRequiredMixin, View):
         if not target_repo_id:
             return JsonResponse({'error': 'target_repo_id is required'}, status=400)
 
-        available_targets = get_available_external_ref_promotion_targets(ext)
+        # Resolve which ExternalRefVersion we are promoting so we can scope
+        # the availability check to that version's promotions only (avoids
+        # old-version promotion records blocking a new commit).
+        external_ref_version_id = data.get('external_ref_version_id')
+        if external_ref_version_id:
+            current_ver = get_object_or_404(
+                ExternalRefVersion, pk=int(external_ref_version_id), external_ref=ext
+            )
+        else:
+            current_ver = (
+                ExternalRefVersion.objects
+                .filter(external_ref=ext, status='published')
+                .order_by('-pulled_at')
+                .first()
+            )
+
+        available_targets = get_available_external_ref_promotion_targets(ext, current_version=current_ver)
         target_repo = next((repo for repo in available_targets if repo.pk == int(target_repo_id)), None)
         if target_repo is None:
-            return JsonResponse({'error': 'Invalid promotion target for this external ref'}, status=400)
+            return JsonResponse(
+                {'error': f'Invalid promotion target for this external ref ({target_repo_id})'},
+                status=400,
+            )
 
         promo = ExternalRefPromotion.objects.create(
             external_ref=ext,
+            external_ref_version=current_ver,
             target_repo=target_repo,
             status='pending',
             promoted_by=request.user,

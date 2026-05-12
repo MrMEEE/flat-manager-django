@@ -561,7 +561,7 @@
                     <tr class="collapse ext-promote-group-{{ forloop.parentloop.counter }}">
                         <td><input type="checkbox" class="form-check-input ext-promote-chk"
                                    value="{{ item.external_ref.pk }}"
-                                   data-version-pk="{{ item.external_ref_version.pk }}"
+                                   data-version-pk="{{ item.external_ref_version.pk|default:'' }}"
                                    data-ref-name="{{ item.external_ref.display_name|default:item.external_ref.ref|escapejs }} @ {{ item.external_ref_version.commit_hash|slice:":12" }}"
                                    data-targets="[{% for repo in item.targets %}{&quot;id&quot;:{{ repo.pk }},&quot;name&quot;:&quot;{{ repo.name|escapejs }}&quot;}{% if not forloop.last %},{% endif %}{% endfor %}]"></td>
                         <td>
@@ -575,7 +575,7 @@
                             {% if item.targets|length == 1 %}
                             {% with repo=item.targets.0 %}
                             <button class="btn btn-sm btn-secondary"
-                                    onclick="externalPromoteFromList({{ item.external_ref.pk }}, {{ item.external_ref_version.pk }}, {{ repo.pk }}, '{{ repo.name|escapejs }}', '{{ item.external_ref.display_name|default:item.external_ref.ref|escapejs }} @ {{ item.external_ref_version.commit_hash|slice:":12" }}')">
+                                    onclick="externalPromoteFromList({{ item.external_ref.pk }}, {{ item.external_ref_version.pk|default:'null' }}, {{ repo.pk }}, '{{ repo.name|escapejs }}', '{{ item.external_ref.display_name|default:item.external_ref.ref|escapejs }} @ {{ item.external_ref_version.commit_hash|slice:":12" }}')">
                                 <i class="bi bi-arrow-up-right"></i> Promote
                             </button>
                             {% endwith %}
@@ -589,7 +589,7 @@
                                     {% for repo in item.targets %}
                                     <li>
                                         <a class="dropdown-item" href="#"
-                                           onclick="event.preventDefault(); externalPromoteFromList({{ item.external_ref.pk }}, {{ item.external_ref_version.pk }}, {{ repo.pk }}, '{{ repo.name|escapejs }}', '{{ item.external_ref.display_name|default:item.external_ref.ref|escapejs }} @ {{ item.external_ref_version.commit_hash|slice:":12" }}')">
+                                           onclick="event.preventDefault(); externalPromoteFromList({{ item.external_ref.pk }}, {{ item.external_ref_version.pk|default:'null' }}, {{ repo.pk }}, '{{ repo.name|escapejs }}', '{{ item.external_ref.display_name|default:item.external_ref.ref|escapejs }} @ {{ item.external_ref_version.commit_hash|slice:":12" }}')">
                                             {{ repo.name }}
                                         </a>
                                     </li>
@@ -605,7 +605,7 @@
                     <tr>
                         <td><input type="checkbox" class="form-check-input ext-promote-chk"
                                    value="{{ item.external_ref.pk }}"
-                                   data-version-pk="{{ item.external_ref_version.pk }}"
+                                   data-version-pk="{{ item.external_ref_version.pk|default:'' }}"
                                    data-ref-name="{{ item.external_ref.display_name|default:item.external_ref.ref|escapejs }} @ {{ item.external_ref_version.commit_hash|slice:":12" }}"
                                    data-targets="[{% for repo in item.targets %}{&quot;id&quot;:{{ repo.pk }},&quot;name&quot;:&quot;{{ repo.name|escapejs }}&quot;}{% if not forloop.last %},{% endif %}{% endfor %}]"></td>
                         <td>
@@ -619,7 +619,7 @@
                             {% if item.targets|length == 1 %}
                             {% with repo=item.targets.0 %}
                             <button class="btn btn-sm btn-secondary"
-                                    onclick="externalPromoteFromList({{ item.external_ref.pk }}, {{ item.external_ref_version.pk }}, {{ repo.pk }}, '{{ repo.name|escapejs }}', '{{ item.external_ref.display_name|default:item.external_ref.ref|escapejs }} @ {{ item.external_ref_version.commit_hash|slice:":12" }}')">
+                                    onclick="externalPromoteFromList({{ item.external_ref.pk }}, {{ item.external_ref_version.pk|default:'null' }}, {{ repo.pk }}, '{{ repo.name|escapejs }}', '{{ item.external_ref.display_name|default:item.external_ref.ref|escapejs }} @ {{ item.external_ref_version.commit_hash|slice:":12" }}')">
                                 <i class="bi bi-arrow-up-right"></i> Promote
                             </button>
                             {% endwith %}
@@ -633,7 +633,7 @@
                                     {% for repo in item.targets %}
                                     <li>
                                         <a class="dropdown-item" href="#"
-                                           onclick="event.preventDefault(); externalPromoteFromList({{ item.external_ref.pk }}, {{ item.external_ref_version.pk }}, {{ repo.pk }}, '{{ repo.name|escapejs }}', '{{ item.external_ref.display_name|default:item.external_ref.ref|escapejs }} @ {{ item.external_ref_version.commit_hash|slice:":12" }}')">
+                                           onclick="event.preventDefault(); externalPromoteFromList({{ item.external_ref.pk }}, {{ item.external_ref_version.pk|default:'null' }}, {{ repo.pk }}, '{{ repo.name|escapejs }}', '{{ item.external_ref.display_name|default:item.external_ref.ref|escapejs }} @ {{ item.external_ref_version.commit_hash|slice:":12" }}')">
                                             {{ repo.name }}
                                         </a>
                                     </li>
