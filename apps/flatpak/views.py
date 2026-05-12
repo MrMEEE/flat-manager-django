@@ -3117,16 +3117,6 @@ class ClientDetailView(LoginRequiredMixin, DetailView):
         client = context['client']
         stale_hours = SiteConfig.get_solo().client_stale_hours
         threshold = timezone.now() - timedelta(hours=stale_hours)
-        if client.last_checkin is None or client.last_checkin < threshold:
-            client.status = 'red'
-        elif client.outdated_count > 0 or client.foreign_count > 0:
-            client.status = 'yellow'
-        else:
-            client.status = 'green'
-
-        # Build a single annotated list: status = 'uptodate' | 'outdated' | 'foreign'
-        outdated_map = {pkg['app_id']: pkg for pkg in (client.outdated_flatpaks or [])}
-        managed = set(client.managed_remotes or [])
 
         # Map package_id → Package pk for all installed apps (enables detail links)
         installed_ids = [p['app_id'] for p in (client.installed_flatpaks or [])]
@@ -3135,11 +3125,40 @@ class ClientDetailView(LoginRequiredMixin, DetailView):
             for p in Package.objects.filter(package_id__in=installed_ids).only('package_id', 'pk')
         }
 
-        order = {'outdated': 0, 'foreign': 1, 'uptodate': 2}
+        # Map package_id → server's current published OSTree commit hash
+        pkg_commit_map = {}
+        for b in (
+            Build.objects
+            .filter(package__package_id__in=installed_ids, status='published')
+            .select_related('package')
+            .order_by('package__package_id', '-build_number')
+        ):
+            if b.package.package_id not in pkg_commit_map and b.commit_hash:
+                pkg_commit_map[b.package.package_id] = b.commit_hash
+
+        # Map (app_id, branch) → server's published commit hash for ExternalRefs.
+        # ExternalRef.ref format: runtime/<app_id>/<arch>/<branch>
+        # ostree pull-local preserves commit hashes across repos, so this comparison is valid.
+        ext_commit_map = {}
+        for ext in ExternalRef.objects.filter(status='published').only('ref', 'commit_hash'):
+            parts = ext.ref.split('/')
+            if len(parts) >= 4 and ext.commit_hash:
+                key = (parts[1], parts[3])  # (app_id, branch)
+                if key not in ext_commit_map:
+                    ext_commit_map[key] = ext.commit_hash
+
+        # Build a single annotated list: status = 'outdated' | 'commit_outdated' | 'foreign' | 'uptodate'
+        outdated_map = {pkg['app_id']: pkg for pkg in (client.outdated_flatpaks or [])}
+        managed = set(client.managed_remotes or [])
+
+        order = {'outdated': 0, 'commit_outdated': 1, 'foreign': 2, 'uptodate': 3}
         annotated = []
+        commit_outdated_count = 0
         for pkg in (client.installed_flatpaks or []):
             entry = dict(pkg)
             entry['installed_by'] = pkg.get('user', 'system')
+            client_commit = (pkg.get('commit') or '').strip()
+
             if pkg.get('origin') not in managed:
                 entry['pkg_status'] = 'foreign'
             elif pkg['app_id'] in outdated_map:
@@ -3147,14 +3166,42 @@ class ClientDetailView(LoginRequiredMixin, DetailView):
                 entry['new_version'] = outdated_map[pkg['app_id']].get('new_version', '')
             else:
                 entry['pkg_status'] = 'uptodate'
+                # Commit-based check for regular managed packages
+                if client_commit and pkg['app_id'] in pkg_commit_map:
+                    server_commit = pkg_commit_map[pkg['app_id']]
+                    if client_commit != server_commit:
+                        entry['pkg_status'] = 'commit_outdated'
+                        entry['server_commit'] = server_commit
+                        commit_outdated_count += 1
+                # Commit-based check for external refs (runtimes/SDKs)
+                if entry['pkg_status'] == 'uptodate' and client_commit:
+                    ext_key = (pkg['app_id'], pkg.get('branch', ''))
+                    if ext_key in ext_commit_map:
+                        server_commit = ext_commit_map[ext_key]
+                        if client_commit != server_commit:
+                            entry['pkg_status'] = 'commit_outdated'
+                            entry['server_commit'] = server_commit
+                            commit_outdated_count += 1
+
             if entry['pkg_status'] != 'foreign' and pkg['app_id'] in pkg_pk_map:
                 entry['pkg_pk'] = pkg_pk_map[pkg['app_id']]
             annotated.append(entry)
+
         annotated.sort(key=lambda p: (
             order[p['pkg_status']],
             (p.get('name') or p['app_id']).lower(),
         ))
         context['installed_annotated'] = annotated
+        context['commit_outdated_count'] = commit_outdated_count
+
+        # Determine client health status (after annotation so commit_outdated is counted)
+        if client.last_checkin is None or client.last_checkin < threshold:
+            client.status = 'red'
+        elif client.outdated_count > 0 or client.foreign_count > 0 or commit_outdated_count > 0:
+            client.status = 'yellow'
+        else:
+            client.status = 'green'
+
         context['all_organisations'] = Organisation.objects.all()
         context['selected_org_pks'] = set(str(pk) for pk in client.organisations.values_list('pk', flat=True))
         return context

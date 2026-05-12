@@ -26,7 +26,7 @@
 
 <!-- Summary row -->
 <div class="row g-3 mb-4">
-    <div class="col-sm-4">
+    <div class="col-sm-3">
         <div class="card text-center">
             <div class="card-body py-3">
                 <div class="fs-4 fw-bold">{{ client.installed_count }}</div>
@@ -34,7 +34,7 @@
             </div>
         </div>
     </div>
-    <div class="col-sm-4">
+    <div class="col-sm-3">
         <div class="card text-center {% if client.foreign_count > 0 %}border-warning{% endif %}">
             <div class="card-body py-3">
                 <div class="fs-4 fw-bold {% if client.foreign_count > 0 %}text-warning{% endif %}">{{ client.foreign_count }}</div>
@@ -42,11 +42,19 @@
             </div>
         </div>
     </div>
-    <div class="col-sm-4">
+    <div class="col-sm-3">
         <div class="card text-center {% if client.outdated_count > 0 %}border-danger{% endif %}">
             <div class="card-body py-3">
                 <div class="fs-4 fw-bold {% if client.outdated_count > 0 %}text-danger{% endif %}">{{ client.outdated_count }}</div>
-                <div class="text-muted small">Outdated</div>
+                <div class="text-muted small">Outdated (version)</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-3">
+        <div class="card text-center {% if commit_outdated_count > 0 %}border-warning{% endif %}">
+            <div class="card-body py-3">
+                <div class="fs-4 fw-bold {% if commit_outdated_count > 0 %}text-warning{% endif %}">{{ commit_outdated_count }}</div>
+                <div class="text-muted small">Outdated (commit)</div>
             </div>
         </div>
     </div>
@@ -141,6 +149,8 @@
                     <td>
                         {% if pkg.pkg_status == 'outdated' %}
                         <span class="badge bg-danger"><i class="bi bi-arrow-up-circle"></i> Outdated</span>
+                        {% elif pkg.pkg_status == 'commit_outdated' %}
+                        <span class="badge bg-warning text-dark"><i class="bi bi-arrow-up-circle"></i> Outdated (commit)</span>
                         {% elif pkg.pkg_status == 'foreign' %}
                         <span class="badge bg-warning text-dark"><i class="bi bi-question-circle"></i> Foreign</span>
                         {% else %}
@@ -167,6 +177,9 @@
                         {% if pkg.pkg_status == 'outdated' %}
                         <i class="bi bi-arrow-right text-danger ms-1"></i>
                         <span class="text-danger fw-semibold">{{ pkg.new_version }}</span>
+                        {% elif pkg.pkg_status == 'commit_outdated' %}
+                        <br><small class="text-muted">client: <code>{{ pkg.commit|slice:":12" }}</code></small>
+                        <br><small class="text-warning">server: <code>{{ pkg.server_commit|slice:":12" }}</code></small>
                         {% endif %}
                     </td>
                     <td>{{ pkg.origin }}</td>
