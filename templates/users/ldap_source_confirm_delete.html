@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+
+{% block title %}Delete LDAP Source – {{ source.name }}{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'users:ldap_list' %}">LDAP Sources</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'users:ldap_detail' source.pk %}">{{ source.name }}</a></li>
+        <li class="breadcrumb-item active">Delete</li>
+    </ol>
+</nav>
+
+<div class="card border-danger">
+    <div class="card-header bg-danger text-white">
+        <h5 class="mb-0"><i class="bi bi-exclamation-triangle"></i> Delete LDAP Source</h5>
+    </div>
+    <div class="card-body">
+        <p>Are you sure you want to delete <strong>{{ source.name }}</strong>?</p>
+        <p class="text-muted">All group mappings for this source will also be removed. Users provisioned by this source will keep their accounts but will no longer be updated on login.</p>
+        <form method="post">
+            {% csrf_token %}
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-danger">
+                    <i class="bi bi-trash"></i> Delete
+                </button>
+                <a href="{% url 'users:ldap_detail' source.pk %}" class="btn btn-outline-secondary">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

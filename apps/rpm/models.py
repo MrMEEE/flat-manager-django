@@ -142,10 +142,17 @@ class RpmPackage(models.Model):
         )
     )
 
+    organisations = models.ManyToManyField(
+        'flatpak.Organisation',
+        blank=True,
+        related_name='rpm_packages',
+    )
+
     class Meta:
         ordering = ['-created_at']
         verbose_name = 'RPM Package'
         verbose_name_plural = 'RPM Packages'
+
 
     def __str__(self):
         return self.name

@@ -1,0 +1,198 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ source.name }} – LDAP Source{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'users:ldap_list' %}">LDAP Sources</a></li>
+        <li class="breadcrumb-item active">{{ source.name }}</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-diagram-3"></i> {{ source.name }}</h2>
+    <div class="d-flex gap-2">
+        <a href="{% url 'users:ldap_edit' source.pk %}" class="btn btn-outline-secondary">
+            <i class="bi bi-pencil"></i> Edit
+        </a>
+        <button type="button" class="btn btn-outline-danger"
+                onclick="showDeleteConfirm(
+                    'Delete LDAP Source',
+                    'Delete &ldquo;{{ source.name }}&rdquo;? All group mappings for this source will also be removed.',
+                    'Delete',
+                    function() { document.getElementById('delete-form').submit(); }
+                )">
+            <i class="bi bi-trash"></i> Delete
+        </button>
+    </div>
+</div>
+
+<form id="delete-form" method="post" action="{% url 'users:ldap_delete' source.pk %}" style="display:none">
+    {% csrf_token %}
+</form>
+
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header"><h5 class="mb-0">Connection</h5></div>
+            <div class="card-body">
+                <dl class="row mb-0">
+                    <dt class="col-sm-5">Hostname</dt>
+                    <dd class="col-sm-7">{{ source.hostname }}:{{ source.port }}</dd>
+                    <dt class="col-sm-5">Protocol</dt>
+                    <dd class="col-sm-7">{{ source.get_protocol_display }}</dd>
+                    <dt class="col-sm-5">Server type</dt>
+                    <dd class="col-sm-7">{{ source.get_server_type_display }}</dd>
+                    <dt class="col-sm-5">Verify certs</dt>
+                    <dd class="col-sm-7">
+                        {% if source.verify_certs %}<span class="badge bg-success">Yes</span>
+                        {% else %}<span class="badge bg-warning text-dark">No</span>{% endif %}
+                    </dd>
+                    <dt class="col-sm-5">Status</dt>
+                    <dd class="col-sm-7">
+                        {% if source.is_active %}<span class="badge bg-success">Active</span>
+                        {% else %}<span class="badge bg-secondary">Disabled</span>{% endif %}
+                    </dd>
+                </dl>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header"><h5 class="mb-0">Bind / Search</h5></div>
+            <div class="card-body">
+                <dl class="row mb-0">
+                    <dt class="col-sm-5">Bind DN</dt>
+                    <dd class="col-sm-7"><code>{{ source.bind_dn }}</code></dd>
+                    <dt class="col-sm-5">Base DN</dt>
+                    <dd class="col-sm-7"><code>{{ source.base_dn }}</code></dd>
+                    <dt class="col-sm-5">Group base DN</dt>
+                    <dd class="col-sm-7">
+                        {% if source.group_base_dn %}<code>{{ source.group_base_dn }}</code>
+                        {% else %}<span class="text-muted">(same as Base DN)</span>{% endif %}
+                    </dd>
+                    <dt class="col-sm-5">Group membership</dt>
+                    <dd class="col-sm-7">{{ source.get_group_membership_display }}</dd>
+                    <dt class="col-sm-5">LDAP filter</dt>
+                    <dd class="col-sm-7"><code>{{ source.ldap_filter|default:"(none)" }}</code></dd>
+                </dl>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Group Mappings -->
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0">Group Mappings</h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>LDAP Group DN</th>
+                        <th>Role</th>
+                        <th>Organisation</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for mapping in mappings %}
+                    <tr>
+                        <td><code>{{ mapping.ldap_group_dn }}</code></td>
+                        <td>
+                            <span class="badge
+                                {% if mapping.role == 'admin' %}bg-danger
+                                {% elif mapping.role == 'superuser' %}bg-dark
+                                {% elif mapping.role == 'build_admin' %}bg-primary
+                                {% elif mapping.role == 'repo_admin' %}bg-info text-dark
+                                {% else %}bg-secondary{% endif %}">
+                                {{ mapping.get_role_display }}
+                            </span>
+                        </td>
+                        <td>{{ mapping.organisation|default:"Global" }}</td>
+                        <td class="text-end">
+                            <button type="button" class="btn btn-sm btn-outline-danger"
+                                    onclick="showDeleteConfirm(
+                                        'Remove Group Mapping',
+                                        'Remove mapping for &ldquo;{{ mapping.ldap_group_dn }}&rdquo;?',
+                                        'Remove',
+                                        function() { document.getElementById('del-mapping-{{ mapping.pk }}').submit(); }
+                                    )">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                            <form id="del-mapping-{{ mapping.pk }}" method="post"
+                                  action="{% url 'users:ldap_mapping_delete' source.pk mapping.pk %}" style="display:none">
+                                {% csrf_token %}
+                            </form>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="4" class="text-center text-muted py-3">No mappings yet.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <div class="card-footer">
+        <h6 class="mb-2">Add Group Mapping</h6>
+        <form method="post" action="{% url 'users:ldap_mapping_add' source.pk %}" class="row g-2 align-items-end">
+            {% csrf_token %}
+            <div class="col-md-5">
+                <label class="form-label small">{{ mapping_form.ldap_group_dn.label }}</label>
+                {{ mapping_form.ldap_group_dn }}
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small">{{ mapping_form.role.label }}</label>
+                {{ mapping_form.role }}
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small">{{ mapping_form.organisation.label }}</label>
+                {{ mapping_form.organisation }}
+            </div>
+            <div class="col-md-1">
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="bi bi-plus-lg"></i>
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Delete confirmation modal -->
+<div class="modal fade" id="deleteConfirmModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteConfirmTitle">Confirm</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="deleteConfirmBody"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="deleteConfirmOk">Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function showDeleteConfirm(title, body, okLabel, onOk) {
+    document.getElementById('deleteConfirmTitle').textContent = title;
+    document.getElementById('deleteConfirmBody').innerHTML = body;
+    const okBtn = document.getElementById('deleteConfirmOk');
+    okBtn.textContent = okLabel;
+    okBtn.onclick = function () {
+        bootstrap.Modal.getInstance(document.getElementById('deleteConfirmModal')).hide();
+        onOk();
+    };
+    new bootstrap.Modal(document.getElementById('deleteConfirmModal')).show();
+}
+</script>
+{% endblock %}

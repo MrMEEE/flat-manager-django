@@ -36,6 +36,9 @@ pytz>=2023.3
 Pillow>=10.0.0  # For ImageField support
 python-gnupg>=0.5.0  # For GPG key generation
 
+# LDAP authentication
+ldap3>=2.9.1
+
 # VCS tools used by flatpak-builder source types
 # NOTE: breezy requires Rust (cargo) at pip install time. Ensure cargo is
 # available during RPM build (see BuildRequires: rust-packaging / cargo).

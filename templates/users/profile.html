@@ -67,12 +67,9 @@
                     {% if user.is_staff %}
                     <li><i class="bi bi-check-circle text-success"></i> Staff</li>
                     {% endif %}
-                    {% if user.is_repo_admin %}
-                    <li><i class="bi bi-check-circle text-success"></i> Repo Admin</li>
-                    {% endif %}
-                    {% if user.is_build_admin %}
-                    <li><i class="bi bi-check-circle text-success"></i> Build Admin</li>
-                    {% endif %}
+                    {% for role in user.roles.all %}
+                    <li><i class="bi bi-shield-check text-success"></i> {{ role.get_role_display }}{% if role.organisation %} ({{ role.organisation }}){% endif %}</li>
+                    {% endfor %}
                 </ul>
             </div>
         </div>

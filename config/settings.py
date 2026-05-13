@@ -111,6 +111,13 @@ else:
 # Custom User Model
 AUTH_USER_MODEL = 'users.User'
 
+# Authentication backends:
+# LDAPBackend is tried first; LocalModelBackend is used for is_local=True users.
+AUTHENTICATION_BACKENDS = [
+    'apps.users.backends.LDAPBackend',
+    'apps.users.backends.LocalModelBackend',
+]
+
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
     {

@@ -6,8 +6,8 @@ from apps.flatpak.models import GPGKey, Repository, RepositorySubset, Package, B
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'first_name', 'last_name', 
-                  'is_repo_admin', 'is_build_admin', 'created_at']
+        fields = ['id', 'username', 'email', 'first_name', 'last_name',
+                  'is_local', 'created_at']
         read_only_fields = ['id', 'created_at']
 
 

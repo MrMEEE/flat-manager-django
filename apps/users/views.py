@@ -1,13 +1,17 @@
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
+from django.http import JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views import View
-from django.views.generic import ListView, DetailView, CreateView, UpdateView
-from django.urls import reverse_lazy
+from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView
+from django.urls import reverse_lazy, reverse
 from django.contrib import messages
 from django.db import models
-from .models import User, UserProfile
-from .forms import UserCreateForm, SetPasswordForm
+from .models import User, UserProfile, UserRole, LDAPSource, LDAPGroupMapping, ROLE_CHOICES
+from .forms import (
+    UserCreateForm, UserUpdateForm, SetPasswordForm,
+    LDAPSourceForm, LDAPGroupMappingForm, UserRoleForm,
+)
 
 
 class IndexView(View):
@@ -157,9 +161,10 @@ class DashboardStatsApiView(LoginRequiredMixin, View):
 
 
 class AdminRequiredMixin(UserPassesTestMixin):
-    """Mixin to require staff or superuser status."""
+    """Mixin to require admin role (or Django superuser / staff)."""
     def test_func(self):
-        return self.request.user.is_staff or self.request.user.is_superuser
+        u = self.request.user
+        return u.is_staff or u.is_superuser or u.roles.filter(role='admin').exists()
 
 
 class UserListView(LoginRequiredMixin, AdminRequiredMixin, ListView):
@@ -193,9 +198,9 @@ class UserUpdateView(LoginRequiredMixin, AdminRequiredMixin, UpdateView):
     """Update user (admin only)."""
     model = User
     template_name = 'users/user_form.html'
-    fields = ['username', 'email', 'first_name', 'last_name', 'is_repo_admin', 'is_build_admin', 'is_staff', 'is_active']
+    form_class = UserUpdateForm
     success_url = reverse_lazy('users:user_list')
-    
+
     def form_valid(self, form):
         messages.success(self.request, 'User updated successfully.')
         return super().form_valid(form)
@@ -238,3 +243,167 @@ class ProfileView(LoginRequiredMixin, View):
         
         messages.success(request, 'Profile updated successfully.')
         return redirect('users:profile')
+
+
+# ---------------------------------------------------------------------------
+# User Role Management
+# ---------------------------------------------------------------------------
+
+class UserRoleView(LoginRequiredMixin, AdminRequiredMixin, View):
+    """Manage roles for a single user."""
+    template_name = 'users/user_roles.html'
+
+    def get_user(self, pk):
+        return get_object_or_404(User, pk=pk)
+
+    def get(self, request, pk):
+        user_obj = self.get_user(pk)
+        roles = user_obj.roles.select_related('organisation').order_by('role', 'organisation__name')
+        form = UserRoleForm()
+        return render(request, self.template_name, {
+            'user_obj': user_obj,
+            'roles': roles,
+            'form': form,
+            'role_choices': ROLE_CHOICES,
+        })
+
+    def post(self, request, pk):
+        user_obj = self.get_user(pk)
+        action = request.POST.get('action', 'add')
+
+        if action == 'delete':
+            role_pk = request.POST.get('role_pk')
+            UserRole.objects.filter(pk=role_pk, user=user_obj).delete()
+            messages.success(request, 'Role removed.')
+        else:
+            form = UserRoleForm(request.POST)
+            if form.is_valid():
+                role = form.save(commit=False)
+                role.user = user_obj
+                role.save()
+                messages.success(request, 'Role added.')
+            else:
+                roles = user_obj.roles.select_related('organisation').order_by('role', 'organisation__name')
+                return render(request, self.template_name, {
+                    'user_obj': user_obj,
+                    'roles': roles,
+                    'form': form,
+                    'role_choices': ROLE_CHOICES,
+                })
+
+        return redirect('users:user_roles', pk=pk)
+
+
+# ---------------------------------------------------------------------------
+# LDAP Source CRUD
+# ---------------------------------------------------------------------------
+
+class LDAPSourceListView(LoginRequiredMixin, AdminRequiredMixin, ListView):
+    model = LDAPSource
+    template_name = 'users/ldap_source_list.html'
+    context_object_name = 'sources'
+
+
+class LDAPSourceCreateView(LoginRequiredMixin, AdminRequiredMixin, View):
+    template_name = 'users/ldap_source_form.html'
+
+    def get(self, request):
+        return render(request, self.template_name, {'form': LDAPSourceForm(), 'action': 'Create'})
+
+    def post(self, request):
+        form = LDAPSourceForm(request.POST)
+        if form.is_valid():
+            source = form.save(commit=False)
+            plaintext = form.cleaned_data.get('bind_password')
+            if plaintext:
+                source.set_bind_password(plaintext)
+            source.save()
+            messages.success(request, f'LDAP source "{source.name}" created.')
+            return redirect('users:ldap_detail', pk=source.pk)
+        return render(request, self.template_name, {'form': form, 'action': 'Create'})
+
+
+class LDAPSourceDetailView(LoginRequiredMixin, AdminRequiredMixin, DetailView):
+    model = LDAPSource
+    template_name = 'users/ldap_source_detail.html'
+    context_object_name = 'source'
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx['mappings'] = self.object.group_mappings.select_related('organisation').order_by('ldap_group_dn')
+        ctx['mapping_form'] = LDAPGroupMappingForm()
+        return ctx
+
+
+class LDAPSourceUpdateView(LoginRequiredMixin, AdminRequiredMixin, View):
+    template_name = 'users/ldap_source_form.html'
+
+    def get_source(self, pk):
+        return get_object_or_404(LDAPSource, pk=pk)
+
+    def get(self, request, pk):
+        source = self.get_source(pk)
+        form = LDAPSourceForm(instance=source)
+        return render(request, self.template_name, {'form': form, 'source': source, 'action': 'Edit'})
+
+    def post(self, request, pk):
+        source = self.get_source(pk)
+        form = LDAPSourceForm(request.POST, instance=source)
+        if form.is_valid():
+            source = form.save(commit=False)
+            plaintext = form.cleaned_data.get('bind_password')
+            if plaintext:
+                source.set_bind_password(plaintext)
+            source.save()
+            messages.success(request, f'LDAP source "{source.name}" updated.')
+            return redirect('users:ldap_detail', pk=source.pk)
+        return render(request, self.template_name, {'form': form, 'source': source, 'action': 'Edit'})
+
+
+class LDAPSourceDeleteView(LoginRequiredMixin, AdminRequiredMixin, View):
+    template_name = 'users/ldap_source_confirm_delete.html'
+
+    def get_source(self, pk):
+        return get_object_or_404(LDAPSource, pk=pk)
+
+    def get(self, request, pk):
+        source = self.get_source(pk)
+        return render(request, self.template_name, {'source': source})
+
+    def post(self, request, pk):
+        source = self.get_source(pk)
+        name = source.name
+        source.delete()
+        messages.success(request, f'LDAP source "{name}" deleted.')
+        return redirect('users:ldap_list')
+
+
+# ---------------------------------------------------------------------------
+# LDAP Group Mapping
+# ---------------------------------------------------------------------------
+
+class LDAPGroupMappingCreateView(LoginRequiredMixin, AdminRequiredMixin, View):
+    """Add a group mapping to an LDAP source."""
+
+    def post(self, request, source_pk):
+        source = get_object_or_404(LDAPSource, pk=source_pk)
+        form = LDAPGroupMappingForm(request.POST)
+        if form.is_valid():
+            mapping = form.save(commit=False)
+            mapping.source = source
+            mapping.save()
+            messages.success(request, 'Group mapping added.')
+        else:
+            messages.error(request, 'Invalid group mapping data.')
+        return redirect('users:ldap_detail', pk=source_pk)
+
+
+class LDAPGroupMappingDeleteView(LoginRequiredMixin, AdminRequiredMixin, View):
+    """Remove a group mapping from an LDAP source."""
+
+    def post(self, request, source_pk, pk):
+        mapping = get_object_or_404(LDAPGroupMapping, pk=pk, source_id=source_pk)
+        mapping.delete()
+        messages.success(request, 'Group mapping removed.')
+        return redirect('users:ldap_detail', pk=source_pk)
+

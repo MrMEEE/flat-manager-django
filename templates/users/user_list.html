@@ -5,9 +5,14 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2><i class="bi bi-people"></i> Users</h2>
-    <a href="{% url 'users:user_create' %}" class="btn btn-primary">
-        <i class="bi bi-person-plus"></i> Add User
-    </a>
+    <div class="d-flex gap-2">
+        <a href="{% url 'users:ldap_list' %}" class="btn btn-outline-secondary">
+            <i class="bi bi-diagram-3"></i> LDAP Sources
+        </a>
+        <a href="{% url 'users:user_create' %}" class="btn btn-primary">
+            <i class="bi bi-person-plus"></i> Add User
+        </a>
+    </div>
 </div>
 
 <div class="card">
@@ -18,7 +23,8 @@
                     <tr>
                         <th>Username</th>
                         <th>Email</th>
-                        <th>Permissions</th>
+                        <th>Roles</th>
+                        <th>Auth</th>
                         <th>Status</th>
                         <th>Joined</th>
                         <th>Actions</th>
@@ -36,16 +42,28 @@
                         <td>{{ u.email }}</td>
                         <td>
                             {% if u.is_superuser %}
-                            <span class="badge bg-danger">Superuser</span>
+                            <span class="badge bg-danger">Django Superuser</span>
                             {% endif %}
                             {% if u.is_staff %}
                             <span class="badge bg-warning text-dark">Staff</span>
                             {% endif %}
-                            {% if u.is_repo_admin %}
-                            <span class="badge bg-info text-dark">Repo Admin</span>
-                            {% endif %}
-                            {% if u.is_build_admin %}
-                            <span class="badge bg-primary">Build Admin</span>
+                            {% for role in u.roles.all %}
+                            <span class="badge
+                                {% if role.role == 'admin' %}bg-danger
+                                {% elif role.role == 'superuser' %}bg-purple text-white
+                                {% elif role.role == 'build_admin' %}bg-primary
+                                {% elif role.role == 'repo_admin' %}bg-info text-dark
+                                {% elif role.role == 'view' %}bg-secondary
+                                {% else %}bg-secondary{% endif %}">
+                                {{ role.get_role_display }}{% if role.organisation %} ({{ role.organisation }}){% endif %}
+                            </span>
+                            {% endfor %}
+                        </td>
+                        <td>
+                            {% if u.is_local %}
+                            <span class="badge bg-secondary"><i class="bi bi-person-lock"></i> Local</span>
+                            {% else %}
+                            <span class="badge bg-info text-dark"><i class="bi bi-diagram-3"></i> LDAP</span>
                             {% endif %}
                         </td>
                         <td>
@@ -64,7 +82,7 @@
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="6" class="text-center text-muted py-4">No users found.</td>
+                        <td colspan="7" class="text-center text-muted py-4">No users found.</td>
                     </tr>
                     {% endfor %}
                 </tbody>

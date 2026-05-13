@@ -20,7 +20,8 @@ class GPGKey(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     is_active = models.BooleanField(default=True)
-    
+    organisations = models.ManyToManyField('Organisation', blank=True, related_name='gpg_keys')
+
     class Meta:
         ordering = ['-created_at']
         verbose_name = 'GPG Key'
@@ -43,7 +44,8 @@ class Repository(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     is_active = models.BooleanField(default=True)
-    
+    organisations = models.ManyToManyField('Organisation', blank=True, related_name='repositories')
+
     class Meta:
         ordering = ['-created_at']
         verbose_name_plural = 'Repositories'
