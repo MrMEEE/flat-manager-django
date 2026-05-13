@@ -119,7 +119,13 @@ class ReleaseManager:
     # ── Pre-flight checks ─────────────────────────────────────────────────────
 
     def check_git_state(self) -> None:
-        """Ensure we are on main/master with a clean working tree."""
+        """Ensure we are on main/master with a clean working tree.
+
+        Files that the release process will overwrite (README.md, version.py,
+        the RPM spec) are excluded from the dirty-file check so that a
+        left-over modification from a previous partial run does not block
+        a new release.
+        """
         branch = self._run(
             ["git", "branch", "--show-current"], read_only=True
         ).stdout.strip()
@@ -128,13 +134,28 @@ class ReleaseManager:
                 f"Releases must be made from 'main' or 'master' (currently: {branch!r})"
             )
 
+        # Files the release will update — allowed to be dirty
+        managed = {
+            str(VERSION_FILE.relative_to(PROJECT_ROOT)),
+            str(SPEC_FILE.relative_to(PROJECT_ROOT)),
+            str(README_FILE.relative_to(PROJECT_ROOT)),
+        }
+
         status = self._run(
             ["git", "status", "--porcelain"], read_only=True
         ).stdout.strip()
-        if status:
+
+        unmanaged = [
+            line for line in status.splitlines()
+            if line[3:].strip() not in managed
+        ]
+        if unmanaged:
             raise ReleaseError(
-                "Working tree has uncommitted changes:\n" + status
+                "Working tree has uncommitted changes:\n" + "\n".join(unmanaged)
             )
+        if status:
+            self.warn("Managed release file(s) are dirty — the release will overwrite them:"
+                      + "\n  " + "\n  ".join(l[3:].strip() for l in status.splitlines()))
 
         # Warn if there are commits that haven't been pushed yet
         ahead = self._run(
