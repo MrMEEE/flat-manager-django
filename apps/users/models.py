@@ -182,6 +182,20 @@ class LDAPSource(models.Model):
     ldap_filter      = models.CharField(max_length=512, blank=True, default='(objectClass=person)',
                                         help_text="Extra LDAP filter applied when searching for the user")
 
+    # ── Attribute mapping ────────────────────────────────────────────────────
+    attr_username    = models.CharField(
+        max_length=64, default='sAMAccountName',
+        help_text="LDAP attribute used as the login / username (e.g. sAMAccountName, uid, userPrincipalName)")
+    attr_first_name  = models.CharField(
+        max_length=64, default='givenName',
+        help_text="LDAP attribute mapped to first name (e.g. givenName)")
+    attr_last_name   = models.CharField(
+        max_length=64, default='sn',
+        help_text="LDAP attribute mapped to last name (e.g. sn)")
+    attr_email       = models.CharField(
+        max_length=64, default='mail',
+        help_text="LDAP attribute mapped to email address (e.g. mail)")
+
     is_active        = models.BooleanField(default=True, help_text="Disable to skip this source during login")
     created_at       = models.DateTimeField(auto_now_add=True)
     updated_at       = models.DateTimeField(auto_now=True)

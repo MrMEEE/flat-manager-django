@@ -494,7 +494,10 @@ class LDAPSourceTestSearchView(AdminRequiredMixin, View):
         )
         base_dn        = request.POST.get('base_dn', '').strip()
         ldap_filter    = request.POST.get('ldap_filter', '').strip() or '(objectClass=person)'
-        server_type    = request.POST.get('server_type', 'ad')
+        attr_username  = request.POST.get('attr_username', '').strip() or 'sAMAccountName'
+        attr_first_name = request.POST.get('attr_first_name', '').strip() or 'givenName'
+        attr_last_name = request.POST.get('attr_last_name', '').strip() or 'sn'
+        attr_email     = request.POST.get('attr_email', '').strip() or 'mail'
         search_username = request.POST.get('search_username', '').strip()
 
         if not base_dn:
@@ -502,10 +505,11 @@ class LDAPSourceTestSearchView(AdminRequiredMixin, View):
         if not search_username:
             return JsonResponse({'ok': False, 'message': 'Enter a username to search for.'})
 
-        uid_attr = 'sAMAccountName' if server_type == 'ad' else 'uid'
         escaped  = ldap3.utils.conv.escape_filter_chars(search_username)
-        search_filter = f'(&{ldap_filter}({uid_attr}={escaped}))'
-        attrs = ['cn', 'givenName', 'sn', 'mail', 'sAMAccountName', 'uid', 'memberOf']
+        search_filter = f'(&{ldap_filter}({attr_username}={escaped}))'
+        # Always fetch the mapped attrs plus common extras
+        attrs = list({attr_username, attr_first_name, attr_last_name, attr_email,
+                      'cn', 'memberOf', 'objectClass'})
 
         try:
             server = _build_ldap_server(hostname, port, protocol, verify_certs)

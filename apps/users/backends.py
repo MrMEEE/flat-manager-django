@@ -143,12 +143,16 @@ class LDAPBackend:
             return None, None
 
         # Build search filter
-        uid_attr = self._uid_attr(source)
+        uid_attr = source.attr_username
         base_filter = source.ldap_filter or '(objectClass=person)'
         search_filter = f'(&{base_filter}({uid_attr}={ldap3.utils.conv.escape_filter_chars(username)}))'
 
-        attrs = ['dn', 'cn', 'givenName', 'sn', 'mail', 'sAMAccountName', 'uid',
-                 'memberOf', 'memberUid', 'objectClass']
+        # Always fetch the mapped attrs plus group membership attrs
+        attrs = list({
+            'dn', 'cn', uid_attr,
+            source.attr_first_name, source.attr_last_name, source.attr_email,
+            'memberOf', 'memberUid', 'objectClass',
+        })
 
         if not conn.search(
             search_base=source.base_dn,
@@ -171,9 +175,9 @@ class LDAPBackend:
 
     def _provision_user(self, source, username: str, user_dn: str, user_attrs: dict):
         """Get or create the Django User; update name / email from LDAP."""
-        email = self._first(user_attrs.get('mail', []))
-        first_name = self._first(user_attrs.get('givenName', []))
-        last_name = self._first(user_attrs.get('sn', []))
+        email = self._first(user_attrs.get(source.attr_email, []))
+        first_name = self._first(user_attrs.get(source.attr_first_name, []))
+        last_name = self._first(user_attrs.get(source.attr_last_name, []))
 
         try:
             user = User.objects.get(username=username)
@@ -263,12 +267,6 @@ class LDAPBackend:
     # ------------------------------------------------------------------
     # Small utilities
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _uid_attr(source) -> str:
-        if source.server_type == 'ad':
-            return 'sAMAccountName'
-        return 'uid'
 
     @staticmethod
     def _first(seq):

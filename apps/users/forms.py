@@ -138,6 +138,7 @@ class LDAPSourceForm(forms.ModelForm):
             'name', 'hostname', 'port', 'protocol', 'verify_certs', 'server_type',
             'bind_dn', 'bind_password',
             'base_dn', 'group_base_dn', 'group_membership', 'ldap_filter',
+            'attr_username', 'attr_first_name', 'attr_last_name', 'attr_email',
             'is_active',
         ]
 
