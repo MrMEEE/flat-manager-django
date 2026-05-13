@@ -55,7 +55,7 @@ class User(AbstractUser):
     Custom User model for flat-manager.
     Extends Django's AbstractUser with additional fields.
     """
-    email = models.EmailField(unique=True)
+    email = models.EmailField(blank=True)
     # is_local=True → only Django password auth is tried (never LDAP).
     # Set automatically for manually created users; cleared for LDAP-provisioned users.
     is_local = models.BooleanField(
