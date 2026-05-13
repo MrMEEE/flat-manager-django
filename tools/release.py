@@ -141,21 +141,20 @@ class ReleaseManager:
             str(README_FILE.relative_to(PROJECT_ROOT)),
         }
 
-        status = self._run(
+        # Use raw stdout so leading spaces in the XY status codes are preserved
+        raw_status = self._run(
             ["git", "status", "--porcelain"], read_only=True
-        ).stdout.strip()
+        ).stdout
+        lines = [l for l in raw_status.splitlines() if l.strip()]
 
-        unmanaged = [
-            line for line in status.splitlines()
-            if line[3:].strip() not in managed
-        ]
+        unmanaged = [l for l in lines if l[3:] not in managed]
         if unmanaged:
             raise ReleaseError(
                 "Working tree has uncommitted changes:\n" + "\n".join(unmanaged)
             )
-        if status:
+        if lines:
             self.warn("Managed release file(s) are dirty — the release will overwrite them:"
-                      + "\n  " + "\n  ".join(l[3:].strip() for l in status.splitlines()))
+                      + "\n  " + "\n  ".join(l[3:] for l in lines))
 
         # Warn if there are commits that haven't been pushed yet
         ahead = self._run(
