@@ -301,6 +301,18 @@
             document.getElementById('testSearchBtn').click();
         }
     });
+
+    // ── Auto-set port when protocol changes ───────────────────
+    (function () {
+        const proto = document.getElementById('{{ form.protocol.id_for_label }}');
+        const port  = document.getElementById('{{ form.port.id_for_label }}');
+        if (proto && port) {
+            proto.addEventListener('change', function () {
+                if (this.value === 'ldaps' && port.value === '389') port.value = '636';
+                if (this.value === 'ldap'  && port.value === '636') port.value = '389';
+            });
+        }
+    })();
 })();
 </script>
 {% endblock %}
@@ -312,20 +324,4 @@
     }
     .form-control, .form-select { width: 100%; }
 </style>
-{% endblock %}
-
-{% block extra_js %}
-<script>
-// Auto-set port when protocol changes
-document.addEventListener('DOMContentLoaded', function () {
-    const proto = document.getElementById('{{ form.protocol.id_for_label }}');
-    const port  = document.getElementById('{{ form.port.id_for_label }}');
-    if (proto && port) {
-        proto.addEventListener('change', function () {
-            if (this.value === 'ldaps' && port.value === '389') port.value = '636';
-            if (this.value === 'ldap'  && port.value === '636') port.value = '389';
-        });
-    }
-});
-</script>
 {% endblock %}
