@@ -7,44 +7,98 @@
 
 <div class="row">
     <div class="col-md-8">
-        <div class="card">
+        <div class="card mb-4">
+            <div class="card-header"><h5 class="mb-0">Profile Information</h5></div>
             <div class="card-body">
                 <form method="post">
                     {% csrf_token %}
-                    
+                    <input type="hidden" name="action" value="update_profile">
+
                     <div class="mb-3">
                         <label class="form-label">Username</label>
                         <input type="text" class="form-control" value="{{ user.username }}" disabled>
                     </div>
-                    
+
                     <div class="mb-3">
                         <label class="form-label">Email</label>
                         <input type="email" class="form-control" value="{{ user.email }}" disabled>
                     </div>
-                    
+
                     <div class="mb-3">
                         <label for="bio" class="form-label">Bio</label>
                         <textarea class="form-control" id="bio" name="bio" rows="3">{{ profile.bio }}</textarea>
                     </div>
-                    
+
                     <div class="mb-3">
                         <label for="phone" class="form-label">Phone</label>
                         <input type="text" class="form-control" id="phone" name="phone" value="{{ profile.phone }}">
                     </div>
-                    
+
                     <div class="mb-3">
                         <label for="organization" class="form-label">Organization</label>
                         <input type="text" class="form-control" id="organization" name="organization" value="{{ profile.organization }}">
                     </div>
-                    
+
                     <button type="submit" class="btn btn-primary">
                         <i class="bi bi-save"></i> Save Changes
                     </button>
                 </form>
             </div>
         </div>
+
+        {% if user.is_local %}
+        <div class="card">
+            <div class="card-header"><h5 class="mb-0">Change Password</h5></div>
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="change_password">
+
+                    <div class="mb-3">
+                        <label for="id_current_password" class="form-label">Current password</label>
+                        <input type="password"
+                               class="form-control{% if pw_form.current_password.errors %} is-invalid{% endif %}"
+                               id="id_current_password"
+                               name="current_password"
+                               autocomplete="current-password">
+                        {% for error in pw_form.current_password.errors %}
+                        <div class="invalid-feedback">{{ error }}</div>
+                        {% endfor %}
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="id_new_password1" class="form-label">New password</label>
+                        <input type="password"
+                               class="form-control{% if pw_form.new_password1.errors %} is-invalid{% endif %}"
+                               id="id_new_password1"
+                               name="new_password1"
+                               autocomplete="new-password">
+                        {% for error in pw_form.new_password1.errors %}
+                        <div class="invalid-feedback">{{ error }}</div>
+                        {% endfor %}
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="id_new_password2" class="form-label">Confirm new password</label>
+                        <input type="password"
+                               class="form-control{% if pw_form.new_password2.errors %} is-invalid{% endif %}"
+                               id="id_new_password2"
+                               name="new_password2"
+                               autocomplete="new-password">
+                        {% for error in pw_form.new_password2.errors %}
+                        <div class="invalid-feedback">{{ error }}</div>
+                        {% endfor %}
+                    </div>
+
+                    <button type="submit" class="btn btn-warning">
+                        <i class="bi bi-key"></i> Change Password
+                    </button>
+                </form>
+            </div>
+        </div>
+        {% endif %}
     </div>
-    
+
     <div class="col-md-4">
         <div class="card">
             <div class="card-header">
@@ -52,7 +106,14 @@
             </div>
             <div class="card-body">
                 <p><strong>Joined:</strong> {{ user.created_at|date:"M d, Y" }}</p>
-                <p><strong>Status:</strong> 
+                <p><strong>Auth:</strong>
+                    {% if user.is_local %}
+                    <span class="badge bg-secondary">Local</span>
+                    {% else %}
+                    <span class="badge bg-info">LDAP</span>
+                    {% endif %}
+                </p>
+                <p><strong>Status:</strong>
                     {% if user.is_active %}
                     <span class="badge bg-success">Active</span>
                     {% else %}

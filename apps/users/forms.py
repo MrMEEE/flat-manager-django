@@ -71,6 +71,51 @@ class SetPasswordForm(forms.Form):
         return cleaned_data
 
 
+class ChangePasswordForm(forms.Form):
+    """Password-change form for the profile page — requires current password."""
+
+    current_password = forms.CharField(
+        label='Current password',
+        widget=forms.PasswordInput(attrs={'autocomplete': 'current-password'}),
+    )
+    new_password1 = forms.CharField(
+        label='New password',
+        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
+    )
+    new_password2 = forms.CharField(
+        label='Confirm new password',
+        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
+    )
+
+    def __init__(self, user, *args, **kwargs):
+        self.user = user
+        super().__init__(*args, **kwargs)
+
+    def clean_current_password(self):
+        current = self.cleaned_data.get('current_password')
+        if current and not self.user.check_password(current):
+            raise forms.ValidationError('Current password is incorrect.')
+        return current
+
+    def clean_new_password1(self):
+        password = self.cleaned_data.get('new_password1')
+        if password:
+            validate_password(password, self.user)
+        return password
+
+    def clean(self):
+        cleaned_data = super().clean()
+        p1 = cleaned_data.get('new_password1')
+        p2 = cleaned_data.get('new_password2')
+        if p1 and p2 and p1 != p2:
+            self.add_error('new_password2', 'Passwords do not match.')
+        return cleaned_data
+
+    def save(self):
+        self.user.set_password(self.cleaned_data['new_password1'])
+        self.user.save(update_fields=['password'])
+
+
 # ---------------------------------------------------------------------------
 # LDAPSource form
 # ---------------------------------------------------------------------------

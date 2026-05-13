@@ -10,7 +10,7 @@ from django.contrib import messages
 from django.db import models
 from .models import User, UserProfile, UserRole, LDAPSource, LDAPGroupMapping, ROLE_CHOICES
 from .forms import (
-    UserCreateForm, UserUpdateForm, SetPasswordForm,
+    UserCreateForm, UserUpdateForm, SetPasswordForm, ChangePasswordForm,
     LDAPSourceForm, LDAPGroupMappingForm, UserRoleForm,
 )
 
@@ -225,16 +225,39 @@ class UserSetPasswordView(AdminRequiredMixin, View):
 
 class ProfileView(LoginRequiredMixin, View):
     """User profile view."""
+
+    def _context(self, request, pw_form=None):
+        return {
+            'profile': request.user.profile,
+            'pw_form': pw_form or ChangePasswordForm(user=request.user),
+        }
+
     def get(self, request):
-        return render(request, 'users/profile.html', {'profile': request.user.profile})
-    
+        return render(request, 'users/profile.html', self._context(request))
+
     def post(self, request):
+        action = request.POST.get('action')
+
+        if action == 'change_password':
+            if not request.user.is_local:
+                messages.error(request, 'Password changes are only available for local accounts.')
+                return redirect('users:profile')
+            form = ChangePasswordForm(user=request.user, data=request.POST)
+            if form.is_valid():
+                form.save()
+                # Re-authenticate so the session stays valid after the password change.
+                from django.contrib.auth import update_session_auth_hash
+                update_session_auth_hash(request, request.user)
+                messages.success(request, 'Password changed successfully.')
+                return redirect('users:profile')
+            return render(request, 'users/profile.html', self._context(request, pw_form=form))
+
+        # Default: profile update
         profile = request.user.profile
         profile.bio = request.POST.get('bio', '')
         profile.phone = request.POST.get('phone', '')
         profile.organization = request.POST.get('organization', '')
         profile.save()
-        
         messages.success(request, 'Profile updated successfully.')
         return redirect('users:profile')
 
