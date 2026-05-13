@@ -146,7 +146,7 @@
             
             <hr class="my-3" style="border-color: rgba(255,255,255,0.2);">
             
-            {% if user.is_staff %}
+            {% if user.can_manage_users %}
             <a class="nav-link" href="{% url 'users:user_list' %}">
                 <i class="bi bi-people"></i> Users
             </a>
