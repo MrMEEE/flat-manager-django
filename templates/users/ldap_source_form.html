@@ -20,7 +20,7 @@
 <div class="row justify-content-center">
 <div class="col-xl-8 col-lg-10">
 
-<form method="post" novalidate>
+<form id="ldapForm" method="post" novalidate>
 {% csrf_token %}
 {% if form.non_field_errors %}
 <div class="alert alert-danger">{{ form.non_field_errors }}</div>
@@ -62,6 +62,13 @@
                     <label class="form-check-label" for="{{ form.verify_certs.id_for_label }}">Verify certs</label>
                 </div>
             </div>
+        </div>
+
+        <div class="d-flex align-items-center gap-3 mt-3 pt-3 border-top">
+            <button type="button" id="testConnBtn" class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-plug me-1"></i> Test Connection
+            </button>
+            <div id="connResult" class="flex-grow-1 small"></div>
         </div>
     </div>
 </div>
@@ -110,6 +117,26 @@
     </div>
 </div>
 
+{# ── Test User Search ────────────────────────────────────────── #}
+<div class="card mb-3">
+    <div class="card-header fw-semibold"><i class="bi bi-person-search me-1"></i> Test User Search</div>
+    <div class="card-body">
+        <p class="text-muted small mb-3">Uses the connection and bind settings above — the form does not need to be saved first.</p>
+        <div class="row g-2 align-items-end">
+            <div class="col">
+                <label for="testUsername" class="form-label">Username</label>
+                <input type="text" id="testUsername" class="form-control" placeholder="e.g. jsmith">
+            </div>
+            <div class="col-auto">
+                <button type="button" id="testSearchBtn" class="btn btn-outline-secondary">
+                    <i class="bi bi-search me-1"></i> Search
+                </button>
+            </div>
+        </div>
+        <div id="searchResult" class="mt-3"></div>
+    </div>
+</div>
+
 {# ── Actions ────────────────────────────────────────────────── #}
 <div class="d-flex align-items-center gap-3 mb-4">
     <div class="form-check me-auto">
@@ -129,6 +156,111 @@
 </form>
 </div>{# /col #}
 </div>{# /row #}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const SOURCE_PK = '{{ source.pk|default:"" }}';
+
+    function getConnParams() {
+        const f = document.getElementById('ldapForm');
+        return {
+            csrfmiddlewaretoken: f.querySelector('[name="csrfmiddlewaretoken"]').value,
+            hostname:      f.querySelector('[name="hostname"]').value,
+            port:          f.querySelector('[name="port"]').value,
+            protocol:      f.querySelector('[name="protocol"]').value,
+            verify_certs:  f.querySelector('[name="verify_certs"]')?.checked ? 'on' : '',
+            server_type:   f.querySelector('[name="server_type"]').value,
+            bind_dn:       f.querySelector('[name="bind_dn"]').value,
+            bind_password: f.querySelector('[name="bind_password"]').value,
+            base_dn:       f.querySelector('[name="base_dn"]').value,
+            ldap_filter:   f.querySelector('[name="ldap_filter"]').value,
+            group_membership: f.querySelector('[name="group_membership"]').value,
+            source_pk:     SOURCE_PK,
+        };
+    }
+
+    function alertHtml(ok, html) {
+        const cls = ok ? 'success' : 'danger';
+        return `<div class="alert alert-${cls} py-2 mb-0">${html}</div>`;
+    }
+
+    async function callApi(url, params) {
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRFToken': params.csrfmiddlewaretoken,
+            },
+            body: new URLSearchParams(params),
+        });
+        return resp.json();
+    }
+
+    // ── Test Connection ───────────────────────────────────────
+    document.getElementById('testConnBtn').addEventListener('click', async function () {
+        const btn = this;
+        const resultEl = document.getElementById('connResult');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Testing…';
+        resultEl.innerHTML = '';
+        try {
+            const json = await callApi('{% url "users:ldap_test_connection" %}', getConnParams());
+            resultEl.innerHTML = alertHtml(json.ok, json.message);
+        } catch (e) {
+            resultEl.innerHTML = alertHtml(false, 'Request failed: ' + e.message);
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-plug me-1"></i> Test Connection';
+        }
+    });
+
+    // ── Test User Search ──────────────────────────────────────
+    document.getElementById('testSearchBtn').addEventListener('click', async function () {
+        const btn = this;
+        const resultEl = document.getElementById('searchResult');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Searching…';
+        resultEl.innerHTML = '';
+        const params = Object.assign({}, getConnParams(), {
+            search_username: document.getElementById('testUsername').value,
+        });
+        try {
+            const json = await callApi('{% url "users:ldap_test_search" %}', params);
+            if (json.ok) {
+                let html = `<div class="alert alert-success py-2"><strong>Found:</strong> <code>${json.dn}</code></div>`;
+                const attrs = json.attributes || {};
+                if (Object.keys(attrs).length) {
+                    html += '<table class="table table-sm table-bordered mt-2">'
+                          + '<thead class="table-light"><tr><th>Attribute</th><th>Value</th></tr></thead><tbody>';
+                    for (const [k, v] of Object.entries(attrs)) {
+                        const val = Array.isArray(v) ? v.join(', ') : v;
+                        html += `<tr><td class="fw-semibold text-nowrap">${k}</td><td>${val}</td></tr>`;
+                    }
+                    html += '</tbody></table>';
+                }
+                resultEl.innerHTML = html;
+            } else {
+                resultEl.innerHTML = alertHtml(false, json.message);
+            }
+        } catch (e) {
+            resultEl.innerHTML = alertHtml(false, 'Request failed: ' + e.message);
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-search me-1"></i> Search';
+        }
+    });
+
+    // Allow pressing Enter in the username field to trigger search
+    document.getElementById('testUsername').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            document.getElementById('testSearchBtn').click();
+        }
+    });
+})();
+</script>
 {% endblock %}
 
 {% block extra_css %}

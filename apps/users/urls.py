@@ -21,6 +21,8 @@ urlpatterns = [
     # LDAP sources
     path('ldap/', views.LDAPSourceListView.as_view(), name='ldap_list'),
     path('ldap/create/', views.LDAPSourceCreateView.as_view(), name='ldap_create'),
+    path('ldap/test-connection/', views.LDAPSourceTestConnectionView.as_view(), name='ldap_test_connection'),
+    path('ldap/test-search/', views.LDAPSourceTestSearchView.as_view(), name='ldap_test_search'),
     path('ldap/<int:pk>/', views.LDAPSourceDetailView.as_view(), name='ldap_detail'),
     path('ldap/<int:pk>/edit/', views.LDAPSourceUpdateView.as_view(), name='ldap_edit'),
     path('ldap/<int:pk>/delete/', views.LDAPSourceDeleteView.as_view(), name='ldap_delete'),

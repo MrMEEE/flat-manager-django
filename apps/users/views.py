@@ -396,6 +396,165 @@ class LDAPSourceDeleteView(AdminRequiredMixin, View):
 
 
 # ---------------------------------------------------------------------------
+# LDAP connection / search tests (AJAX)
+# ---------------------------------------------------------------------------
+
+def _build_ldap_server(hostname, port, protocol, verify_certs):
+    """Return an ldap3.Server instance (or raise on import error)."""
+    import ldap3  # noqa: PLC0415
+    return ldap3.Server(
+        hostname,
+        port=port,
+        use_ssl=(protocol == 'ldaps'),
+        connect_timeout=5,
+        tls=ldap3.Tls(validate=2 if verify_certs else 0),
+    )
+
+
+def _resolve_bind_password(post_password: str, source_pk: str) -> str:
+    """Return the bind password: use posted value or fall back to stored one."""
+    if post_password:
+        return post_password
+    if source_pk:
+        try:
+            return LDAPSource.objects.get(pk=source_pk).get_bind_password() or ''
+        except LDAPSource.DoesNotExist:
+            pass
+    return ''
+
+
+class LDAPSourceTestConnectionView(AdminRequiredMixin, View):
+    """AJAX POST — test LDAP server reachability and service-account bind."""
+
+    def post(self, request):
+        try:
+            import ldap3
+        except ImportError:
+            return JsonResponse({'ok': False, 'message': 'ldap3 is not installed on this server.'})
+
+        hostname = request.POST.get('hostname', '').strip()
+        if not hostname:
+            return JsonResponse({'ok': False, 'message': 'Hostname is required.'})
+
+        try:
+            port = int(request.POST.get('port') or 389)
+        except (TypeError, ValueError):
+            return JsonResponse({'ok': False, 'message': 'Invalid port number.'})
+
+        protocol     = request.POST.get('protocol', 'ldap')
+        verify_certs = request.POST.get('verify_certs') in ('on', 'true', '1')
+        bind_dn      = request.POST.get('bind_dn', '').strip()
+        bind_password = _resolve_bind_password(
+            request.POST.get('bind_password', '').strip(),
+            request.POST.get('source_pk', '').strip(),
+        )
+
+        try:
+            server = _build_ldap_server(hostname, port, protocol, verify_certs)
+            conn = ldap3.Connection(
+                server,
+                user=bind_dn or None,
+                password=bind_password or None,
+                authentication=ldap3.SIMPLE if bind_dn else ldap3.ANONYMOUS,
+                auto_bind=ldap3.AUTO_BIND_NO_TLS,
+            )
+            if not conn.bind():
+                return JsonResponse({'ok': False, 'message': f'Bind failed: {conn.result}'})
+            conn.unbind()
+            msg = 'Connection and bind successful.'
+            return JsonResponse({'ok': True, 'message': msg})
+        except Exception as exc:
+            return JsonResponse({'ok': False, 'message': str(exc)})
+
+
+class LDAPSourceTestSearchView(AdminRequiredMixin, View):
+    """AJAX POST — search for a user in the LDAP directory."""
+
+    def post(self, request):
+        try:
+            import ldap3
+        except ImportError:
+            return JsonResponse({'ok': False, 'message': 'ldap3 is not installed on this server.'})
+
+        hostname = request.POST.get('hostname', '').strip()
+        if not hostname:
+            return JsonResponse({'ok': False, 'message': 'Hostname is required.'})
+
+        try:
+            port = int(request.POST.get('port') or 389)
+        except (TypeError, ValueError):
+            return JsonResponse({'ok': False, 'message': 'Invalid port number.'})
+
+        protocol       = request.POST.get('protocol', 'ldap')
+        verify_certs   = request.POST.get('verify_certs') in ('on', 'true', '1')
+        bind_dn        = request.POST.get('bind_dn', '').strip()
+        bind_password  = _resolve_bind_password(
+            request.POST.get('bind_password', '').strip(),
+            request.POST.get('source_pk', '').strip(),
+        )
+        base_dn        = request.POST.get('base_dn', '').strip()
+        ldap_filter    = request.POST.get('ldap_filter', '').strip() or '(objectClass=person)'
+        server_type    = request.POST.get('server_type', 'ad')
+        search_username = request.POST.get('search_username', '').strip()
+
+        if not base_dn:
+            return JsonResponse({'ok': False, 'message': 'Base DN is required to perform a search.'})
+        if not search_username:
+            return JsonResponse({'ok': False, 'message': 'Enter a username to search for.'})
+
+        uid_attr = 'sAMAccountName' if server_type == 'ad' else 'uid'
+        escaped  = ldap3.utils.conv.escape_filter_chars(search_username)
+        search_filter = f'(&{ldap_filter}({uid_attr}={escaped}))'
+        attrs = ['cn', 'givenName', 'sn', 'mail', 'sAMAccountName', 'uid', 'memberOf']
+
+        try:
+            server = _build_ldap_server(hostname, port, protocol, verify_certs)
+            conn = ldap3.Connection(
+                server,
+                user=bind_dn or None,
+                password=bind_password or None,
+                authentication=ldap3.SIMPLE if bind_dn else ldap3.ANONYMOUS,
+                auto_bind=ldap3.AUTO_BIND_NO_TLS,
+            )
+            if not conn.bind():
+                return JsonResponse({'ok': False, 'message': f'Service bind failed: {conn.result}'})
+
+            if not conn.search(
+                search_base=base_dn,
+                search_filter=search_filter,
+                search_scope=ldap3.SUBTREE,
+                attributes=attrs,
+            ):
+                conn.unbind()
+                return JsonResponse({'ok': False, 'message': f'Search failed: {conn.result}'})
+
+            entries = [e for e in conn.entries if e.entry_dn]
+            conn.unbind()
+
+            if not entries:
+                return JsonResponse({'ok': False, 'message': f'No entry found for {search_username!r}.'})
+
+            entry = entries[0]
+            result_attrs = {}
+            for attr in attrs:
+                try:
+                    vals = list(entry[attr].values)
+                    if vals:
+                        result_attrs[attr] = vals[0] if len(vals) == 1 else vals
+                except Exception:
+                    pass
+
+            return JsonResponse({
+                'ok': True,
+                'message': f'Found: {entry.entry_dn}',
+                'dn': entry.entry_dn,
+                'attributes': result_attrs,
+            })
+        except Exception as exc:
+            return JsonResponse({'ok': False, 'message': str(exc)})
+
+
+# ---------------------------------------------------------------------------
 # LDAP Group Mapping
 # ---------------------------------------------------------------------------
 
