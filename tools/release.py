@@ -29,6 +29,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 VERSION_FILE = PROJECT_ROOT / "version.py"
 SPEC_FILE    = PROJECT_ROOT / "packaging" / "flat-manager-django.spec"
+README_FILE  = PROJECT_ROOT / "README.md"
 
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -174,6 +175,22 @@ class ReleaseManager:
             VERSION_FILE.write_text(text)
         self._changes.append(str(VERSION_FILE.relative_to(PROJECT_ROOT)))
 
+    def update_readme(self, new_version: str) -> None:
+        path = README_FILE
+        self.info(f"Updating {path.relative_to(PROJECT_ROOT)}")
+        text = path.read_text()
+        new_text = re.sub(
+            r'(?m)^(\*\*Current version:\*\*\s*)\S+',
+            rf'\g<1>{new_version}',
+            text,
+        )
+        if new_text == text:
+            self.warn("README.md: pattern '**Current version:**' not found — skipping")
+            return
+        if not self.dry_run:
+            path.write_text(new_text)
+        self._changes.append(str(path.relative_to(PROJECT_ROOT)))
+
     def update_spec_changelog(self, new_version: str) -> None:
         self.info(f"Prepending %changelog entry to {SPEC_FILE.relative_to(PROJECT_ROOT)}")
         today = datetime.now().strftime("%a %b %d %Y")
@@ -228,6 +245,7 @@ class ReleaseManager:
 
         # 3. Update files
         self.update_version_file(new_version)
+        self.update_readme(new_version)
         self.update_spec_changelog(new_version)
 
         # 4. Git
