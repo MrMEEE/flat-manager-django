@@ -3192,7 +3192,13 @@ class ClientDetailView(LoginRequiredMixin, DetailView):
             (p.get('name') or p['app_id']).lower(),
         ))
         context['installed_annotated'] = annotated
-        context['commit_outdated_count'] = client.commit_outdated_count
+        # If the freshly computed count differs from the stored value (e.g.
+        # because an ExternalRef was published since the last check-in), persist
+        # the updated value so the client list also shows the correct number.
+        if commit_outdated_count != client.commit_outdated_count:
+            Client.objects.filter(pk=client.pk).update(commit_outdated_count=commit_outdated_count)
+            client.commit_outdated_count = commit_outdated_count
+        context['commit_outdated_count'] = commit_outdated_count
 
         # Determine client health status
         if client.last_checkin is None or client.last_checkin < threshold:
@@ -3433,7 +3439,7 @@ class ClientCheckinView(View):
                         'foreign_flatpaks': foreign_flatpaks,
                         'outdated_flatpaks': outdated_flatpaks,
                         'last_checkin': client.last_checkin.strftime('%b %d, %H:%M') if client.last_checkin else '',
-                    }
+                    'serial_number': client.serial_number or '',
                 )
         except Exception:
             pass  # WS push is best-effort; checkin must still succeed
