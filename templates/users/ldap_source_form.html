@@ -17,106 +17,118 @@
     <h2><i class="bi bi-diagram-3"></i> {{ action }} LDAP Source</h2>
 </div>
 
-<div class="card">
+<div class="row justify-content-center">
+<div class="col-xl-8 col-lg-10">
+
+<form method="post" novalidate>
+{% csrf_token %}
+{% if form.non_field_errors %}
+<div class="alert alert-danger">{{ form.non_field_errors }}</div>
+{% endif %}
+
+{# ── Server Connection ──────────────────────────────────────── #}
+<div class="card mb-3">
+    <div class="card-header fw-semibold"><i class="bi bi-server me-1"></i> Server Connection</div>
     <div class="card-body">
-        <form method="post" novalidate>
-            {% csrf_token %}
-            {% if form.non_field_errors %}
-            <div class="alert alert-danger">{{ form.non_field_errors }}</div>
-            {% endif %}
-
-            <h5 class="mb-3">Server Connection</h5>
-            <div class="row">
-                <div class="col-md-6 mb-3">
-                    <label class="form-label" for="{{ form.name.id_for_label }}">{{ form.name.label }}</label>
-                    {{ form.name }}
-                    {% if form.name.errors %}<div class="invalid-feedback d-block">{{ form.name.errors }}</div>{% endif %}
-                </div>
-                <div class="col-md-6 mb-3">
-                    <label class="form-label" for="{{ form.hostname.id_for_label }}">{{ form.hostname.label }}</label>
-                    {{ form.hostname }}
-                    {% if form.hostname.errors %}<div class="invalid-feedback d-block">{{ form.hostname.errors }}</div>{% endif %}
-                </div>
-                <div class="col-md-3 mb-3">
-                    <label class="form-label" for="{{ form.port.id_for_label }}">{{ form.port.label }}</label>
-                    {{ form.port }}
-                    {% if form.port.errors %}<div class="invalid-feedback d-block">{{ form.port.errors }}</div>{% endif %}
-                </div>
-                <div class="col-md-3 mb-3">
-                    <label class="form-label" for="{{ form.protocol.id_for_label }}">{{ form.protocol.label }}</label>
-                    {{ form.protocol }}
-                    {% if form.protocol.errors %}<div class="invalid-feedback d-block">{{ form.protocol.errors }}</div>{% endif %}
-                </div>
-                <div class="col-md-3 mb-3">
-                    <label class="form-label" for="{{ form.server_type.id_for_label }}">{{ form.server_type.label }}</label>
-                    {{ form.server_type }}
-                    {% if form.server_type.errors %}<div class="invalid-feedback d-block">{{ form.server_type.errors }}</div>{% endif %}
-                </div>
-                <div class="col-md-3 mb-3 d-flex align-items-center pt-3">
-                    <div class="form-check mt-3">
-                        {{ form.verify_certs }}
-                        <label class="form-check-label" for="{{ form.verify_certs.id_for_label }}">{{ form.verify_certs.label }}</label>
-                    </div>
+        <div class="row g-3">
+            <div class="col-sm-6">
+                <label class="form-label" for="{{ form.name.id_for_label }}">Name</label>
+                {{ form.name }}
+                {% if form.name.errors %}<div class="invalid-feedback d-block">{{ form.name.errors }}</div>{% endif %}
+            </div>
+            <div class="col-sm-6">
+                <label class="form-label" for="{{ form.hostname.id_for_label }}">Hostname</label>
+                {{ form.hostname }}
+                {% if form.hostname.errors %}<div class="invalid-feedback d-block">{{ form.hostname.errors }}</div>{% endif %}
+            </div>
+            <div class="col-4 col-sm-2">
+                <label class="form-label" for="{{ form.port.id_for_label }}">Port</label>
+                {{ form.port }}
+                {% if form.port.errors %}<div class="invalid-feedback d-block">{{ form.port.errors }}</div>{% endif %}
+            </div>
+            <div class="col-8 col-sm-4">
+                <label class="form-label" for="{{ form.protocol.id_for_label }}">Protocol</label>
+                {{ form.protocol }}
+                {% if form.protocol.errors %}<div class="invalid-feedback d-block">{{ form.protocol.errors }}</div>{% endif %}
+            </div>
+            <div class="col-sm-4">
+                <label class="form-label" for="{{ form.server_type.id_for_label }}">Server type</label>
+                {{ form.server_type }}
+                {% if form.server_type.errors %}<div class="invalid-feedback d-block">{{ form.server_type.errors }}</div>{% endif %}
+            </div>
+            <div class="col-sm-2 d-flex align-items-end pb-1">
+                <div class="form-check">
+                    {{ form.verify_certs }}
+                    <label class="form-check-label" for="{{ form.verify_certs.id_for_label }}">Verify certs</label>
                 </div>
             </div>
-
-            <h5 class="mb-3 mt-2">Bind / Search</h5>
-            <div class="row">
-                <div class="col-md-6 mb-3">
-                    <label class="form-label" for="{{ form.bind_dn.id_for_label }}">{{ form.bind_dn.label }}</label>
-                    {{ form.bind_dn }}
-                    <div class="form-text">{{ form.bind_dn.help_text }}</div>
-                    {% if form.bind_dn.errors %}<div class="invalid-feedback d-block">{{ form.bind_dn.errors }}</div>{% endif %}
-                </div>
-                <div class="col-md-6 mb-3">
-                    <label class="form-label" for="{{ form.bind_password.id_for_label }}">{{ form.bind_password.label }}</label>
-                    {{ form.bind_password }}
-                    <div class="form-text">{{ form.bind_password.help_text }}</div>
-                    {% if form.bind_password.errors %}<div class="invalid-feedback d-block">{{ form.bind_password.errors }}</div>{% endif %}
-                </div>
-                <div class="col-md-6 mb-3">
-                    <label class="form-label" for="{{ form.base_dn.id_for_label }}">{{ form.base_dn.label }}</label>
-                    {{ form.base_dn }}
-                    <div class="form-text">{{ form.base_dn.help_text }}</div>
-                    {% if form.base_dn.errors %}<div class="invalid-feedback d-block">{{ form.base_dn.errors }}</div>{% endif %}
-                </div>
-                <div class="col-md-6 mb-3">
-                    <label class="form-label" for="{{ form.group_base_dn.id_for_label }}">{{ form.group_base_dn.label }}</label>
-                    {{ form.group_base_dn }}
-                    <div class="form-text">{{ form.group_base_dn.help_text }}</div>
-                    {% if form.group_base_dn.errors %}<div class="invalid-feedback d-block">{{ form.group_base_dn.errors }}</div>{% endif %}
-                </div>
-                <div class="col-md-6 mb-3">
-                    <label class="form-label" for="{{ form.group_membership.id_for_label }}">{{ form.group_membership.label }}</label>
-                    {{ form.group_membership }}
-                    {% if form.group_membership.errors %}<div class="invalid-feedback d-block">{{ form.group_membership.errors }}</div>{% endif %}
-                </div>
-                <div class="col-md-6 mb-3">
-                    <label class="form-label" for="{{ form.ldap_filter.id_for_label }}">{{ form.ldap_filter.label }}</label>
-                    {{ form.ldap_filter }}
-                    <div class="form-text">{{ form.ldap_filter.help_text }}</div>
-                    {% if form.ldap_filter.errors %}<div class="invalid-feedback d-block">{{ form.ldap_filter.errors }}</div>{% endif %}
-                </div>
-            </div>
-
-            <div class="form-check mb-4">
-                {{ form.is_active }}
-                <label class="form-check-label" for="{{ form.is_active.id_for_label }}">{{ form.is_active.label }}</label>
-            </div>
-
-            <div class="d-flex gap-2">
-                <button type="submit" class="btn btn-primary">
-                    <i class="bi bi-check-lg"></i> {{ action }}
-                </button>
-                {% if source %}
-                <a href="{% url 'users:ldap_detail' source.pk %}" class="btn btn-outline-secondary">Cancel</a>
-                {% else %}
-                <a href="{% url 'users:ldap_list' %}" class="btn btn-outline-secondary">Cancel</a>
-                {% endif %}
-            </div>
-        </form>
+        </div>
     </div>
 </div>
+
+{# ── Bind / Search ──────────────────────────────────────────── #}
+<div class="card mb-3">
+    <div class="card-header fw-semibold"><i class="bi bi-search me-1"></i> Bind / Search</div>
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-sm-6">
+                <label class="form-label" for="{{ form.bind_dn.id_for_label }}">Bind DN</label>
+                {{ form.bind_dn }}
+                <div class="form-text">{{ form.bind_dn.help_text }}</div>
+                {% if form.bind_dn.errors %}<div class="invalid-feedback d-block">{{ form.bind_dn.errors }}</div>{% endif %}
+            </div>
+            <div class="col-sm-6">
+                <label class="form-label" for="{{ form.bind_password.id_for_label }}">Bind password</label>
+                {{ form.bind_password }}
+                <div class="form-text">{{ form.bind_password.help_text }}</div>
+                {% if form.bind_password.errors %}<div class="invalid-feedback d-block">{{ form.bind_password.errors }}</div>{% endif %}
+            </div>
+            <div class="col-sm-6">
+                <label class="form-label" for="{{ form.base_dn.id_for_label }}">Base DN</label>
+                {{ form.base_dn }}
+                <div class="form-text">User search base DN</div>
+                {% if form.base_dn.errors %}<div class="invalid-feedback d-block">{{ form.base_dn.errors }}</div>{% endif %}
+            </div>
+            <div class="col-sm-6">
+                <label class="form-label" for="{{ form.group_base_dn.id_for_label }}">Group base DN</label>
+                {{ form.group_base_dn }}
+                <div class="form-text">{{ form.group_base_dn.help_text }}</div>
+                {% if form.group_base_dn.errors %}<div class="invalid-feedback d-block">{{ form.group_base_dn.errors }}</div>{% endif %}
+            </div>
+            <div class="col-sm-6">
+                <label class="form-label" for="{{ form.group_membership.id_for_label }}">Group membership</label>
+                {{ form.group_membership }}
+                {% if form.group_membership.errors %}<div class="invalid-feedback d-block">{{ form.group_membership.errors }}</div>{% endif %}
+            </div>
+            <div class="col-sm-6">
+                <label class="form-label" for="{{ form.ldap_filter.id_for_label }}">LDAP filter</label>
+                {{ form.ldap_filter }}
+                <div class="form-text">{{ form.ldap_filter.help_text }}</div>
+                {% if form.ldap_filter.errors %}<div class="invalid-feedback d-block">{{ form.ldap_filter.errors }}</div>{% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+{# ── Actions ────────────────────────────────────────────────── #}
+<div class="d-flex align-items-center gap-3 mb-4">
+    <div class="form-check me-auto">
+        {{ form.is_active }}
+        <label class="form-check-label" for="{{ form.is_active.id_for_label }}">Is active</label>
+    </div>
+    <button type="submit" class="btn btn-primary">
+        <i class="bi bi-check-lg"></i> {{ action }}
+    </button>
+    {% if source %}
+    <a href="{% url 'users:ldap_detail' source.pk %}" class="btn btn-outline-secondary">Cancel</a>
+    {% else %}
+    <a href="{% url 'users:ldap_list' %}" class="btn btn-outline-secondary">Cancel</a>
+    {% endif %}
+</div>
+
+</form>
+</div>{# /col #}
+</div>{# /row #}
 {% endblock %}
 
 {% block extra_css %}
