@@ -148,8 +148,10 @@ class LDAPBackend:
         search_filter = f'(&{base_filter}({uid_attr}={ldap3.utils.conv.escape_filter_chars(username)}))'
 
         # Always fetch the mapped attrs plus group membership attrs
+        # Note: 'dn' must NOT be included — ldap3 returns it automatically and
+        # rejects it as an explicit attribute type (raises LDAPAttributeError).
         attrs = list({
-            'dn', 'cn', uid_attr,
+            'cn', uid_attr,
             source.attr_first_name, source.attr_last_name, source.attr_email,
             'memberOf', 'memberUid', 'objectClass',
         })
