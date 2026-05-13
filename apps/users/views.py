@@ -1,5 +1,6 @@
 from django.contrib.auth import authenticate, login, logout
-from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
+from django.contrib.auth.mixins import LoginRequiredMixin
+from .mixins import AdminRequiredMixin
 from django.http import JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views import View
@@ -160,14 +161,7 @@ class DashboardStatsApiView(LoginRequiredMixin, View):
         })
 
 
-class AdminRequiredMixin(UserPassesTestMixin):
-    """Mixin to require admin role (or Django superuser / staff)."""
-    def test_func(self):
-        u = self.request.user
-        return u.is_staff or u.is_superuser or u.roles.filter(role='admin').exists()
-
-
-class UserListView(LoginRequiredMixin, AdminRequiredMixin, ListView):
+class UserListView(AdminRequiredMixin, ListView):
     """List all users (admin only)."""
     model = User
     template_name = 'users/user_list.html'
@@ -175,14 +169,14 @@ class UserListView(LoginRequiredMixin, AdminRequiredMixin, ListView):
     paginate_by = 20
 
 
-class UserDetailView(LoginRequiredMixin, AdminRequiredMixin, DetailView):
+class UserDetailView(AdminRequiredMixin, DetailView):
     """User detail view (admin only)."""
     model = User
     template_name = 'users/user_detail.html'
     context_object_name = 'user_obj'
 
 
-class UserCreateView(LoginRequiredMixin, AdminRequiredMixin, CreateView):
+class UserCreateView(AdminRequiredMixin, CreateView):
     """Create new user (admin only)."""
     model = User
     template_name = 'users/user_form.html'
@@ -194,7 +188,7 @@ class UserCreateView(LoginRequiredMixin, AdminRequiredMixin, CreateView):
         return super().form_valid(form)
 
 
-class UserUpdateView(LoginRequiredMixin, AdminRequiredMixin, UpdateView):
+class UserUpdateView(AdminRequiredMixin, UpdateView):
     """Update user (admin only)."""
     model = User
     template_name = 'users/user_form.html'
@@ -206,7 +200,7 @@ class UserUpdateView(LoginRequiredMixin, AdminRequiredMixin, UpdateView):
         return super().form_valid(form)
 
 
-class UserSetPasswordView(LoginRequiredMixin, AdminRequiredMixin, View):
+class UserSetPasswordView(AdminRequiredMixin, View):
     """Set or change a user's password (admin only)."""
     template_name = 'users/user_password.html'
 
@@ -249,7 +243,7 @@ class ProfileView(LoginRequiredMixin, View):
 # User Role Management
 # ---------------------------------------------------------------------------
 
-class UserRoleView(LoginRequiredMixin, AdminRequiredMixin, View):
+class UserRoleView(AdminRequiredMixin, View):
     """Manage roles for a single user."""
     template_name = 'users/user_roles.html'
 
@@ -298,13 +292,13 @@ class UserRoleView(LoginRequiredMixin, AdminRequiredMixin, View):
 # LDAP Source CRUD
 # ---------------------------------------------------------------------------
 
-class LDAPSourceListView(LoginRequiredMixin, AdminRequiredMixin, ListView):
+class LDAPSourceListView(AdminRequiredMixin, ListView):
     model = LDAPSource
     template_name = 'users/ldap_source_list.html'
     context_object_name = 'sources'
 
 
-class LDAPSourceCreateView(LoginRequiredMixin, AdminRequiredMixin, View):
+class LDAPSourceCreateView(AdminRequiredMixin, View):
     template_name = 'users/ldap_source_form.html'
 
     def get(self, request):
@@ -323,7 +317,7 @@ class LDAPSourceCreateView(LoginRequiredMixin, AdminRequiredMixin, View):
         return render(request, self.template_name, {'form': form, 'action': 'Create'})
 
 
-class LDAPSourceDetailView(LoginRequiredMixin, AdminRequiredMixin, DetailView):
+class LDAPSourceDetailView(AdminRequiredMixin, DetailView):
     model = LDAPSource
     template_name = 'users/ldap_source_detail.html'
     context_object_name = 'source'
@@ -335,7 +329,7 @@ class LDAPSourceDetailView(LoginRequiredMixin, AdminRequiredMixin, DetailView):
         return ctx
 
 
-class LDAPSourceUpdateView(LoginRequiredMixin, AdminRequiredMixin, View):
+class LDAPSourceUpdateView(AdminRequiredMixin, View):
     template_name = 'users/ldap_source_form.html'
 
     def get_source(self, pk):
@@ -360,7 +354,7 @@ class LDAPSourceUpdateView(LoginRequiredMixin, AdminRequiredMixin, View):
         return render(request, self.template_name, {'form': form, 'source': source, 'action': 'Edit'})
 
 
-class LDAPSourceDeleteView(LoginRequiredMixin, AdminRequiredMixin, View):
+class LDAPSourceDeleteView(AdminRequiredMixin, View):
     template_name = 'users/ldap_source_confirm_delete.html'
 
     def get_source(self, pk):
@@ -382,7 +376,7 @@ class LDAPSourceDeleteView(LoginRequiredMixin, AdminRequiredMixin, View):
 # LDAP Group Mapping
 # ---------------------------------------------------------------------------
 
-class LDAPGroupMappingCreateView(LoginRequiredMixin, AdminRequiredMixin, View):
+class LDAPGroupMappingCreateView(AdminRequiredMixin, View):
     """Add a group mapping to an LDAP source."""
 
     def post(self, request, source_pk):
@@ -398,7 +392,7 @@ class LDAPGroupMappingCreateView(LoginRequiredMixin, AdminRequiredMixin, View):
         return redirect('users:ldap_detail', pk=source_pk)
 
 
-class LDAPGroupMappingDeleteView(LoginRequiredMixin, AdminRequiredMixin, View):
+class LDAPGroupMappingDeleteView(AdminRequiredMixin, View):
     """Remove a group mapping from an LDAP source."""
 
     def post(self, request, source_pk, pk):

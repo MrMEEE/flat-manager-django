@@ -2,6 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
+from .permissions import IsAdmin, CanBuild, CanRepoAdmin
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters
 
@@ -22,6 +23,11 @@ class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
+            return [IsAuthenticated()]
+        return [IsAdmin()]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['username', 'email', 'first_name', 'last_name']
     ordering_fields = ['username', 'created_at']
@@ -41,6 +47,11 @@ class UserProfileViewSet(viewsets.ModelViewSet):
     serializer_class = UserProfileSerializer
     permission_classes = [IsAuthenticated]
 
+    def get_permissions(self):
+        if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
+            return [IsAuthenticated()]
+        return [IsAdmin()]
+
 
 class GPGKeyViewSet(viewsets.ModelViewSet):
     """
@@ -49,6 +60,11 @@ class GPGKeyViewSet(viewsets.ModelViewSet):
     queryset = GPGKey.objects.all()
     serializer_class = GPGKeySerializer
     permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
+            return [IsAuthenticated()]
+        return [CanRepoAdmin()]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name', 'email', 'key_id', 'fingerprint']
     ordering_fields = ['name', 'created_at']
@@ -161,6 +177,11 @@ class RepositoryViewSet(viewsets.ModelViewSet):
     queryset = Repository.objects.all()
     serializer_class = RepositorySerializer
     permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
+            return [IsAuthenticated()]
+        return [CanRepoAdmin()]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['is_active', 'collection_id']
     search_fields = ['name', 'description', 'collection_id']
@@ -193,6 +214,11 @@ class RepositorySubsetViewSet(viewsets.ModelViewSet):
     queryset = RepositorySubset.objects.all()
     serializer_class = RepositorySubsetSerializer
     permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
+            return [IsAuthenticated()]
+        return [CanRepoAdmin()]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ['repository']
     search_fields = ['name', 'collection_id']
@@ -204,17 +230,19 @@ class PackageViewSet(viewsets.ModelViewSet):
     """
     queryset = Package.objects.all()
     serializer_class = PackageSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CanBuild]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['status', 'repository', 'arch', 'branch']
     search_fields = ['package_id', 'package_name']
     ordering_fields = ['created_at', 'build_number']
     
     def get_permissions(self):
-        """Allow unauthenticated access to logs and retrieve endpoints."""
-        if self.action in ['logs', 'retrieve']:
+        """Allow unauthenticated access to logs; read-only for authenticated; write requires CanBuild."""
+        if self.action in ['logs']:
             return [AllowAny()]
-        return super().get_permissions()
+        if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
+            return [IsAuthenticated()]
+        return [CanBuild()]
     
     def perform_create(self, serializer):
         package = serializer.save(created_by=self.request.user)
@@ -421,6 +449,11 @@ class BuildArtifactViewSet(viewsets.ModelViewSet):
     queryset = BuildArtifact.objects.all()
     serializer_class = BuildArtifactSerializer
     permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
+            return [IsAuthenticated()]
+        return [CanBuild()]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ['build']
     search_fields = ['filename']
@@ -433,6 +466,11 @@ class TokenViewSet(viewsets.ModelViewSet):
     queryset = Token.objects.all()
     serializer_class = TokenSerializer
     permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
+            return [IsAuthenticated()]
+        return [CanRepoAdmin()]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['repository', 'token_type', 'is_active']
     ordering_fields = ['created_at', 'expires_at']

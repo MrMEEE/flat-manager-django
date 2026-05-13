@@ -7,6 +7,10 @@ import tempfile
 
 from django.conf import settings
 from django.contrib.auth.mixins import LoginRequiredMixin
+from apps.users.mixins import (
+    AdminRequiredMixin, RepoAdminRequiredMixin,
+    BuildAdminRequiredMixin,
+)
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView
 from django.views import View
 from django.http import JsonResponse
@@ -166,7 +170,7 @@ class RpmPackageDetailView(LoginRequiredMixin, DetailView):
         return ctx
 
 
-class RpmPackageCreateView(LoginRequiredMixin, CreateView):
+class RpmPackageCreateView(BuildAdminRequiredMixin, CreateView):
     model = RpmPackage
     form_class = RpmPackageForm
     template_name = 'rpm/package_form.html'
@@ -197,7 +201,7 @@ class RpmPackageCreateView(LoginRequiredMixin, CreateView):
         return reverse('rpm:package_detail', args=[self.object.pk])
 
 
-class RpmPackageUpdateView(LoginRequiredMixin, UpdateView):
+class RpmPackageUpdateView(BuildAdminRequiredMixin, UpdateView):
     model = RpmPackage
     form_class = RpmPackageForm
     template_name = 'rpm/package_form.html'
@@ -207,7 +211,7 @@ class RpmPackageUpdateView(LoginRequiredMixin, UpdateView):
         return reverse('rpm:package_detail', args=[self.object.pk])
 
 
-class RpmPackageDeleteView(LoginRequiredMixin, DeleteView):
+class RpmPackageDeleteView(BuildAdminRequiredMixin, DeleteView):
     model = RpmPackage
     template_name = 'rpm/package_confirm_delete.html'
     success_url = reverse_lazy('rpm:package_list')
@@ -219,7 +223,7 @@ class RpmPackageDeleteView(LoginRequiredMixin, DeleteView):
         return response
 
 
-class RpmPackageBuildView(LoginRequiredMixin, View):
+class RpmPackageBuildView(BuildAdminRequiredMixin, View):
     """POST — trigger builds immediately using each distribution's default-enabled repos."""
 
     def post(self, request, pk):
@@ -253,7 +257,7 @@ class RpmPackageBuildView(LoginRequiredMixin, View):
         return redirect('rpm:package_detail', pk=pk)
 
 
-class RpmPackageBuildWithNumberView(LoginRequiredMixin, View):
+class RpmPackageBuildWithNumberView(BuildAdminRequiredMixin, View):
     """POST — trigger builds with a user-specified build number (JSON response)."""
 
     def post(self, request, pk):
@@ -363,7 +367,7 @@ class RpmBuildMockLogView(LoginRequiredMixin, View):
         return JsonResponse({'available': False, 'content': None})
 
 
-class RpmBuildRetryView(LoginRequiredMixin, View):
+class RpmBuildRetryView(BuildAdminRequiredMixin, View):
     """POST — create a new build record (copying repo selection) and queue it."""
 
     def post(self, request, pk):
@@ -389,7 +393,7 @@ class RpmBuildRetryView(LoginRequiredMixin, View):
         return redirect('rpm:build_detail', pk=new_build.pk)
 
 
-class RpmBuildCancelView(LoginRequiredMixin, View):
+class RpmBuildCancelView(BuildAdminRequiredMixin, View):
     """POST — mark a build as cancelled; the running task will notice and abort."""
 
     def post(self, request, pk):
@@ -406,7 +410,7 @@ class RpmBuildCancelView(LoginRequiredMixin, View):
         return redirect('rpm:build_detail', pk=pk)
 
 
-class RpmBuildDeleteView(LoginRequiredMixin, View):
+class RpmBuildDeleteView(BuildAdminRequiredMixin, View):
     """POST — delete a completed/failed/cancelled build record."""
 
     def post(self, request, pk):
@@ -424,7 +428,7 @@ class RpmBuildDeleteView(LoginRequiredMixin, View):
 # Distribution management
 # ---------------------------------------------------------------------------
 
-class RpmDistributionListView(LoginRequiredMixin, ListView):
+class RpmDistributionListView(RepoAdminRequiredMixin, ListView):
     model = RpmDistribution
     template_name = 'rpm/distribution_list.html'
     context_object_name = 'distributions'
@@ -442,7 +446,7 @@ class RpmDistributionListView(LoginRequiredMixin, ListView):
         )
 
 
-class RpmPackageRepositoriesView(LoginRequiredMixin, View):
+class RpmPackageRepositoriesView(RepoAdminRequiredMixin, View):
     """GET — per-package repository configuration page.
 
     Shows only the distributions assigned to this package (and active).
@@ -473,7 +477,7 @@ class RpmPackageRepositoriesView(LoginRequiredMixin, View):
         })
 
 
-class RpmPackageRepositoryToggleView(LoginRequiredMixin, View):
+class RpmPackageRepositoryToggleView(RepoAdminRequiredMixin, View):
     """POST (AJAX) — toggle a repo in/out of a package's default_repos."""
 
     def post(self, request, pk, repo_pk):
@@ -489,7 +493,7 @@ class RpmPackageRepositoryToggleView(LoginRequiredMixin, View):
         return JsonResponse({'ok': True, 'enabled': enabled})
 
 
-class RpmPackageSigningKeyView(LoginRequiredMixin, View):
+class RpmPackageSigningKeyView(RepoAdminRequiredMixin, View):
     """POST — assign or clear the GPG signing key for a (package, distribution) pair."""
 
     def post(self, request, pkg_pk, dist_pk):
@@ -521,7 +525,7 @@ class RpmPackageSigningKeyView(LoginRequiredMixin, View):
         return redirect('rpm:package_detail', pk=pkg_pk)
 
 
-class RpmScanSpecFilesView(LoginRequiredMixin, View):
+class RpmScanSpecFilesView(BuildAdminRequiredMixin, View):
     """GET — shallow-clone a git repo and return a list of .spec files found in it."""
 
     def get(self, request):
@@ -567,7 +571,7 @@ class RpmScanSpecFilesView(LoginRequiredMixin, View):
         return JsonResponse({'spec_files': rel_paths})
 
 
-class RpmScanBranchesView(LoginRequiredMixin, View):
+class RpmScanBranchesView(BuildAdminRequiredMixin, View):
     """GET — list all remote branches of a git repo without cloning it."""
 
     def get(self, request):
@@ -599,7 +603,7 @@ class RpmScanBranchesView(LoginRequiredMixin, View):
         return JsonResponse({'branches': sorted(branches)})
 
 
-class RpmPackageCheckUpstreamView(LoginRequiredMixin, View):
+class RpmPackageCheckUpstreamView(BuildAdminRequiredMixin, View):
     """POST — AJAX: fetch the latest upstream version tag for a package."""
 
     def post(self, request, pk):
@@ -637,7 +641,7 @@ class RpmPackageCheckUpstreamView(LoginRequiredMixin, View):
         })
 
 
-class RpmPackageCheckAvailableView(LoginRequiredMixin, View):
+class RpmPackageCheckAvailableView(BuildAdminRequiredMixin, View):
     """POST — AJAX: shallow-clone the spec repo, extract version and Requires."""
 
     def post(self, request, pk):
@@ -726,7 +730,7 @@ class RpmPackageCheckAvailableView(LoginRequiredMixin, View):
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-class RpmDistributionSyncView(LoginRequiredMixin, View):
+class RpmDistributionSyncView(RepoAdminRequiredMixin, View):
 
     def post(self, request):
         from apps.rpm.tasks import sync_distributions_from_mock
@@ -743,7 +747,7 @@ class RpmDistributionSyncView(LoginRequiredMixin, View):
         return redirect('rpm:distribution_list')
 
 
-class RpmDistributionToggleView(LoginRequiredMixin, View):
+class RpmDistributionToggleView(RepoAdminRequiredMixin, View):
     """POST — toggle the is_active flag on a distribution."""
 
     def post(self, request, pk):
@@ -755,7 +759,7 @@ class RpmDistributionToggleView(LoginRequiredMixin, View):
         return redirect('rpm:distribution_list')
 
 
-class RpmDistributionSyncReposView(LoginRequiredMixin, View):
+class RpmDistributionSyncReposView(RepoAdminRequiredMixin, View):
     """POST — queue an async repo sync for a single distribution."""
 
     def post(self, request, pk):
@@ -770,7 +774,7 @@ class RpmDistributionSyncReposView(LoginRequiredMixin, View):
         return redirect('rpm:distribution_list')
 
 
-class RpmRepositoryToggleView(LoginRequiredMixin, View):
+class RpmRepositoryToggleView(RepoAdminRequiredMixin, View):
     """POST — toggle the enabled flag on a single RpmRepository."""
 
     def post(self, request, repo_pk):
@@ -786,7 +790,7 @@ class RpmRepositoryToggleView(LoginRequiredMixin, View):
 # Satellite / Katello destinations
 # ---------------------------------------------------------------------------
 
-class RpmDestinationListView(LoginRequiredMixin, ListView):
+class RpmDestinationListView(RepoAdminRequiredMixin, ListView):
     """List all Satellite servers and their registered repositories."""
     model = SatelliteServer
     template_name = 'rpm/destination_list.html'
@@ -796,7 +800,7 @@ class RpmDestinationListView(LoginRequiredMixin, ListView):
         return SatelliteServer.objects.prefetch_related('repositories').order_by('name')
 
 
-class RpmSatelliteServerCreateView(LoginRequiredMixin, View):
+class RpmSatelliteServerCreateView(AdminRequiredMixin, View):
     """
     GET  — render the Add Server form.
     POST — call the Satellite API with admin credentials to provision the
@@ -870,7 +874,7 @@ class RpmSatelliteServerCreateView(LoginRequiredMixin, View):
         return redirect('rpm:destination_list')
 
 
-class RpmSatelliteServerDeleteView(LoginRequiredMixin, View):
+class RpmSatelliteServerDeleteView(AdminRequiredMixin, View):
     def post(self, request, pk):
         server = get_object_or_404(SatelliteServer, pk=pk)
         name = server.name
@@ -879,7 +883,7 @@ class RpmSatelliteServerDeleteView(LoginRequiredMixin, View):
         return redirect('rpm:destination_list')
 
 
-class RpmSatelliteRepositoryAddView(LoginRequiredMixin, View):
+class RpmSatelliteRepositoryAddView(AdminRequiredMixin, View):
     """POST — add a SatelliteRepository to a known server's saved repo list."""
 
     def post(self, request, server_pk):
@@ -905,7 +909,7 @@ class RpmSatelliteRepositoryAddView(LoginRequiredMixin, View):
         return redirect('rpm:destination_list')
 
 
-class RpmSatelliteRepositoryDeleteView(LoginRequiredMixin, View):
+class RpmSatelliteRepositoryDeleteView(AdminRequiredMixin, View):
     def post(self, request, pk):
         repo = get_object_or_404(SatelliteRepository, pk=pk)
         name = repo.name
@@ -916,7 +920,7 @@ class RpmSatelliteRepositoryDeleteView(LoginRequiredMixin, View):
 
 # -- AJAX discovery endpoints -------------------------------------------------
 
-class RpmSatelliteFetchOrgsView(LoginRequiredMixin, View):
+class RpmSatelliteFetchOrgsView(AdminRequiredMixin, View):
     """GET ?server=<pk>  — return org list as JSON."""
 
     def get(self, request):
@@ -927,7 +931,7 @@ class RpmSatelliteFetchOrgsView(LoginRequiredMixin, View):
         return JsonResponse({'orgs': [{'id': o['id'], 'name': o['name']} for o in orgs]})
 
 
-class RpmSatelliteFetchProductsView(LoginRequiredMixin, View):
+class RpmSatelliteFetchProductsView(AdminRequiredMixin, View):
     """GET ?server=<pk>&org_id=<id>  — return product list as JSON."""
 
     def get(self, request):
@@ -941,7 +945,7 @@ class RpmSatelliteFetchProductsView(LoginRequiredMixin, View):
         return JsonResponse({'products': [{'id': p['id'], 'name': p['name']} for p in products]})
 
 
-class RpmSatelliteFetchReposView(LoginRequiredMixin, View):
+class RpmSatelliteFetchReposView(AdminRequiredMixin, View):
     """GET ?server=<pk>&product_id=<id>  — return repo list as JSON."""
 
     def get(self, request):
@@ -957,7 +961,7 @@ class RpmSatelliteFetchReposView(LoginRequiredMixin, View):
 
 # -- Package destination assignment ------------------------------------------
 
-class RpmPackageAssignDestinationView(LoginRequiredMixin, View):
+class RpmPackageAssignDestinationView(RepoAdminRequiredMixin, View):
     """POST — link a (package, distribution) pair to a SatelliteRepository."""
 
     def post(self, request, pk):
@@ -982,7 +986,7 @@ class RpmPackageAssignDestinationView(LoginRequiredMixin, View):
         return redirect('rpm:package_detail', pk=pk)
 
 
-class RpmPackageRemoveDestinationView(LoginRequiredMixin, View):
+class RpmPackageRemoveDestinationView(RepoAdminRequiredMixin, View):
     """POST — remove a package distribution destination."""
 
     def post(self, request, pk):
