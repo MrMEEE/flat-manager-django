@@ -67,6 +67,9 @@ def gpgkey_generate(request):
                     expires_at=key_data.get('expires_at'),
                     created_by=request.user
                 )
+                orgs = form.cleaned_data.get('organisations')
+                if orgs:
+                    gpgkey.organisations.set(orgs)
                 messages.success(request, f'GPG key "{gpgkey.name}" generated successfully.')
                 return redirect('flatpak:gpgkey_detail', pk=gpgkey.pk)
             except Exception as e:
@@ -102,6 +105,9 @@ def gpgkey_import(request):
                     passphrase_hint='',
                     created_by=request.user
                 )
+                orgs = form.cleaned_data.get('organisations')
+                if orgs:
+                    gpgkey.organisations.set(orgs)
                 messages.success(request, f'GPG key "{gpgkey.name}" imported successfully.')
                 return redirect('flatpak:gpgkey_detail', pk=gpgkey.pk)
             except Exception as e:
@@ -154,7 +160,7 @@ class GPGKeyCreateView(RepoAdminRequiredMixin, CreateView):
     """Create new GPG key (legacy)."""
     model = GPGKey
     template_name = 'flatpak/gpgkey_form.html'
-    fields = ['name', 'email', 'key_id', 'fingerprint', 'public_key', 'private_key', 'passphrase_hint']
+    fields = ['name', 'email', 'key_id', 'fingerprint', 'public_key', 'private_key', 'passphrase_hint', 'organisations']
     success_url = reverse_lazy('flatpak:gpgkey_list')
     
     def form_valid(self, form):
@@ -201,7 +207,7 @@ class RepositoryCreateView(RepoAdminRequiredMixin, CreateView):
     """Create new repository."""
     model = Repository
     template_name = 'flatpak/repository_form.html'
-    fields = ['name', 'collection_id', 'description', 'gpg_key', 'parent_repos']
+    fields = ['name', 'collection_id', 'description', 'gpg_key', 'parent_repos', 'organisations']
     success_url = reverse_lazy('flatpak:repo_list')
     
     def get_context_data(self, **kwargs):
@@ -258,7 +264,7 @@ class RepositoryUpdateView(RepoAdminRequiredMixin, UpdateView):
     """Update existing repository."""
     model = Repository
     template_name = 'flatpak/repository_form.html'
-    fields = ['name', 'collection_id', 'description', 'gpg_key', 'parent_repos']
+    fields = ['name', 'collection_id', 'description', 'gpg_key', 'parent_repos', 'organisations']
     
     def get_form(self, form_class=None):
         form = super().get_form(form_class)

@@ -77,6 +77,15 @@
                         {% endif %}
                         <div class="form-text">{{ form.passphrase.help_text }}</div>
                     </div>
+
+                    <div class="mb-3">
+                        <label for="{{ form.organisations.id_for_label }}" class="form-label">Organisations</label>
+                        {{ form.organisations }}
+                        {% if form.organisations.errors %}
+                            <div class="invalid-feedback d-block">{{ form.organisations.errors }}</div>
+                        {% endif %}
+                        <div class="form-text">{{ form.organisations.help_text }}</div>
+                    </div>
                     
                     <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
                         <a href="{% url 'flatpak:gpgkey_list' %}" class="btn btn-outline-secondary">Cancel</a>

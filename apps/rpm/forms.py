@@ -15,7 +15,8 @@ class RpmPackageForm(forms.ModelForm):
         model = RpmPackage
         fields = ['name', 'description', 'git_repo_url', 'git_branch', 'spec_file',
                   'allow_internet_access', 'cleanup_on_success',
-                  'upstream_url', 'upstream_version_script', 'distributions']
+                  'upstream_url', 'upstream_version_script', 'distributions',
+                  'organisations']
         widgets = {
             'description': forms.Textarea(attrs={'rows': 3, 'placeholder': 'Optional notes about this package…'}),
             'git_repo_url': forms.URLInput(attrs={'placeholder': 'https://github.com/yourorg/mypackage.git'}),
@@ -32,6 +33,7 @@ class RpmPackageForm(forms.ModelForm):
                     "  | grep '\"tag_name\"' | cut -d'\"' -f4 | sed 's/^v//'"
                 ),
             }),
+            'organisations': forms.SelectMultiple(attrs={'class': 'form-select', 'size': '5'}),
         }
         help_texts = {
             'git_repo_url': 'URL of the git repository containing the SPEC file and sources.',

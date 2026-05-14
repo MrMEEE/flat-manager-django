@@ -3,7 +3,7 @@ Flatpak app forms.
 """
 import zoneinfo
 from django import forms
-from .models import GPGKey, Repository, Package, Token, SiteConfig, FlatpakRemote
+from .models import GPGKey, Organisation, Repository, Package, Token, SiteConfig, FlatpakRemote
 
 _TZ_CHOICES = [('', '— System default (UTC) —')] + [
     (tz, tz) for tz in sorted(zoneinfo.available_timezones())
@@ -55,6 +55,13 @@ class GPGKeyGenerateForm(forms.Form):
         initial='0',
         widget=forms.Select(attrs={'class': 'form-select'}),
         help_text='How long before this key expires'
+    )
+
+    organisations = forms.ModelMultipleChoiceField(
+        queryset=Organisation.objects.all(),
+        required=False,
+        widget=forms.SelectMultiple(attrs={'class': 'form-select', 'size': '5'}),
+        help_text='Organisations responsible for this key (hold Ctrl/Cmd to select multiple)',
     )
 
     def clean(self):
@@ -115,7 +122,13 @@ class GPGKeyImportForm(forms.Form):
         required=False,
         widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Hint for passphrase (if any)'})
     )
-    
+    organisations = forms.ModelMultipleChoiceField(
+        queryset=Organisation.objects.all(),
+        required=False,
+        widget=forms.SelectMultiple(attrs={'class': 'form-select', 'size': '5'}),
+        help_text='Organisations responsible for this key (hold Ctrl/Cmd to select multiple)',
+    )
+
     def clean(self):
         cleaned_data = super().clean()
         public_key = cleaned_data.get('public_key')

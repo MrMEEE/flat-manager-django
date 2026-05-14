@@ -66,6 +66,15 @@
                             Select parent repositories in the lifecycle (e.g., stable → beta → development)
                         </div>
                     </div>
+
+                    <div class="mb-3">
+                        <label for="{{ form.organisations.id_for_label }}" class="form-label">Organisations</label>
+                        {{ form.organisations }}
+                        {% if form.organisations.errors %}
+                            <div class="invalid-feedback d-block">{{ form.organisations.errors }}</div>
+                        {% endif %}
+                        <div class="form-text">Organisations responsible for this repository (Ctrl/Cmd+click for multiple).</div>
+                    </div>
                     
                     <hr class="my-4">
                     
