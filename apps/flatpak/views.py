@@ -704,25 +704,41 @@ class PackageCheckUpstreamView(LoginRequiredMixin, View):
 
         version = None
         error = None
+        release_date = None
 
         # Step 1: custom version script
         if package.upstream_version_script.strip():
-            version, error = _run_version_script(package.upstream_version_script, package.package_id)
+            version, release_date, error = _run_version_script(package.upstream_version_script, package.package_id)
 
         # Step 2: git tag fallback
         if not version and package.upstream_url:
-            version, error = _fetch_latest_upstream_tag(package.upstream_url)
+            version, raw_tag, error = _fetch_latest_upstream_tag(package.upstream_url)
+            if version and release_date is None and raw_tag:
+                from apps.flatpak.tasks import _fetch_tag_date
+                release_date = _fetch_tag_date(package.upstream_url, raw_tag)
 
         if not version:
             return JsonResponse({'error': error or 'Could not determine upstream version'}, status=502)
 
         version = _normalise_version(version)
+        now = tz.now()
+        version_changed = package.upstream_version != version
+        if version_changed or not package.upstream_version_first_seen_at:
+            package.upstream_version_first_seen_at = now
+            package.upstream_release_date = release_date
+        elif release_date is not None:
+            package.upstream_release_date = release_date
         package.upstream_version = version
-        package.upstream_checked_at = tz.now()
-        package.save(update_fields=['upstream_version', 'upstream_checked_at'])
+        package.upstream_checked_at = now
+        package.save(update_fields=[
+            'upstream_version', 'upstream_checked_at',
+            'upstream_release_date', 'upstream_version_first_seen_at',
+        ])
         return JsonResponse({
             'version': version,
             'has_update': bool(package.version and version and version != package.version),
+            'release_date': str(package.upstream_release_date) if package.upstream_release_date else None,
+            'first_seen': package.upstream_version_first_seen_at.strftime('%Y-%m-%d') if package.upstream_version_first_seen_at else None,
         })
 
 
