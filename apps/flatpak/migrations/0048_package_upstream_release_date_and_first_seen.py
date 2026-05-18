@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("flatpak", "0020_client_and_stale_hours"),
+        ("flatpak", "0047_gpgkey_repository_organisations"),
     ]
 
     operations = [
