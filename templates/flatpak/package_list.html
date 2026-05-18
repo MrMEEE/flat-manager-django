@@ -156,9 +156,11 @@
                             <br>
                             <small class="text-muted">
                                 {% if package.upstream_release_date %}
-                                    {{ package.upstream_release_date|date:"F j, Y" }}
+                                    {{ package.upstream_release_date|date:"F j, Y" }}<br>
+                                    <span class="text-muted">{{ package.upstream_release_date|timesince }} ago</span>
                                 {% elif package.upstream_version_first_seen_at %}
-                                    {{ package.upstream_version_first_seen_at|date:"F j, Y" }}
+                                    {{ package.upstream_version_first_seen_at|date:"F j, Y" }}<br>
+                                    <span class="text-muted">{{ package.upstream_version_first_seen_at|timesince }} ago</span>
                                 {% endif %}
                             </small>
                             {% else %}

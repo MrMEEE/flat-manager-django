@@ -97,9 +97,11 @@
                                 <br>
                                 <small class="text-muted">
                                     {% if package.upstream_release_date %}
-                                        Released {{ package.upstream_release_date|date:"F j, Y" }}
+                                        Released {{ package.upstream_release_date|date:"F j, Y" }}<br>
+                                        <span class="text-muted">{{ package.upstream_release_date|timesince }} ago</span>
                                     {% elif package.upstream_version_first_seen_at %}
-                                        First seen {{ package.upstream_version_first_seen_at|date:"F j, Y" }}
+                                        First seen {{ package.upstream_version_first_seen_at|date:"F j, Y" }}<br>
+                                        <span class="text-muted">{{ package.upstream_version_first_seen_at|timesince }} ago</span>
                                     {% endif %}
                                 </small>
                             {% else %}
