@@ -914,6 +914,7 @@ def package_from_git_task(self, package_id):
             install_flag,
             '--force-clean',
             '--disable-rofiles-fuse',  # rofiles-fuse requires FUSE privs; service user lacks them
+            '--disable-debuginfo',     # avoids requiring *.Debug runtime extensions on the build host
             '--repo', build_repo_path,
             '--default-branch', package.branch,
             build_dir,
