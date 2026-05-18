@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load flatpak_extras %}
 
 {% block title %}Flatpaks - Flat Manager{% endblock %}
 
@@ -157,10 +158,10 @@
                             <small class="text-muted">
                                 {% if package.upstream_release_date %}
                                     {{ package.upstream_release_date|date:"F j, Y" }}<br>
-                                    <span class="text-muted">{{ package.upstream_release_date|timesince }} ago</span>
+                                    <span class="text-muted">{{ package.upstream_release_date|timesince_days }} ago</span>
                                 {% elif package.upstream_version_first_seen_at %}
                                     {{ package.upstream_version_first_seen_at|date:"F j, Y" }}<br>
-                                    <span class="text-muted">{{ package.upstream_version_first_seen_at|timesince }} ago</span>
+                                    <span class="text-muted">{{ package.upstream_version_first_seen_at|timesince_days }} ago</span>
                                 {% endif %}
                             </small>
                             {% else %}
