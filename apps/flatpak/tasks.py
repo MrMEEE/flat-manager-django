@@ -2894,88 +2894,99 @@ def parse_manifest_dependencies(package, manifest_file, build=None):
                                    if p.lower() not in _skip_parts and len(p) > 1]
             app_name = app_name_candidates[-1] if app_name_candidates else None
 
-            # Try to find matching modules (check in reverse - last modules are usually the app)
-            for module in reversed(manifest['modules']):  # Start from last module
-                # Skip string modules (file references like "shared-modules/libsecret/libsecret.json")
+            # Score each module by how well its name matches the package ID.
+            # Exact match wins over partial match — prevents e.g. "eog-plugins"
+            # (partial) from shadowing "eog" (exact).
+            # Score: 10=exact, 5=normalized-exact, 1=substring.
+            # Among equal scores the last module in the manifest wins.
+            best_module_score = 0
+            best_module_version = None
+            for module in manifest['modules']:  # forward — score picks the winner
+                # Skip string modules (file references like "shared-modules/…")
                 if isinstance(module, str):
                     continue
 
                 module_name = module.get('name', '').lower()
 
-                # Check if this is likely the main app module (flexible matching)
-                is_likely_match = False
-                if app_name_candidates:
-                    is_likely_match = any(
-                        cand in module_name or module_name in cand
-                        or module_name.replace('-', '') == cand
-                        or module_name.replace('_', '') == cand
-                        for cand in app_name_candidates
-                    )
-                
-                if is_likely_match:
-                    log_build(build, 'info', f"Checking module '{module.get('name')}' for version...")
-                    # Collect best candidate per source type, then pick by
-                    # priority: git tag > archive URL > extra-data > file URL.
-                    # This prevents tool helper files (e.g. pnpm download) from
-                    # shadowing the actual application archive.
-                    if 'sources' in module:
-                        candidates = {}
-                        for source in module['sources']:
-                            if isinstance(source, str):
-                                continue
-                            source_type = source.get('type', '')
-                            if source_type == 'git' and 'git' not in candidates:
-                                tag = source.get('tag', '')
-                                if tag:
-                                    candidates['git'] = tag.lstrip('v')
-                                    log_build(build, 'info', f"Found version in git tag: {tag}")
-                                else:
-                                    branch = source.get('branch', '')
-                                    if branch and branch[0].isdigit():
-                                        candidates['git'] = branch
-                                        log_build(build, 'info', f"Found version in git branch: {branch}")
-                            elif source_type == 'archive' and 'archive' not in candidates:
+                match_score = 0
+                for cand in app_name_candidates:
+                    if module_name == cand:
+                        match_score = max(match_score, 10)
+                    elif (module_name.replace('-', '') == cand
+                          or module_name.replace('_', '') == cand):
+                        match_score = max(match_score, 5)
+                    elif cand in module_name or module_name in cand:
+                        match_score = max(match_score, 1)
+
+                if match_score == 0:
+                    continue
+
+                log_build(build, 'info', f"Checking module '{module.get('name')}' for version (score={match_score})...")
+                # Collect best candidate per source type, then pick by
+                # priority: git tag > archive URL > extra-data > file URL.
+                # This prevents tool helper files (e.g. pnpm download) from
+                # shadowing the actual application archive.
+                if 'sources' in module:
+                    candidates = {}
+                    for source in module['sources']:
+                        if isinstance(source, str):
+                            continue
+                        source_type = source.get('type', '')
+                        if source_type == 'git' and 'git' not in candidates:
+                            tag = source.get('tag', '')
+                            if tag:
+                                candidates['git'] = tag.lstrip('v')
+                                log_build(build, 'info', f"Found version in git tag: {tag}")
+                            else:
+                                branch = source.get('branch', '')
+                                if branch and branch[0].isdigit():
+                                    candidates['git'] = branch
+                                    log_build(build, 'info', f"Found version in git branch: {branch}")
+                        elif source_type == 'archive' and 'archive' not in candidates:
+                            url = source.get('url', '')
+                            for pattern in [
+                                r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)',
+                                r'/(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/',
+                                r'/(\d{4}-\d{2})(?:/|$)',  # YYYY-MM style (e.g. Eclipse)
+                            ]:
+                                match = re.search(pattern, url)
+                                if match:
+                                    candidates['archive'] = match.group(1)
+                                    log_build(build, 'info', f"Extracted version from archive URL: {match.group(1)}")
+                                    break
+                        elif source_type == 'extra-data' and 'extra-data' not in candidates:
+                            if source.get('version'):
+                                candidates['extra-data'] = str(source['version'])
+                                log_build(build, 'info', f"Found version in extra-data version field: {source['version']}")
+                            else:
                                 url = source.get('url', '')
                                 for pattern in [
                                     r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)',
                                     r'/(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/',
-                                    r'/(\d{4}-\d{2})(?:/|$)',  # YYYY-MM style (e.g. Eclipse)
                                 ]:
                                     match = re.search(pattern, url)
                                     if match:
-                                        candidates['archive'] = match.group(1)
-                                        log_build(build, 'info', f"Extracted version from archive URL: {match.group(1)}")
+                                        candidates['extra-data'] = match.group(1)
+                                        log_build(build, 'info', f"Extracted version from extra-data URL: {match.group(1)}")
                                         break
-                            elif source_type == 'extra-data' and 'extra-data' not in candidates:
-                                if source.get('version'):
-                                    candidates['extra-data'] = str(source['version'])
-                                    log_build(build, 'info', f"Found version in extra-data version field: {source['version']}")
-                                else:
-                                    url = source.get('url', '')
-                                    for pattern in [
-                                        r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)',
-                                        r'/(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/',
-                                    ]:
-                                        match = re.search(pattern, url)
-                                        if match:
-                                            candidates['extra-data'] = match.group(1)
-                                            log_build(build, 'info', f"Extracted version from extra-data URL: {match.group(1)}")
-                                            break
-                            elif source_type == 'file' and 'file' not in candidates:
-                                for _candidate in [source.get('url', ''), source.get('path', '')]:
-                                    if not _candidate:
-                                        continue
-                                    match = re.search(r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', _candidate)
-                                    if match:
-                                        candidates['file'] = match.group(1)
-                                        log_build(build, 'info', f"Extracted version from file source: {match.group(1)}")
-                                        break
-                        for ptype in ('git', 'archive', 'extra-data', 'file'):
-                            if ptype in candidates:
-                                version = candidates[ptype]
-                                break
-                    if version:
-                        break
+                        elif source_type == 'file' and 'file' not in candidates:
+                            for _candidate in [source.get('url', ''), source.get('path', '')]:
+                                if not _candidate:
+                                    continue
+                                match = re.search(r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', _candidate)
+                                if match:
+                                    candidates['file'] = match.group(1)
+                                    log_build(build, 'info', f"Extracted version from file source: {match.group(1)}")
+                                    break
+                    module_version = None
+                    for ptype in ('git', 'archive', 'extra-data', 'file'):
+                        if ptype in candidates:
+                            module_version = candidates[ptype]
+                            break
+                    if module_version and match_score >= best_module_score:
+                        best_module_version = module_version
+                        best_module_score = match_score
+            version = best_module_version
         
         # If version found, save it to both package and build
         if version:
