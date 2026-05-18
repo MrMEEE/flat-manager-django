@@ -160,12 +160,22 @@ class Package(models.Model):
         null=True, blank=True,
         help_text="When the upstream version was last checked"
     )
+    upstream_release_date = models.DateField(
+        null=True, blank=True,
+        help_text="Release date of the current upstream version (from git tag date or version script)"
+    )
+    upstream_version_first_seen_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="When the current upstream_version was first detected by this system"
+    )
     upstream_version_script = models.TextField(
         blank=True,
         help_text=(
             "Optional script to determine the latest upstream version. "
             "Include a shebang line (#!/bin/bash or #!/usr/bin/env python3). "
-            "Print the version to stdout. "
+            "Print the version on the first line of stdout. "
+            "Optionally print the release date on the second line (any format, e.g. 2025-03-14). "
+            "If the date is omitted, the date when this version was first detected is used. "
             "Falls back to git tag detection if empty or if the script fails."
         )
     )

@@ -153,6 +153,14 @@
                                 <i class="bi bi-arrow-up-circle"></i>
                             </span>
                             {% endif %}
+                            <br>
+                            <small class="text-muted">
+                                {% if package.upstream_release_date %}
+                                    {{ package.upstream_release_date }}
+                                {% elif package.upstream_version_first_seen_at %}
+                                    {{ package.upstream_version_first_seen_at|date:"Y-m-d" }}
+                                {% endif %}
+                            </small>
                             {% else %}
                             <span class="text-muted">-</span>
                             {% endif %}

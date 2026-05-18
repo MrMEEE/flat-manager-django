@@ -141,11 +141,15 @@
                     <div class="mb-3">
                         <label for="id_upstream_version_script" class="form-label">Upstream Version Script</label>
                         <textarea class="form-control font-monospace" id="id_upstream_version_script" name="upstream_version_script"
-                                  rows="6" placeholder="#!/bin/bash&#10;# Print the latest version to stdout&#10;curl -s https://api.github.com/repos/owner/repo/releases/latest \&#10;  | grep '&quot;tag_name&quot;' | cut -d'&quot;' -f4 | sed 's/^v//'">{{ form.upstream_version_script.value|default:'' }}</textarea>
+                                  rows="6" placeholder="#!/bin/bash&#10;# Line 1: print the latest version to stdout&#10;# Line 2 (optional): print the release date (any format, e.g. 2025-03-14)&#10;curl -s https://api.github.com/repos/owner/repo/releases/latest \&#10;  | python3 -c &quot;import sys,json; r=json.load(sys.stdin); print(r['tag_name'].lstrip('v')); print(r['published_at'][:10])&quot;">{{ form.upstream_version_script.value|default:'' }}</textarea>
                         <div class="form-text">
                             Optional script to fetch the latest upstream version. Include a shebang line
-                            (<code>#!/bin/bash</code> or <code>#!/usr/bin/env python3</code>). Print the version to
-                            stdout. Falls back to git tag detection if empty or if the script fails.
+                            (<code>#!/bin/bash</code> or <code>#!/usr/bin/env python3</code>).
+                            Print the <strong>version</strong> on the first line of stdout.
+                            Optionally print the <strong>release date</strong> on the second line
+                            (any parseable format, e.g. <code>2025-03-14</code>).
+                            If the date is omitted, the date when this version was first detected is used instead.
+                            Falls back to git tag detection if empty or if the script fails.
                         </div>
                         {% if form.upstream_version_script.errors %}
                         <div class="text-danger">{{ form.upstream_version_script.errors }}</div>

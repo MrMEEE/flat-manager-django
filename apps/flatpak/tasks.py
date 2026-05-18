@@ -4071,24 +4071,25 @@ def _fetch_latest_upstream_tag(url):
             # Returning a date string as an upstream version is misleading —
             # the caller expects a real release number.  Signal "not found" so
             # the stored value is not overwritten with noise.
-            return '', None
-        best_tag = max(pool, key=lambda x: x[0])[1]
+            return '', None, None
+        raw_tag = max(pool, key=lambda x: x[0])[1]
 
         # Strip common non-numeric tag prefixes so the stored value is a bare
         # version number that can be compared directly with the package version.
         # Handles: v1.2, V1.2, release_5.8.0, release-5.8.0, version-1.2, etc.
-        m = re.match(r'^[a-zA-Z][a-zA-Z0-9_-]*?(\d)', best_tag)
+        version_str = raw_tag
+        m = re.match(r'^[a-zA-Z][a-zA-Z0-9_-]*?(\d)', version_str)
         if m:
-            best_tag = best_tag[best_tag.index(m.group(1)):]
+            version_str = version_str[version_str.index(m.group(1)):]
 
-        return best_tag, None
+        return version_str, raw_tag, None
 
     except subprocess.TimeoutExpired:
-        return None, 'Timed out after 30 s'
+        return None, None, 'Timed out after 30 s'
     except FileNotFoundError:
-        return None, 'git binary not found'
+        return None, None, 'git binary not found'
     except Exception as e:
-        return None, str(e)
+        return None, None, str(e)
 
 
 def _run_version_script(script_text, package_id):
@@ -4131,23 +4132,80 @@ def _run_version_script(script_text, package_id):
 
         if result.returncode != 0:
             stderr = result.stderr.strip()
-            return None, f"Script exited {result.returncode}: {stderr[:200]}"
+            return None, None, f"Script exited {result.returncode}: {stderr[:200]}"
 
-        for line in result.stdout.splitlines():
-            line = line.strip()
-            if line:
-                return line, None
+        non_empty = [l.strip() for l in result.stdout.splitlines() if l.strip()]
+        if not non_empty:
+            return None, None, "Script produced no output"
 
-        return None, "Script produced no output"
+        version = non_empty[0]
+        # Second non-empty line is an optional release date (any parseable format).
+        release_date = _parse_date_string(non_empty[1]) if len(non_empty) >= 2 else None
+        return version, release_date, None
 
     except subprocess.TimeoutExpired:
         try:
             os.unlink(tmp_path)
         except Exception:
             pass
-        return None, "Script timed out after 30 seconds"
+        return None, None, "Script timed out after 30 seconds"
     except Exception as e:
-        return None, str(e)
+        return None, None, str(e)
+
+
+def _parse_date_string(s):
+    """Parse any reasonable date string into a ``datetime.date``, or return ``None``.
+
+    Accepts ISO 8601 dates/datetimes (e.g. ``2025-03-14``, ``2025-03-14T18:30:00+02:00``)
+    as well as common free-form strings.  Only the date portion is retained.
+    """
+    import re as _re
+    from datetime import date as _date
+    if not s:
+        return None
+    m = _re.search(r'(\d{4})-(\d{2})-(\d{2})', str(s))
+    if m:
+        try:
+            return _date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            pass
+    return None
+
+
+def _fetch_tag_date(url, raw_tag):
+    """Shallow-clone *url* at *raw_tag* and return the commit date as a ``datetime.date``.
+
+    Returns ``None`` on any error (network, permission, parse failure, etc.).
+    The clone is cleaned up immediately after the date is extracted.
+    """
+    import shlex as _shlex
+    tmp = None
+    try:
+        tmp = tempfile.mkdtemp(prefix='fmdc_tagdate_')
+        os.chmod(tmp, 0o700)
+        src = os.path.join(tmp, 'repo')
+        git_cmd = (
+            f'umask 0022 && git clone --depth 1 --branch {_shlex.quote(raw_tag)}'
+            f' --no-recurse-submodules {_shlex.quote(url)} {_shlex.quote(src)}'
+        )
+        r = subprocess.run(
+            ['bash', '-c', git_cmd],
+            capture_output=True, text=True, timeout=120,
+        )
+        if r.returncode != 0:
+            return None
+        r2 = subprocess.run(
+            ['git', '-C', src, 'log', '-1', '--format=%aI'],
+            capture_output=True, text=True, timeout=15,
+        )
+        if r2.returncode == 0:
+            return _parse_date_string(r2.stdout.strip())
+        return None
+    except Exception:
+        return None
+    finally:
+        if tmp and os.path.exists(tmp):
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _fetch_available_version(package):
@@ -4211,7 +4269,7 @@ def _fetch_available_version(package):
             # No flatpak manifest in this repo (e.g. git_repo_url points to the
             # upstream source rather than the flathub manifest repo). Fall back
             # to git tag detection on the same URL — same logic as upstream_url.
-            version, tag_err = _fetch_latest_upstream_tag(package.git_repo_url)
+            version, _raw_tag, tag_err = _fetch_latest_upstream_tag(package.git_repo_url)
             if version:
                 return _normalise_version(version), None
             msg = f'No manifest file found; git tag fallback also failed: {tag_err}'
@@ -4347,8 +4405,14 @@ def check_upstream_version_task(package_id):
 
     Version resolution order:
       1. Run ``upstream_version_script`` if set; use its stdout as the version.
+         The script may optionally print a release date on the second line.
       2. Fall back to git-tag detection via ``upstream_url`` (if set) when the
-         script is absent, empty, or fails.
+         script is absent, empty, or fails.  The tag date is fetched via a
+         shallow clone and stored as the release date.
+
+    Release-date fallback: if no explicit date is available, the timestamp when
+    this version was *first observed* is used as the display date (per package,
+    per version — reset whenever ``upstream_version`` changes).
     """
     from apps.flatpak.models import Package
     try:
@@ -4357,10 +4421,12 @@ def check_upstream_version_task(package_id):
         return None
 
     version = None
+    release_date = None  # datetime.date or None
+    raw_tag = None       # original tag string (used for date fetch)
 
     # --- Step 1: custom version script ---
     if package.upstream_version_script.strip():
-        version, script_error = _run_version_script(
+        version, release_date, script_error = _run_version_script(
             package.upstream_version_script, package.package_id
         )
         if script_error:
@@ -4369,12 +4435,12 @@ def check_upstream_version_task(package_id):
             )
         else:
             logger.info(
-                f"Version script returned {version!r} for {package.package_id}"
+                f"Version script returned {version!r} (date={release_date}) for {package.package_id}"
             )
 
     # --- Step 2: git tag detection (fallback or primary when no script) ---
     if not version and package.upstream_url:
-        version, error = _fetch_latest_upstream_tag(package.upstream_url)
+        version, raw_tag, error = _fetch_latest_upstream_tag(package.upstream_url)
         if error:
             logger.warning(
                 f"Upstream tag check failed for {package.package_id}: {error}"
@@ -4384,11 +4450,36 @@ def check_upstream_version_task(package_id):
         return None
 
     version = _normalise_version(version)
+    now = timezone.now()
+
+    # --- Release date ---
+    # Fetch tag date from git if the script didn't provide one and we have a raw tag.
+    if release_date is None and raw_tag and package.upstream_url:
+        release_date = _fetch_tag_date(package.upstream_url, raw_tag)
+        if release_date:
+            logger.info(
+                f"Tag date for {package.package_id} ({raw_tag}): {release_date}"
+            )
+
+    # --- Persist ---
+    version_changed = package.upstream_version != version
+    if version_changed or not package.upstream_version_first_seen_at:
+        # New version detected — reset the first-seen timestamp.
+        package.upstream_version_first_seen_at = now
+        # Also reset any previously stored release date so stale data is cleared.
+        package.upstream_release_date = release_date
+    elif release_date is not None:
+        # Same version but we now have an explicit date (e.g. git tag date
+        # that wasn't fetched on a previous run).
+        package.upstream_release_date = release_date
 
     package.upstream_version = version
-    package.upstream_checked_at = timezone.now()
-    package.save(update_fields=['upstream_version', 'upstream_checked_at'])
-    logger.info(f"Upstream version for {package.package_id}: {version!r}")
+    package.upstream_checked_at = now
+    package.save(update_fields=[
+        'upstream_version', 'upstream_checked_at',
+        'upstream_release_date', 'upstream_version_first_seen_at',
+    ])
+    logger.info(f"Upstream version for {package.package_id}: {version!r} (release_date={package.upstream_release_date})")
     return version
 
 
