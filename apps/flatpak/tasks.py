@@ -914,7 +914,6 @@ def package_from_git_task(self, package_id):
             install_flag,
             '--force-clean',
             '--disable-rofiles-fuse',  # rofiles-fuse requires FUSE privs; service user lacks them
-            '--disable-debuginfo',     # avoids requiring *.Debug runtime extensions on the build host
             '--repo', build_repo_path,
             '--default-branch', package.branch,
             build_dir,
@@ -2574,33 +2573,33 @@ def log_build(build, level, message):
 
 
 def detect_and_install_dependencies(package, error_message, build=None):
-    """Detect missing Flatpak SDK/runtime from error and install it."""
+    """Detect missing Flatpak SDK/runtime/extension from error and install it."""
     import re
-    
-    # Pattern: "org.gnome.Sdk/x86_64/3.30 not installed"
-    # Or: "Unable to find sdk org.gnome.Sdk version 3.30"
-    patterns = [
-        r'(org\.[\\w.]+)/(x86_64|aarch64|arm)/(\\S+) not installed',
-        r'Unable to find (sdk|runtime) (org\\.[\\w.]+) version (\\S+)'
-    ]
-    
+
+    arch = package.arch or 'x86_64'
     dependencies = []
-    
-    for pattern in patterns:
-        matches = re.findall(pattern, error_message, re.IGNORECASE)
-        for match in matches:
-            if len(match) == 3:
-                if '/' in error_message and 'not installed' in error_message:
-                    # First pattern: full ref
-                    ref = f"{match[0]}/{match[1]}/{match[2]}"
-                    dependencies.append(ref)
-                else:
-                    # Second pattern: name and version
-                    name = match[1]
-                    version = match[2]
-                    arch = package.arch or 'x86_64'
-                    ref = f"{name}/{arch}/{version}"
-                    dependencies.append(ref)
+
+    # Pattern 1: "SomeId/x86_64/version not installed"
+    for m in re.finditer(
+        r'([\w][\w.-]+)/(x86_64|aarch64|arm)/(\S+)\s+not installed',
+        error_message, re.IGNORECASE
+    ):
+        dependencies.append(f"{m.group(1)}/{m.group(2)}/{m.group(3)}")
+
+    # Pattern 2: "Unable to find sdk/runtime SomeName version X.Y"
+    for m in re.finditer(
+        r'Unable to find (?:sdk|runtime)\s+([\w][\w.-]+)\s+version\s+(\S+)',
+        error_message, re.IGNORECASE
+    ):
+        dependencies.append(f"{m.group(1)}/{arch}/{m.group(2)}")
+
+    # Pattern 3: "Requested extension SomeName not installed" (no arch/version in message)
+    for m in re.finditer(
+        r'Requested extension\s+([\w][\w.-]+)\s+not installed',
+        error_message, re.IGNORECASE
+    ):
+        # Install without pinning arch/version — let flatpak resolve it
+        dependencies.append(m.group(1))
     
     if not dependencies:
         log_build(build, 'warning', "Could not detect missing dependencies from error message")
