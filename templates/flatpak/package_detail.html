@@ -97,9 +97,9 @@
                                 <br>
                                 <small class="text-muted">
                                     {% if package.upstream_release_date %}
-                                        Released {{ package.upstream_release_date }}
+                                        Released {{ package.upstream_release_date|date:"F j, Y" }}
                                     {% elif package.upstream_version_first_seen_at %}
-                                        First seen {{ package.upstream_version_first_seen_at|date:"Y-m-d" }}
+                                        First seen {{ package.upstream_version_first_seen_at|date:"F j, Y" }}
                                     {% endif %}
                                 </small>
                             {% else %}

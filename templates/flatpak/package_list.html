@@ -156,9 +156,9 @@
                             <br>
                             <small class="text-muted">
                                 {% if package.upstream_release_date %}
-                                    {{ package.upstream_release_date }}
+                                    {{ package.upstream_release_date|date:"F j, Y" }}
                                 {% elif package.upstream_version_first_seen_at %}
-                                    {{ package.upstream_version_first_seen_at|date:"Y-m-d" }}
+                                    {{ package.upstream_version_first_seen_at|date:"F j, Y" }}
                                 {% endif %}
                             </small>
                             {% else %}
