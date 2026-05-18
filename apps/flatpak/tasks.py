@@ -2684,19 +2684,27 @@ def _extract_version_from_manifest(package_id, manifest_file):
             app_name_candidates = [p.lower() for p in _id_parts
                                    if p.lower() not in _skip_parts and len(p) > 1]
             app_name = app_name_candidates[-1] if app_name_candidates else None
-            for module in reversed(manifest['modules']):
+            # Score each module by how well its name matches the package ID.
+            # Exact match wins over partial match — prevents e.g. "eog-plugins"
+            # (partial) from shadowing "eog" (exact) when iterating modules.
+            # Score: 10=exact, 5=normalized-exact, 1=substring.  Among equal
+            # scores the last module in the manifest wins (original behaviour).
+            best_module_score = 0
+            best_module_version = None
+            for module in manifest['modules']:
                 if isinstance(module, str):
                     continue
                 module_name = module.get('name', '').lower()
-                is_likely_match = False
-                if app_name_candidates:
-                    is_likely_match = any(
-                        cand in module_name or module_name in cand
-                        or module_name.replace('-', '') == cand
-                        or module_name.replace('_', '') == cand
-                        for cand in app_name_candidates
-                    )
-                if not is_likely_match:
+                match_score = 0
+                for cand in app_name_candidates:
+                    if module_name == cand:
+                        match_score = max(match_score, 10)
+                    elif (module_name.replace('-', '') == cand
+                          or module_name.replace('_', '') == cand):
+                        match_score = max(match_score, 5)
+                    elif cand in module_name or module_name in cand:
+                        match_score = max(match_score, 1)
+                if match_score == 0:
                     continue
                 # Collect the best version candidate per source type, then pick
                 # by priority: git tag > archive URL > extra-data > file URL.
@@ -2747,13 +2755,16 @@ def _extract_version_from_manifest(package_id, manifest_file):
                             if m:
                                 candidates['file'] = m.group(1)
                                 break
-                # Pick highest-priority candidate
+                # Pick highest-priority candidate for this module
+                module_version = None
                 for ptype in ('git', 'archive', 'extra-data', 'file'):
                     if ptype in candidates:
-                        version = candidates[ptype]
+                        module_version = candidates[ptype]
                         break
-                if version:
-                    break
+                if module_version and match_score >= best_module_score:
+                    best_module_version = module_version
+                    best_module_score = match_score
+            version = best_module_version
 
         if not version:
             return None
