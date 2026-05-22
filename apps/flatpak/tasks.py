@@ -392,6 +392,10 @@ def run_cancellable(cmd, cwd, build, timeout_seconds):
                     log_build(build, 'info', line)
                 else:
                     log_build(build, 'info', line)
+                    # flatpak-builder forwards child errors to stdout; capture
+                    # them so the post-build error detection can act on them.
+                    if line.lower().startswith('error:'):
+                        stderr_lines.append(line)
 
             if len(streams_done) >= 2:
                 # Both pipes closed — process is definitely done.
