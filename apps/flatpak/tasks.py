@@ -392,9 +392,13 @@ def run_cancellable(cmd, cwd, build, timeout_seconds):
                     log_build(build, 'info', line)
                 else:
                     log_build(build, 'info', line)
-                    # flatpak-builder forwards child errors to stdout; capture
-                    # them so the post-build error detection can act on them.
-                    if line.lower().startswith('error:'):
+                    # flatpak-builder forwards child errors (from libflatpak)
+                    # to its own stdout.  Capture any line that contains the
+                    # patterns the post-build dependency-detection code searches
+                    # for, regardless of indentation or exact prefix.
+                    _ll = line.lower()
+                    if ('not installed' in _ll or 'unable to find' in _ll or
+                            _ll.lstrip().startswith('error:')):
                         stderr_lines.append(line)
 
             if len(streams_done) >= 2:
