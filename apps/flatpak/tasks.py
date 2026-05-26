@@ -2622,21 +2622,27 @@ def detect_and_install_dependencies(package, error_message, build=None):
             from apps.flatpak.models import FlatpakRemote as _FR
             _remotes = list(_FR.objects.filter(is_active=True))
             _remote = _remotes[0].name if _remotes else 'flathub'
+            # Use the same install scope (--user/--system) that flatpak-builder
+            # itself uses, so the installed ref is visible to the build.
+            _scope = '--user' if getattr(package, 'installation_type', 'user') == 'user' else '--system'
             install_result = subprocess.run(
-                ['flatpak', 'install', '-y', '--noninteractive', _remote, dep],
+                ['flatpak', 'install', _scope, '-y', '--noninteractive', _remote, dep],
                 capture_output=True,
                 text=True,
                 timeout=600
             )
             
+            _install_out = (install_result.stdout + install_result.stderr).lower()
             if install_result.returncode == 0:
                 log_build(build, 'info', f"Successfully installed {dep}")
             else:
-                # Dependency might already be installed
-                if 'already installed' in install_result.stderr.lower():
+                # Dependency might already be installed (flatpak exits 0 for
+                # this on some versions but non-zero on others).
+                if 'already installed' in _install_out:
                     log_build(build, 'info', f"{dep} is already installed")
                 else:
-                    log_build(build, 'error', f"Failed to install {dep}: {install_result.stderr}")
+                    log_build(build, 'error',
+                              f"Failed to install {dep}: {install_result.stderr or install_result.stdout}")
                     return False
         except subprocess.TimeoutExpired:
             log_build(build, 'error', f"Timeout installing {dep}")
