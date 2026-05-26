@@ -922,6 +922,20 @@ class Client(models.Model):
         default=list,
         help_text="Per-user installed flatpaks: [{username, installed: [...]}]."
     )
+    tuxmigrate_facts = models.JSONField(
+        default=list,
+        help_text=(
+            "TuxMigrate ansible facts from /etc/ansible/facts.d/: "
+            "[{version, version_major, version_minor, version_patch, order, "
+            "playbook, applied, applied_date}, ...]."
+        ),
+    )
+    tuxmigrate_latest_version = models.CharField(
+        max_length=32,
+        blank=True,
+        default='',
+        help_text="Highest TuxMigrate version applied on this client, e.g. '1.0.44'.",
+    )
     organisations = models.ManyToManyField(
         'Organisation',
         blank=True,

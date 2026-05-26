@@ -243,6 +243,87 @@ def identify_managed_remotes(remotes, server_url):
     return [r['name'] for r in remotes if r['url'].rstrip('/').startswith(server_url)]
 
 
+FACTS_DIR = '/etc/ansible/facts.d'
+
+
+def collect_tuxmigrate_facts():
+    """
+    Read all tuxmigrate_*.fact files from /etc/ansible/facts.d/ and return a
+    list of dicts with parsed version/order/playbook/applied_date information.
+
+    Filename format:  tuxmigrate_{major}_{minor}_{patch}_{order}_{desc}.fact
+    File contents:    {"applied": true, "playbook": "<name>.yaml"}
+
+    Each entry:
+        version        str   e.g. "1.0.44"
+        version_major  int
+        version_minor  int
+        version_patch  int
+        order          int   e.g. 1
+        playbook       str   from file contents
+        applied        bool  from file contents
+        applied_date   str   ISO-8601 mtime of the fact file
+    """
+    import datetime
+    facts = []
+    try:
+        filenames = sorted(os.listdir(FACTS_DIR))
+    except OSError:
+        return facts
+
+    for fname in filenames:
+        if not fname.startswith('tuxmigrate_') or not fname.endswith('.fact'):
+            continue
+        stem = fname[len('tuxmigrate_'):-len('.fact')]  # e.g. "1_0_5_01_usb_bt_headset"
+        parts = stem.split('_')
+        if len(parts) < 4:
+            continue
+        try:
+            major = int(parts[0])
+            minor = int(parts[1])
+            patch = int(parts[2])
+            order = int(parts[3])
+        except ValueError:
+            continue
+
+        fpath = os.path.join(FACTS_DIR, fname)
+        # Read file contents for playbook name and applied flag
+        playbook = ''
+        applied = False
+        try:
+            with open(fpath, 'r', encoding='utf-8', errors='replace') as fh:
+                content = json.load(fh)
+            playbook = content.get('playbook', '')
+            applied = bool(content.get('applied', False))
+        except Exception:
+            pass
+
+        # File mtime as applied_date
+        try:
+            mtime = os.path.getmtime(fpath)
+            applied_date = datetime.datetime.fromtimestamp(
+                mtime, tz=datetime.timezone.utc
+            ).strftime('%Y-%m-%dT%H:%M:%SZ')
+        except OSError:
+            applied_date = ''
+
+        facts.append({
+            'version':       f'{major}.{minor}.{patch}',
+            'version_major': major,
+            'version_minor': minor,
+            'version_patch': patch,
+            'order':         order,
+            'playbook':      playbook,
+            'applied':       applied,
+            'applied_date':  applied_date,
+        })
+
+    # Sort by version then order (ascending)
+    facts.sort(key=lambda f: (f['version_major'], f['version_minor'],
+                              f['version_patch'], f['order']))
+    return facts
+
+
 def get_serial_number():
     """Best-effort hardware serial number detection."""
     invalid_values = {
@@ -328,17 +409,18 @@ def get_machine_type():
     return ''
 
 
-def checkin(server_url, hostname, serial_number, machine_type, remotes, managed_remotes, installed, user_flatpaks):
+def checkin(server_url, hostname, serial_number, machine_type, remotes, managed_remotes, installed, user_flatpaks, tuxmigrate_facts):
     """POST the check-in payload to the server."""
     payload = {
-        'hostname':        hostname,
-        'serial_number':   serial_number,
-        'machine_type':    machine_type,
-        'server_url':      server_url,
-        'remotes':         remotes,
-        'managed_remotes': managed_remotes,
-        'installed':       installed,
-        'user_flatpaks':   user_flatpaks,
+        'hostname':          hostname,
+        'serial_number':     serial_number,
+        'machine_type':      machine_type,
+        'server_url':        server_url,
+        'remotes':           remotes,
+        'managed_remotes':   managed_remotes,
+        'installed':         installed,
+        'user_flatpaks':     user_flatpaks,
+        'tuxmigrate_facts':  tuxmigrate_facts,
     }
     data = json.dumps(payload).encode('utf-8')
     url = server_url.rstrip('/') + '/api/client-checkin/'
@@ -413,6 +495,7 @@ def main():
     # System-wide data
     sys_installed = get_system_installed()
     user_flatpaks = collect_user_flatpaks(users=users)
+    tuxmigrate_facts = collect_tuxmigrate_facts()
 
     # Merge user installs into the main list (deduplicate by app_id so runtimes
     # that appear in both system and user scopes are counted only once).
@@ -430,7 +513,7 @@ def main():
                 seen_ids.add(pkg['app_id'])
 
     status, body = checkin(server_url, hostname, serial_number, machine_type, remotes, managed_remotes,
-                           installed, user_flatpaks)
+                           installed, user_flatpaks, tuxmigrate_facts)
 
     if status == 200:
         print(f'Check-in successful: {hostname} → {server_url}')

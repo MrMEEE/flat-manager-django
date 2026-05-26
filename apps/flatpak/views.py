@@ -2,13 +2,7 @@ import os
 import subprocess
 import logging
 from django.contrib.auth.mixins import LoginRequiredMixin
-from apps.users.mixins import (
-    AdminRequiredMixin, RepoAdminRequiredMixin,
-    BuildAdminRequiredMixin,
-)
-from django.contrib.auth.decorators import login_required, user_passes_test
-
-_repo_admin_required = user_passes_test(lambda u: u.is_authenticated and u.can_repo_admin())
+from django.contrib.auth.decorators import login_required
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView
 from django.views import View
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
@@ -38,7 +32,7 @@ class GPGKeyDetailView(LoginRequiredMixin, DetailView):
     context_object_name = 'gpg_key'
 
 
-@_repo_admin_required
+@login_required
 def gpgkey_generate(request):
     """Generate a new GPG key."""
     if request.method == 'POST':
@@ -67,9 +61,6 @@ def gpgkey_generate(request):
                     expires_at=key_data.get('expires_at'),
                     created_by=request.user
                 )
-                orgs = form.cleaned_data.get('organisations')
-                if orgs:
-                    gpgkey.organisations.set(orgs)
                 messages.success(request, f'GPG key "{gpgkey.name}" generated successfully.')
                 return redirect('flatpak:gpgkey_detail', pk=gpgkey.pk)
             except Exception as e:
@@ -80,7 +71,7 @@ def gpgkey_generate(request):
     return render(request, 'flatpak/gpgkey_generate.html', {'form': form})
 
 
-@_repo_admin_required
+@login_required
 def gpgkey_import(request):
     """Import an existing GPG key."""
     if request.method == 'POST':
@@ -105,9 +96,6 @@ def gpgkey_import(request):
                     passphrase_hint='',
                     created_by=request.user
                 )
-                orgs = form.cleaned_data.get('organisations')
-                if orgs:
-                    gpgkey.organisations.set(orgs)
                 messages.success(request, f'GPG key "{gpgkey.name}" imported successfully.')
                 return redirect('flatpak:gpgkey_detail', pk=gpgkey.pk)
             except Exception as e:
@@ -118,7 +106,7 @@ def gpgkey_import(request):
     return render(request, 'flatpak/gpgkey_import.html', {'form': form})
 
 
-@_repo_admin_required
+@login_required
 def gpgkey_renew(request, pk):
     """Extend the expiry date of an existing GPG key."""
     gpg_key = get_object_or_404(GPGKey, pk=pk)
@@ -156,11 +144,11 @@ def gpgkey_renew(request, pk):
     return render(request, 'flatpak/gpgkey_renew.html', {'form': form, 'gpg_key': gpg_key})
 
 
-class GPGKeyCreateView(RepoAdminRequiredMixin, CreateView):
+class GPGKeyCreateView(LoginRequiredMixin, CreateView):
     """Create new GPG key (legacy)."""
     model = GPGKey
     template_name = 'flatpak/gpgkey_form.html'
-    fields = ['name', 'email', 'key_id', 'fingerprint', 'public_key', 'private_key', 'passphrase_hint', 'organisations']
+    fields = ['name', 'email', 'key_id', 'fingerprint', 'public_key', 'private_key', 'passphrase_hint']
     success_url = reverse_lazy('flatpak:gpgkey_list')
     
     def form_valid(self, form):
@@ -169,7 +157,7 @@ class GPGKeyCreateView(RepoAdminRequiredMixin, CreateView):
         return super().form_valid(form)
 
 
-class GPGKeyDeleteView(RepoAdminRequiredMixin, DeleteView):
+class GPGKeyDeleteView(LoginRequiredMixin, DeleteView):
     """Delete GPG key."""
     model = GPGKey
     template_name = 'flatpak/gpgkey_confirm_delete.html'
@@ -203,11 +191,11 @@ class RepositoryDetailView(LoginRequiredMixin, DetailView):
     context_object_name = 'repository'
 
 
-class RepositoryCreateView(RepoAdminRequiredMixin, CreateView):
+class RepositoryCreateView(LoginRequiredMixin, CreateView):
     """Create new repository."""
     model = Repository
     template_name = 'flatpak/repository_form.html'
-    fields = ['name', 'collection_id', 'description', 'gpg_key', 'parent_repos', 'organisations']
+    fields = ['name', 'collection_id', 'description', 'gpg_key', 'parent_repos']
     success_url = reverse_lazy('flatpak:repo_list')
     
     def get_context_data(self, **kwargs):
@@ -260,11 +248,11 @@ class RepositoryCreateView(RepoAdminRequiredMixin, CreateView):
         return response
 
 
-class RepositoryUpdateView(RepoAdminRequiredMixin, UpdateView):
+class RepositoryUpdateView(LoginRequiredMixin, UpdateView):
     """Update existing repository."""
     model = Repository
     template_name = 'flatpak/repository_form.html'
-    fields = ['name', 'collection_id', 'description', 'gpg_key', 'parent_repos', 'organisations']
+    fields = ['name', 'collection_id', 'description', 'gpg_key', 'parent_repos']
     
     def get_form(self, form_class=None):
         form = super().get_form(form_class)
@@ -364,7 +352,7 @@ class RepositoryUpdateView(RepoAdminRequiredMixin, UpdateView):
         return response
 
 
-class RepositoryDeleteView(RepoAdminRequiredMixin, DeleteView):
+class RepositoryDeleteView(LoginRequiredMixin, DeleteView):
     """Delete repository and its OSTree data."""
     model = Repository
     template_name = 'flatpak/repository_confirm_delete.html'
@@ -462,7 +450,7 @@ def _try_refresh_local_appstream(repo_name):
     return None
 
 
-class RepositoryUpdateMetadataView(RepoAdminRequiredMixin, View):
+class RepositoryUpdateMetadataView(LoginRequiredMixin, View):
     """
     Re-run flatpak build-update-repo to regenerate appstream metadata, sign
     everything correctly, then refresh the local flatpak appstream cache so
@@ -499,7 +487,7 @@ class RepositoryUpdateMetadataView(RepoAdminRequiredMixin, View):
         return JsonResponse({'status': 'ok', 'message': msg})
 
 
-class RepositorySubsetCreateView(RepoAdminRequiredMixin, CreateView):
+class RepositorySubsetCreateView(LoginRequiredMixin, CreateView):
     """Create new subset for a repository."""
     model = RepositorySubset
     template_name = 'flatpak/subset_form.html'
@@ -523,7 +511,7 @@ class RepositorySubsetCreateView(RepoAdminRequiredMixin, CreateView):
         return reverse('flatpak:repo_detail', kwargs={'pk': self.repository.pk})
 
 
-class RepositorySubsetUpdateView(RepoAdminRequiredMixin, UpdateView):
+class RepositorySubsetUpdateView(LoginRequiredMixin, UpdateView):
     """Update existing subset."""
     model = RepositorySubset
     template_name = 'flatpak/subset_form.html'
@@ -543,7 +531,7 @@ class RepositorySubsetUpdateView(RepoAdminRequiredMixin, UpdateView):
         return reverse('flatpak:repo_detail', kwargs={'pk': self.object.repository.pk})
 
 
-class RepositorySubsetDeleteView(RepoAdminRequiredMixin, DeleteView):
+class RepositorySubsetDeleteView(LoginRequiredMixin, DeleteView):
     """Delete subset."""
     model = RepositorySubset
     template_name = 'flatpak/subset_confirm_delete.html'
@@ -704,41 +692,25 @@ class PackageCheckUpstreamView(LoginRequiredMixin, View):
 
         version = None
         error = None
-        release_date = None
 
         # Step 1: custom version script
         if package.upstream_version_script.strip():
-            version, release_date, error = _run_version_script(package.upstream_version_script, package.package_id)
+            version, error = _run_version_script(package.upstream_version_script, package.package_id)
 
         # Step 2: git tag fallback
         if not version and package.upstream_url:
-            version, raw_tag, error = _fetch_latest_upstream_tag(package.upstream_url)
-            if version and release_date is None and raw_tag:
-                from apps.flatpak.tasks import _fetch_tag_date
-                release_date = _fetch_tag_date(package.upstream_url, raw_tag)
+            version, error = _fetch_latest_upstream_tag(package.upstream_url)
 
         if not version:
             return JsonResponse({'error': error or 'Could not determine upstream version'}, status=502)
 
         version = _normalise_version(version)
-        now = tz.now()
-        version_changed = package.upstream_version != version
-        if version_changed or not package.upstream_version_first_seen_at:
-            package.upstream_version_first_seen_at = now
-            package.upstream_release_date = release_date
-        elif release_date is not None:
-            package.upstream_release_date = release_date
         package.upstream_version = version
-        package.upstream_checked_at = now
-        package.save(update_fields=[
-            'upstream_version', 'upstream_checked_at',
-            'upstream_release_date', 'upstream_version_first_seen_at',
-        ])
+        package.upstream_checked_at = tz.now()
+        package.save(update_fields=['upstream_version', 'upstream_checked_at'])
         return JsonResponse({
             'version': version,
             'has_update': bool(package.version and version and version != package.version),
-            'release_date': str(package.upstream_release_date) if package.upstream_release_date else None,
-            'first_seen': package.upstream_version_first_seen_at.strftime('%Y-%m-%d') if package.upstream_version_first_seen_at else None,
         })
 
 
@@ -963,7 +935,7 @@ class BuildPromotionsApiView(LoginRequiredMixin, View):
         })
 
 
-class PromoteView(BuildAdminRequiredMixin, View):
+class PromoteView(LoginRequiredMixin, View):
     """Create and queue a promotion for a published build."""
 
     def post(self, request, build_pk):
@@ -998,7 +970,7 @@ class PromoteView(BuildAdminRequiredMixin, View):
         return JsonResponse({'status': 'ok', 'promotion_id': promotion.id})
 
 
-class PromotionRetryView(BuildAdminRequiredMixin, View):
+class PromotionRetryView(LoginRequiredMixin, View):
     """Re-queue a pending or failed promotion."""
 
     def post(self, request, pk):
@@ -1016,7 +988,7 @@ class PromotionRetryView(BuildAdminRequiredMixin, View):
         return JsonResponse({'status': 'ok'})
 
 
-class BstPromoteView(BuildAdminRequiredMixin, View):
+class BstPromoteView(LoginRequiredMixin, View):
     """Create and queue a BST promotion for a published BST build."""
 
     def post(self, request, build_pk):
@@ -1054,7 +1026,7 @@ class BstPromoteView(BuildAdminRequiredMixin, View):
         return JsonResponse({'status': 'ok', 'promotion_id': promo.id})
 
 
-class ExternalRefPromoteView(BuildAdminRequiredMixin, View):
+class ExternalRefPromoteView(LoginRequiredMixin, View):
     """Promote a published ExternalRef to a child repository."""
 
     def post(self, request, pk):
@@ -1109,7 +1081,7 @@ class ExternalRefPromoteView(BuildAdminRequiredMixin, View):
         return JsonResponse({'status': 'ok', 'promotion_id': promo.id})
 
 
-class ExternalRefPromotionRetryView(BuildAdminRequiredMixin, View):
+class ExternalRefPromotionRetryView(LoginRequiredMixin, View):
     def post(self, request, pk):
         from apps.flatpak.tasks import promote_external_ref_task
 
@@ -1122,7 +1094,7 @@ class ExternalRefPromotionRetryView(BuildAdminRequiredMixin, View):
         return JsonResponse({'status': 'ok'})
 
 
-class ExternalRefPromotionDeleteView(BuildAdminRequiredMixin, View):
+class ExternalRefPromotionDeleteView(LoginRequiredMixin, View):
     def post(self, request, pk):
         from apps.flatpak.utils.ostree import update_repo_metadata
 
@@ -1146,7 +1118,7 @@ class ExternalRefPromotionDeleteView(BuildAdminRequiredMixin, View):
             return JsonResponse({'error': str(exc)}, status=400)
 
 
-class BstPromotionRetryView(BuildAdminRequiredMixin, View):
+class BstPromotionRetryView(LoginRequiredMixin, View):
     """Re-queue a pending or failed BST promotion."""
 
     def post(self, request, pk):
@@ -1165,7 +1137,7 @@ class BstPromotionRetryView(BuildAdminRequiredMixin, View):
         return JsonResponse({'status': 'ok'})
 
 
-class BstPromotionDeleteView(BuildAdminRequiredMixin, View):
+class BstPromotionDeleteView(LoginRequiredMixin, View):
     """Delete a BST promotion record."""
 
     def post(self, request, pk):
@@ -1264,7 +1236,7 @@ class ExternalRefPromotionStatusBulkView(LoginRequiredMixin, View):
         return JsonResponse(result)
 
 
-class PromotionDeleteView(BuildAdminRequiredMixin, View):
+class PromotionDeleteView(LoginRequiredMixin, View):
     """Delete a promotion (and all descendant-repo promotions) and remove OSTree refs."""
 
     def post(self, request, pk):
@@ -1285,7 +1257,7 @@ class PromotionDeleteView(BuildAdminRequiredMixin, View):
         })
 
 
-class BuildUnpublishView(BuildAdminRequiredMixin, View):
+class BuildUnpublishView(LoginRequiredMixin, View):
     """Remove a published build from build-repo and set its status back to committed."""
 
     def post(self, request, pk):
@@ -1331,7 +1303,7 @@ class BuildUnpublishView(BuildAdminRequiredMixin, View):
         return JsonResponse({'status': 'ok', 'message': f'Build #{build.build_number} unpublished'})
 
 
-class BuildDeleteView(BuildAdminRequiredMixin, View):
+class BuildDeleteView(LoginRequiredMixin, View):
     """Permanently delete a build and remove its OSTree refs from all repos."""
 
     ACTIVE = {'building', 'committing', 'publishing'}
@@ -1402,7 +1374,7 @@ class BuildDeleteView(BuildAdminRequiredMixin, View):
         return JsonResponse({'status': 'ok', 'message': f'Build #{build_number} deleted'})
 
 
-class BuildCancelView(BuildAdminRequiredMixin, View):
+class BuildCancelView(LoginRequiredMixin, View):
     """Cancel an in-progress build (building / committing / publishing)."""
 
     CANCELLABLE = {'building', 'committing', 'publishing'}
@@ -1466,7 +1438,7 @@ def _ostree_refs(repo_path):
     return ostree_refs(repo_path)
 
 
-class SyncReposView(AdminRequiredMixin, View):
+class SyncReposView(LoginRequiredMixin, View):
     """Scan all OSTree repos on disk and reconcile Build / Promotion records."""
 
     def post(self, request):
@@ -1699,7 +1671,7 @@ class PromotionListView(LoginRequiredMixin, ListView):
         return context
 
 
-class PackageCreateView(BuildAdminRequiredMixin, CreateView):
+class PackageCreateView(LoginRequiredMixin, CreateView):
     """Create new package."""
     model = Package
     template_name = 'flatpak/package_form.html'
@@ -1757,7 +1729,7 @@ class PackageCreateView(BuildAdminRequiredMixin, CreateView):
         return reverse('flatpak:package_detail', kwargs={'pk': self.object.pk})
 
 
-class PackageUpdateView(BuildAdminRequiredMixin, UpdateView):
+class PackageUpdateView(LoginRequiredMixin, UpdateView):
     """Edit package details."""
     model = Package
     template_name = 'flatpak/package_form.html'
@@ -1791,7 +1763,7 @@ class PackageUpdateView(BuildAdminRequiredMixin, UpdateView):
         return reverse('flatpak:package_detail', kwargs={'pk': self.object.pk})
 
 
-class PackageDeleteView(BuildAdminRequiredMixin, DeleteView):
+class PackageDeleteView(LoginRequiredMixin, DeleteView):
     """Cancel/delete package."""
     model = Package
     template_name = 'flatpak/package_confirm_delete.html'
@@ -1853,7 +1825,7 @@ class PackageDeleteView(BuildAdminRequiredMixin, DeleteView):
         return super().delete(request, *args, **kwargs)
 
 
-class PackageRetryAllFailedView(BuildAdminRequiredMixin, View):
+class PackageRetryAllFailedView(LoginRequiredMixin, View):
     """Retry all packages currently in failed or cancelled status."""
 
     def post(self, request):
@@ -1873,7 +1845,7 @@ class PackageRetryAllFailedView(BuildAdminRequiredMixin, View):
         })
 
 
-class PackageBulkActionView(BuildAdminRequiredMixin, View):
+class PackageBulkActionView(LoginRequiredMixin, View):
     """Perform a bulk action (rebuild or delete) on a list of package IDs."""
 
     def post(self, request):
@@ -1926,7 +1898,7 @@ class PackageBulkActionView(BuildAdminRequiredMixin, View):
         return JsonResponse({'status': 'success', **results})
 
 
-class PackageRetryView(BuildAdminRequiredMixin, View):
+class PackageRetryView(LoginRequiredMixin, View):
     """Retry a failed or cancelled build."""
     
     def post(self, request, pk):
@@ -1953,7 +1925,7 @@ class PackageRetryView(BuildAdminRequiredMixin, View):
         })
 
 
-class PackageCommitView(BuildAdminRequiredMixin, View):
+class PackageCommitView(LoginRequiredMixin, View):
     """Commit a built flatpak."""
     
     def post(self, request, pk):
@@ -1986,7 +1958,7 @@ class PackageStatusView(LoginRequiredMixin, View):
         return JsonResponse({'status': package.status})
 
 
-class PackagePublishView(BuildAdminRequiredMixin, View):
+class PackagePublishView(LoginRequiredMixin, View):
     """Publish a committed build to the repository."""
     
     def post(self, request, pk):
@@ -2011,7 +1983,7 @@ class PackagePublishView(BuildAdminRequiredMixin, View):
         })
 
 
-class PackageRepublishView(BuildAdminRequiredMixin, View):
+class PackageRepublishView(LoginRequiredMixin, View):
     """Re-run publish on a package that failed during the publish/commit stage.
 
     The build artifacts are still in build-repo — there's no need to rebuild from
@@ -2050,7 +2022,7 @@ class PackageRepublishView(BuildAdminRequiredMixin, View):
         })
 
 
-class ConfigView(AdminRequiredMixin, View):
+class ConfigView(LoginRequiredMixin, View):
     """Display and update site-wide configuration."""
 
     def _context(self, form):
@@ -2078,7 +2050,7 @@ class ConfigView(AdminRequiredMixin, View):
         return render(request, 'flatpak/config.html', self._context(form))
 
 
-class FlatpakRemoteCreateView(AdminRequiredMixin, View):
+class FlatpakRemoteCreateView(LoginRequiredMixin, View):
     """Add a new Flatpak remote."""
 
     def post(self, request):
@@ -2094,7 +2066,7 @@ class FlatpakRemoteCreateView(AdminRequiredMixin, View):
         return redirect('flatpak:config')
 
 
-class FlatpakRemoteDeleteView(AdminRequiredMixin, View):
+class FlatpakRemoteDeleteView(LoginRequiredMixin, View):
     """Remove a Flatpak remote."""
 
     def post(self, request, pk):
@@ -2106,7 +2078,7 @@ class FlatpakRemoteDeleteView(AdminRequiredMixin, View):
         return redirect('flatpak:config')
 
 
-class FlatpakRemoteToggleView(AdminRequiredMixin, View):
+class FlatpakRemoteToggleView(LoginRequiredMixin, View):
     """Toggle active status of a Flatpak remote."""
 
     def post(self, request, pk):
@@ -2117,7 +2089,7 @@ class FlatpakRemoteToggleView(AdminRequiredMixin, View):
         return redirect('flatpak:config')
 
 
-class RunCleanupNowView(AdminRequiredMixin, View):
+class RunCleanupNowView(LoginRequiredMixin, View):
     """Trigger cleanup_failed_builds task immediately (synchronous, not via queue)."""
 
     def post(self, request):
@@ -2126,7 +2098,7 @@ class RunCleanupNowView(AdminRequiredMixin, View):
         return JsonResponse({'status': 'ok', 'message': result})
 
 
-class RunCheckExternalRefUpdatesView(AdminRequiredMixin, View):
+class RunCheckExternalRefUpdatesView(LoginRequiredMixin, View):
     """Immediately run the upstream commit check for all tracked ExternalRefs."""
 
     def post(self, request):
@@ -2135,7 +2107,7 @@ class RunCheckExternalRefUpdatesView(AdminRequiredMixin, View):
         return JsonResponse({'status': 'ok', 'message': result})
 
 
-class RunAvailableVersionScanView(AdminRequiredMixin, View):
+class RunAvailableVersionScanView(LoginRequiredMixin, View):
     """Queue an available-version check for every git-based package immediately."""
 
     def post(self, request):
@@ -2150,7 +2122,7 @@ class RunAvailableVersionScanView(AdminRequiredMixin, View):
         return JsonResponse({'status': 'ok', 'message': f"Queued {count} available version check(s)"})
 
 
-class RunUpstreamVersionScanView(AdminRequiredMixin, View):
+class RunUpstreamVersionScanView(LoginRequiredMixin, View):
     """Queue an upstream-version check for every eligible package immediately."""
 
     def post(self, request):
@@ -2165,7 +2137,7 @@ class RunUpstreamVersionScanView(AdminRequiredMixin, View):
         return JsonResponse({'status': 'ok', 'message': f"Queued {count} upstream version check(s)"})
 
 
-class ScanRepairRepoTmpPermissionsView(AdminRequiredMixin, View):
+class ScanRepairRepoTmpPermissionsView(LoginRequiredMixin, View):
     """Scan (and optionally repair) broken permissions on tmp/staging-* dirs in all active repos."""
 
     def post(self, request):
@@ -2228,7 +2200,7 @@ class ScanRepairRepoTmpPermissionsView(AdminRequiredMixin, View):
         })
 
 
-class ScanOrphanedRefsView(AdminRequiredMixin, View):
+class ScanOrphanedRefsView(LoginRequiredMixin, View):
     """Return refs present in any repo that are not tracked by a Package, ExternalRef, or BST source."""
 
     def post(self, request):
@@ -2284,7 +2256,7 @@ class ScanOrphanedRefsView(AdminRequiredMixin, View):
         })
 
 
-class PruneOrphanedRefsView(AdminRequiredMixin, View):
+class PruneOrphanedRefsView(LoginRequiredMixin, View):
     """Dispatch a background task to delete a specific orphaned ref."""
 
     def post(self, request):
@@ -2306,7 +2278,7 @@ class PruneOrphanedRefsView(AdminRequiredMixin, View):
         return JsonResponse({'status': 'pending', 'task_id': task_id})
 
 
-class BulkPruneOrphanedRefsView(AdminRequiredMixin, View):
+class BulkPruneOrphanedRefsView(LoginRequiredMixin, View):
     """Dispatch a background task to delete multiple orphaned refs at once."""
 
     def post(self, request):
@@ -2723,7 +2695,7 @@ class ExternalRefListView(LoginRequiredMixin, ListView):
         return ctx
 
 
-class ExternalRefBulkActionView(BuildAdminRequiredMixin, View):
+class ExternalRefBulkActionView(LoginRequiredMixin, View):
     def post(self, request, *args, **kwargs):
         from .models import ExternalRef
         import json
@@ -2760,7 +2732,7 @@ class ExternalRefBulkActionView(BuildAdminRequiredMixin, View):
         return JsonResponse({'error': f'Unknown action: {action}'}, status=400)
 
 
-class ExternalRefBulkImportView(BuildAdminRequiredMixin, View):
+class ExternalRefBulkImportView(LoginRequiredMixin, View):
     """Create and immediately pull multiple ExternalRefs sharing a common repository and remote.
 
     POST body (JSON): { repository_id, remote_id, refs: [str, ...] }
@@ -2841,7 +2813,7 @@ class ExternalRefDetailView(LoginRequiredMixin, DetailView):
         return ExternalRef.objects.select_related('repository', 'remote', 'created_by')
 
 
-class ExternalRefCreateView(BuildAdminRequiredMixin, CreateView):
+class ExternalRefCreateView(LoginRequiredMixin, CreateView):
     template_name = 'flatpak/external_form.html'
 
     def get_form_class(self):
@@ -2895,7 +2867,7 @@ class ExternalRefCreateView(BuildAdminRequiredMixin, CreateView):
         return reverse('flatpak:external_detail', kwargs={'pk': self.object.pk})
 
 
-class ExternalRefDeleteView(BuildAdminRequiredMixin, DeleteView):
+class ExternalRefDeleteView(LoginRequiredMixin, DeleteView):
     template_name = 'flatpak/external_confirm_delete.html'
     success_url = reverse_lazy('flatpak:external_list')
 
@@ -2911,7 +2883,7 @@ class ExternalRefDeleteView(BuildAdminRequiredMixin, DeleteView):
         return super().form_valid(form)
 
 
-class ExternalRefUpdateView(BuildAdminRequiredMixin, UpdateView):
+class ExternalRefUpdateView(LoginRequiredMixin, UpdateView):
     model = ExternalRef
     template_name = 'flatpak/external_form.html'
     fields = ['organisations']
@@ -2934,7 +2906,7 @@ class ExternalRefUpdateView(BuildAdminRequiredMixin, UpdateView):
         return reverse('flatpak:external_detail', kwargs={'pk': self.object.pk})
 
 
-class ExternalRefPullView(BuildAdminRequiredMixin, View):
+class ExternalRefPullView(LoginRequiredMixin, View):
     """Queue a pull (and subsequent publish) task for an ExternalRef."""
 
     def post(self, request, pk):
@@ -2955,7 +2927,7 @@ class ExternalRefPullView(BuildAdminRequiredMixin, View):
         return JsonResponse({'status': 'success', 'message': f'Pull started for {ext.display_name or ext.ref}'})
 
 
-class ExternalRefPublishView(BuildAdminRequiredMixin, View):
+class ExternalRefPublishView(LoginRequiredMixin, View):
     """Re-publish an already-pulled ExternalRef (e.g. to a different repository after editing)."""
 
     def post(self, request, pk):
@@ -2970,7 +2942,7 @@ class ExternalRefPublishView(BuildAdminRequiredMixin, View):
         return JsonResponse({'status': 'success', 'message': f'Publish started for {ext.display_name or ext.ref}'})
 
 
-class ExternalRefUnpublishView(BuildAdminRequiredMixin, View):
+class ExternalRefUnpublishView(LoginRequiredMixin, View):
     """Remove a published ExternalRefVersion from its source repository."""
 
     def post(self, request, pk):
@@ -3066,21 +3038,21 @@ class OrganisationListView(LoginRequiredMixin, ListView):
     context_object_name = 'organisations'
 
 
-class OrganisationCreateView(AdminRequiredMixin, CreateView):
+class OrganisationCreateView(LoginRequiredMixin, CreateView):
     model = Organisation
     template_name = 'flatpak/organisation_form.html'
     fields = ['name', 'responsible_name', 'responsible_email', 'description']
     success_url = reverse_lazy('flatpak:organisation_list')
 
 
-class OrganisationUpdateView(AdminRequiredMixin, UpdateView):
+class OrganisationUpdateView(LoginRequiredMixin, UpdateView):
     model = Organisation
     template_name = 'flatpak/organisation_form.html'
     fields = ['name', 'responsible_name', 'responsible_email', 'description']
     success_url = reverse_lazy('flatpak:organisation_list')
 
 
-class OrganisationDeleteView(AdminRequiredMixin, DeleteView):
+class OrganisationDeleteView(LoginRequiredMixin, DeleteView):
     model = Organisation
     template_name = 'flatpak/organisation_confirm_delete.html'
     success_url = reverse_lazy('flatpak:organisation_list')
@@ -3220,13 +3192,7 @@ class ClientDetailView(LoginRequiredMixin, DetailView):
             (p.get('name') or p['app_id']).lower(),
         ))
         context['installed_annotated'] = annotated
-        # If the freshly computed count differs from the stored value (e.g.
-        # because an ExternalRef was published since the last check-in), persist
-        # the updated value so the client list also shows the correct number.
-        if commit_outdated_count != client.commit_outdated_count:
-            Client.objects.filter(pk=client.pk).update(commit_outdated_count=commit_outdated_count)
-            client.commit_outdated_count = commit_outdated_count
-        context['commit_outdated_count'] = commit_outdated_count
+        context['commit_outdated_count'] = client.commit_outdated_count
 
         # Determine client health status
         if client.last_checkin is None or client.last_checkin < threshold:
@@ -3316,6 +3282,7 @@ class ClientCheckinView(View):
         managed_remote_names = data.get('managed_remotes', [])
         installed = data.get('installed', [])
         user_flatpaks = data.get('user_flatpaks', [])
+        tuxmigrate_facts = data.get('tuxmigrate_facts', [])
 
         # Compute foreign flatpaks
         managed_set = set(managed_remote_names)
@@ -3437,6 +3404,23 @@ class ClientCheckinView(View):
         client.outdated_count = len(outdated_flatpaks)
         client.commit_outdated_count = commit_outdated_count
         client.user_flatpaks = user_flatpaks
+        # Validate and store tuxmigrate facts; derive the latest version string.
+        if isinstance(tuxmigrate_facts, list):
+            client.tuxmigrate_facts = tuxmigrate_facts
+            # Latest = last entry after sorting by (major, minor, patch, order)
+            try:
+                sorted_facts = sorted(
+                    tuxmigrate_facts,
+                    key=lambda f: (
+                        int(f.get('version_major', 0)),
+                        int(f.get('version_minor', 0)),
+                        int(f.get('version_patch', 0)),
+                        int(f.get('order', 0)),
+                    ),
+                )
+                client.tuxmigrate_latest_version = sorted_facts[-1]['version'] if sorted_facts else ''
+            except Exception:
+                client.tuxmigrate_latest_version = ''
         # Only overwrite serial_number / machine_type when the client sends a
         # non-empty value — avoids blanking a previously stored value when
         # dmidecode is unavailable (e.g. VM without DMI access).
@@ -3467,8 +3451,7 @@ class ClientCheckinView(View):
                         'foreign_flatpaks': foreign_flatpaks,
                         'outdated_flatpaks': outdated_flatpaks,
                         'last_checkin': client.last_checkin.strftime('%b %d, %H:%M') if client.last_checkin else '',
-                        'serial_number': client.serial_number or '',
-                    },
+                    }
                 )
         except Exception:
             pass  # WS push is best-effort; checkin must still succeed

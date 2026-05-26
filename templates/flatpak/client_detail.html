@@ -208,6 +208,37 @@
 <p class="text-muted">No flatpaks installed.</p>
 {% endif %}
 
+{% if client.tuxmigrate_facts %}
+<div class="card mt-4">
+    <div class="card-header">
+        <i class="bi bi-journal-check"></i> TuxMigrations
+        <span class="badge bg-secondary ms-1">{{ client.tuxmigrate_facts|length }}</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+            <thead class="table-dark">
+                <tr>
+                    <th>Version</th>
+                    <th class="text-center">Order</th>
+                    <th>Playbook</th>
+                    <th>Applied Date</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for fact in client.tuxmigrate_facts %}
+                <tr>
+                    <td><span class="badge bg-secondary font-monospace">{{ fact.version }}</span></td>
+                    <td class="text-center text-muted">{{ fact.order }}</td>
+                    <td><code class="small">{{ fact.playbook }}</code></td>
+                    <td class="text-muted small">{{ fact.applied_date }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
 <!-- Assign Organisations modal -->
 <div class="modal fade" id="assignOrgsModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog">

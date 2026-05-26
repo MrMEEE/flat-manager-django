@@ -46,6 +46,7 @@
                         <th class="text-center">Foreign</th>
                         <th class="text-center">Outdated</th>
                         <th class="text-center">Outdated (commit)</th>
+                        <th class="text-center">TuxMigrate</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -148,6 +149,13 @@
                             </a>
                             {% else %}
                             <span class="text-muted">0</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            {% if client.tuxmigrate_latest_version %}
+                            <span class="badge bg-secondary font-monospace">{{ client.tuxmigrate_latest_version }}</span>
+                            {% else %}
+                            <span class="text-muted">—</span>
                             {% endif %}
                         </td>
                     </tr>
