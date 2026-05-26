@@ -3098,6 +3098,9 @@ class ClientListView(LoginRequiredMixin, ListView):
         threshold = timezone.now() - timedelta(hours=stale_hours)
         self._annotate_status(context['clients'], threshold)
         context['all_organisations'] = Organisation.objects.all()
+        context['any_tuxmigrate'] = any(
+            c.tuxmigrate_latest_version for c in context['clients']
+        )
         return context
 
 
@@ -3250,6 +3253,16 @@ class ClientBulkActionView(LoginRequiredMixin, View):
             return JsonResponse({'status': 'ok', 'deleted': count})
 
         return JsonResponse({'error': f'Unknown action: {action}'}, status=400)
+
+
+class ClientDeleteView(LoginRequiredMixin, View):
+    """POST /flatpak/clients/<pk>/delete/ — delete a single client record."""
+
+    def post(self, request, pk):
+        from .models import Client
+        client = get_object_or_404(Client, pk=pk)
+        client.delete()
+        return JsonResponse({'status': 'ok'})
 
 
 import json

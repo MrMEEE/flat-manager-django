@@ -38,7 +38,7 @@
                         <th>Status</th>
                         <th>Hostname</th>
                         <th>Serial Number</th>
-                        <th class="text-center">Config</th>
+                        {% if any_tuxmigrate %}<th class="text-center">Config</th>{% endif %}
                         <th>Users</th>
                         <th>Organisations</th>
                         <th>Managed repos</th>
@@ -80,6 +80,7 @@
                                 <span class="text-muted">—</span>
                             {% endif %}
                         </td>
+                        {% if any_tuxmigrate %}
                         <td class="text-center">
                             {% if client.tuxmigrate_latest_version %}
                             <span class="badge bg-secondary font-monospace">{{ client.tuxmigrate_latest_version }}</span>
@@ -87,6 +88,7 @@
                             <span class="text-muted">—</span>
                             {% endif %}
                         </td>
+                        {% endif %}
                         <td>
                             {% for u in client.user_flatpaks %}
                                 <span class="badge bg-secondary me-1">{{ u.username }}</span>
