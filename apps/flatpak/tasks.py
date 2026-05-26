@@ -3127,12 +3127,22 @@ def ensure_flatpak_remote(remote_name, remote_url, scope_flag, build=None):
 def install_flatpak_dependencies(package, dependencies, build=None):
     """Install required Flatpak SDK and runtime dependencies."""
     refs_to_install = []
-    
+    # Refs whose absence is non-fatal (e.g. Debug variants — not all remotes
+    # carry them, and not every build requires them).
+    optional_refs = []
+
     # Collect all refs to install
     for key in ['sdk_full', 'runtime_full', 'base_full']:
         if key in dependencies:
             refs_to_install.append(dependencies[key])
-    
+            # When a base app is needed flatpak-builder also requires its
+            # .Debug extension to build the app's debug extension.  Try to
+            # install it proactively; skip silently if unavailable.
+            if key == 'base_full':
+                parts = dependencies[key].split('/', 2)
+                if len(parts) == 3:
+                    optional_refs.append(f"{parts[0]}.Debug/{parts[1]}/{parts[2]}")
+
     # Add SDK extensions
     if 'sdk_extensions' in dependencies:
         for extension in dependencies['sdk_extensions']:
@@ -3271,6 +3281,33 @@ def install_flatpak_dependencies(package, dependencies, build=None):
             return False
     
     log_build(build, 'info', "All dependencies installed successfully")
+
+    # Best-effort: install optional refs (e.g. .Debug extensions of base apps).
+    # Failure here is non-fatal — not all packages need these.
+    for ref in optional_refs:
+        try:
+            already = subprocess.run(
+                ['flatpak', 'info', install_scope, ref],
+                capture_output=True, text=True, timeout=30,
+            )
+            if already.returncode == 0:
+                log_build(build, 'info', f"✓ {ref} already installed (optional)")
+                continue
+            log_build(build, 'info', f"Installing optional dep {ref}...")
+            for remote_name, _ in active_remotes_info:
+                r = subprocess.run(
+                    ['flatpak', 'install', '-y', install_scope, '--noninteractive',
+                     remote_name, ref],
+                    capture_output=True, text=True, timeout=600,
+                )
+                if r.returncode == 0:
+                    log_build(build, 'info', f"✓ Installed optional dep {ref}")
+                    break
+            else:
+                log_build(build, 'info', f"Optional dep {ref} not available, skipping")
+        except Exception:
+            log_build(build, 'info', f"Optional dep {ref} skipped (not available)")
+
     return True
 
 
