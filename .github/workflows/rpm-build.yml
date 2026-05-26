@@ -1,10 +1,16 @@
 name: Build RPM
 
-# ── Only run on version tags — no manual triggers, no branch pushes ───────────
+# ── Run on version tags, or manually via the GitHub Actions UI ────────────────
 on:
   push:
     tags:
       - 'v[0-9]*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g. 0.8.7) — must be an existing tag'
+        required: true
+        type: string
 
 permissions:
   contents: write   # needed to create GitHub Releases
@@ -76,11 +82,17 @@ jobs:
       - name: Mark workspace as git safe directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      # ── Determine version from tag ──────────────────────────────────────────
+      # ── Determine version from tag or manual input ──────────────────────────
       - name: Determine version
         id: ver
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+            # Strip leading 'v' if the user included it
+            VERSION="${VERSION#v}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Building version: ${VERSION}"
 
@@ -138,10 +150,11 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name }}
           files: release-rpms/**/*.rpm
           generate_release_notes: true
           draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name, '-') }}
           fail_on_unmatched_files: true
           body: |
             ## Installation
