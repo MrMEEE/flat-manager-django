@@ -3477,6 +3477,7 @@ class ClientCheckinView(View):
                         'installed_flatpaks': installed,
                         'foreign_flatpaks': foreign_flatpaks,
                         'outdated_flatpaks': outdated_flatpaks,
+                        'managed_remotes': client.managed_remotes or [],
                         'last_checkin': client.last_checkin.strftime('%b %d, %H:%M') if client.last_checkin else '',
                     }
                 )

@@ -103,7 +103,7 @@
                                 <span class="text-muted">—</span>
                             {% endfor %}
                         </td>
-                        <td>
+                        <td id="managed-remotes-{{ client.pk }}">
                             {% if client.managed_remotes %}
                                 {% for r in client.managed_remotes %}
                                     <span class="badge bg-primary me-1">{{ r }}</span>
@@ -452,6 +452,19 @@ function onWebSocketMessage(data) {
     if (visibleRow.cells[7] && data.last_checkin) {
         visibleRow.cells[7].innerHTML =
             `<span title="${esc(data.last_checkin)} UTC">${esc(data.last_checkin)} (just now)</span>`;
+    }
+
+    // Update managed remotes cell (identified by id, not column index, because
+    // the Config column is conditionally rendered and shifts positions).
+    const managedCell = document.getElementById('managed-remotes-' + pk);
+    if (managedCell && data.managed_remotes !== undefined) {
+        if (data.managed_remotes.length > 0) {
+            managedCell.innerHTML = data.managed_remotes
+                .map(r => `<span class="badge bg-primary me-1">${esc(r)}</span>`)
+                .join('');
+        } else {
+            managedCell.innerHTML = '<span class="text-muted">—</span>';
+        }
     }
 }
 
