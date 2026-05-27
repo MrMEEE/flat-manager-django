@@ -3297,6 +3297,20 @@ class ClientCheckinView(View):
         user_flatpaks = data.get('user_flatpaks', [])
         tuxmigrate_facts = data.get('tuxmigrate_facts', [])
 
+        # If the client didn't self-report managed_remotes, derive them
+        # server-side by matching the client's remote names against known
+        # Repository folder names (name with spaces replaced by hyphens).
+        if not managed_remote_names and remotes:
+            from .models import Repository as _Repo
+            known_repo_names = set(
+                _Repo.objects.values_list('name', flat=True)
+            )
+            known_folder_names = {n.replace(' ', '-') for n in known_repo_names} | known_repo_names
+            managed_remote_names = [
+                r['name'] for r in remotes
+                if isinstance(r, dict) and r.get('name') in known_folder_names
+            ]
+
         # Compute foreign flatpaks
         managed_set = set(managed_remote_names)
         foreign_flatpaks = [
