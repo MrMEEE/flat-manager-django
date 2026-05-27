@@ -37,12 +37,27 @@ case "${1:-}" in
             echo "ERROR: flat-manager-django does not appear to be installed via RPM." >&2
             exit 1
         fi
-        if [ "${LATEST_VER}" = "${INSTALLED_VER}" ]; then
-            echo "flat-manager-django is already up to date (${INSTALLED_VER})."
+        # Strip any leading 'v' from both sides before comparing so the check
+        # is robust regardless of whether the git tag or the RPM version carries
+        # the prefix (older script versions printed the raw tag, newer ones strip
+        # it — make both paths converge here).
+        INSTALLED_VER_CLEAN="${INSTALLED_VER#v}"
+        if [ "${LATEST_VER}" = "${INSTALLED_VER_CLEAN}" ]; then
+            echo "flat-manager-django is already up to date (${INSTALLED_VER_CLEAN})."
             exit 0
         fi
-        echo "  Installed : ${INSTALLED_VER}"
+        echo "  Installed : ${INSTALLED_VER_CLEAN}"
         echo "  Available : ${LATEST_VER}"
+        echo ""
+        printf "Proceed with update? [y/N] "
+        read -r CONFIRM
+        case "${CONFIRM}" in
+            [yY]|[yY][eE][sS]) ;;
+            *)
+                echo "Update cancelled."
+                exit 0
+                ;;
+        esac
         echo ""
         printf "Proceed with update? [y/N] "
         read -r CONFIRM
