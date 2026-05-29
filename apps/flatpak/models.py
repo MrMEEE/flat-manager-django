@@ -180,6 +180,21 @@ class Package(models.Model):
         )
     )
 
+    # Version scheme (auto-extracted from manifest x-checker-data)
+    VERSION_SCHEME_CHOICES = [
+        ('', 'None / default'),
+        ('odd-minor-is-unstable', 'Odd minor is unstable'),
+    ]
+    version_scheme = models.CharField(
+        max_length=50, blank=True, default='',
+        choices=VERSION_SCHEME_CHOICES,
+        help_text="Version scheme extracted from the Flatpak manifest's x-checker-data (auto-populated)"
+    )
+    upstream_unstable_version = models.CharField(
+        max_length=100, blank=True,
+        help_text="Latest unstable upstream version per version_scheme (only set when newer than the stable upstream version; auto-populated)"
+    )
+
     # Available version tracking (manifest/repo scan, without a full build)
     available_version = models.CharField(
         max_length=100, blank=True,

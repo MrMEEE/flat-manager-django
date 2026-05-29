@@ -685,31 +685,44 @@ class PackageCheckUpstreamView(LoginRequiredMixin, View):
 
     def post(self, request, pk):
         from django.utils import timezone as tz
-        from apps.flatpak.tasks import _fetch_latest_upstream_tag, _run_version_script, _normalise_version
+        from apps.flatpak.tasks import (
+            _fetch_latest_upstream_tag, _fetch_upstream_tags_by_scheme,
+            _run_version_script, _normalise_version,
+        )
         package = get_object_or_404(Package, pk=pk)
         if not package.upstream_url and not package.upstream_version_script.strip():
             return JsonResponse({'error': 'No upstream URL or version script configured for this package'}, status=400)
 
         version = None
         error = None
+        unstable_version = None
 
         # Step 1: custom version script
         if package.upstream_version_script.strip():
             version, error = _run_version_script(package.upstream_version_script, package.package_id)
 
-        # Step 2: git tag fallback
+        # Step 2: git tag fallback (scheme-aware when configured)
         if not version and package.upstream_url:
-            version, _raw_tag, error = _fetch_latest_upstream_tag(package.upstream_url)
+            if package.version_scheme:
+                version, _raw_tag, unstable_version, error = _fetch_upstream_tags_by_scheme(
+                    package.upstream_url, package.version_scheme
+                )
+            else:
+                version, _raw_tag, error = _fetch_latest_upstream_tag(package.upstream_url)
 
         if not version:
             return JsonResponse({'error': error or 'Could not determine upstream version'}, status=502)
 
         version = _normalise_version(version)
+        if unstable_version:
+            unstable_version = _normalise_version(unstable_version)
         package.upstream_version = version
+        package.upstream_unstable_version = unstable_version or ''
         package.upstream_checked_at = tz.now()
-        package.save(update_fields=['upstream_version', 'upstream_checked_at'])
+        package.save(update_fields=['upstream_version', 'upstream_unstable_version', 'upstream_checked_at'])
         return JsonResponse({
             'version': version,
+            'unstable_version': unstable_version or '',
             'has_update': bool(package.version and version and version != package.version),
         })
 
@@ -727,13 +740,17 @@ class PackageCheckAvailableView(LoginRequiredMixin, View):
                 status=400,
             )
 
-        version, error = _fetch_available_version(package)
+        version, version_scheme, error = _fetch_available_version(package)
         if not version:
             return JsonResponse({'error': error or 'Could not determine available version'}, status=502)
 
+        update_fields = ['available_version', 'available_version_checked_at']
         package.available_version = version
         package.available_version_checked_at = tz.now()
-        package.save(update_fields=['available_version', 'available_version_checked_at'])
+        if version_scheme is not None and version_scheme != package.version_scheme:
+            package.version_scheme = version_scheme
+            update_fields.append('version_scheme')
+        package.save(update_fields=update_fields)
         try:
             from packaging.version import Version
             has_update = bool(package.version and version and Version(version) > Version(package.version))

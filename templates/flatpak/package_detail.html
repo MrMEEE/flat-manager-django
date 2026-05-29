@@ -95,6 +95,12 @@
                                     <i class="bi bi-arrow-up-circle"></i> Update available
                                 </span>
                                 {% endif %}
+                                {% if package.upstream_unstable_version %}
+                                <span class="text-muted ms-2"
+                                      title="A newer unstable release exists upstream">
+                                    (Unstable Release {{ package.upstream_unstable_version }} exists)
+                                </span>
+                                {% endif %}
                                 <br>
                                 <small class="text-muted">
                                     {% if package.upstream_release_date %}

@@ -4010,6 +4010,143 @@ def send_build_status_update(package_id, status, message='', repository_id=None)
     )
 
 
+def _extract_version_scheme_from_manifest(manifest_file):
+    """Extract the version-scheme from ``x-checker-data`` in a Flatpak manifest.
+
+    Scans all modules and their sources for ``x-checker-data`` containing a
+    ``version-scheme`` key.  Prioritises the source marked with
+    ``is-main-source: true`` over any other source.
+
+    Returns the version-scheme string (e.g. ``'odd-minor-is-unstable'``) or
+    ``''`` if none is found or the file cannot be read.
+    """
+    try:
+        import yaml
+        import json as _json
+        with open(manifest_file, 'r') as fh:
+            if manifest_file.endswith(('.yml', '.yaml')):
+                manifest = yaml.safe_load(fh)
+            else:
+                manifest = _json.load(fh)
+        if not isinstance(manifest, dict):
+            return ''
+        scheme = ''
+        for module in manifest.get('modules', []):
+            if not isinstance(module, dict):
+                continue
+            for source in module.get('sources', []):
+                if not isinstance(source, dict):
+                    continue
+                checker_data = source.get('x-checker-data', {})
+                if not isinstance(checker_data, dict):
+                    continue
+                src_scheme = checker_data.get('version-scheme', '')
+                if src_scheme:
+                    if checker_data.get('is-main-source'):
+                        return src_scheme  # highest priority: main source wins immediately
+                    scheme = src_scheme  # keep last found as fallback
+        return scheme
+    except Exception:
+        return ''
+
+
+def _is_scheme_stable(version_tuple, version_scheme):
+    """Return True if *version_tuple* is considered stable under *version_scheme*.
+
+    For ``'odd-minor-is-unstable'``: a version is unstable when its second
+    component (index 1 — the "minor") is an odd number.  Versions with fewer
+    than two components are treated as stable.
+
+    Unknown schemes and an empty scheme always return True (stable).
+    """
+    if not version_scheme or not version_tuple:
+        return True
+    if version_scheme == 'odd-minor-is-unstable':
+        if len(version_tuple) >= 2:
+            return version_tuple[1] % 2 == 0
+    return True
+
+
+def _fetch_upstream_tags_by_scheme(url, version_scheme):
+    """Fetch upstream git tags and separate them into stable vs unstable per *version_scheme*.
+
+    Uses the same ``git ls-remote`` / ``_parse_version_from_tag`` pipeline as
+    ``_fetch_latest_upstream_tag`` but applies the scheme filter on top of the
+    standard pre-release / date-version filters.
+
+    Returns:
+        ``(stable_version, stable_raw_tag, unstable_version, error)``
+
+    * ``stable_version``   — normalised latest stable-by-scheme version string,
+                             or ``''`` if no stable tag was found.
+    * ``stable_raw_tag``   — original tag string for the stable version, or None.
+    * ``unstable_version`` — normalised latest scheme-unstable version string,
+                             **only** when it is strictly newer than
+                             ``stable_version``; otherwise None.
+    * ``error``            — human-readable error string on failure, else None.
+    """
+    import re
+    try:
+        result = subprocess.run(
+            ['git', 'ls-remote', '--tags', '--refs', url],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            return None, None, None, result.stderr.strip() or 'git ls-remote failed'
+
+        lines = [ln for ln in result.stdout.strip().splitlines() if '\t' in ln]
+        if not lines:
+            return '', None, None, None
+
+        # Parse all tags, excluding pre-releases and date-based versions.
+        candidates = []
+        for line in lines:
+            raw_tag = line.split('\t', 1)[-1].replace('refs/tags/', '').strip()
+            version_tuple, is_prerelease, is_date_version = _parse_version_from_tag(raw_tag)
+            if version_tuple is not None and not is_date_version and not is_prerelease:
+                candidates.append((version_tuple, raw_tag))
+
+        if not candidates:
+            return '', None, None, None
+
+        # Split by scheme
+        stable_pool = [(v, tag) for v, tag in candidates if _is_scheme_stable(v, version_scheme)]
+        unstable_pool = [(v, tag) for v, tag in candidates if not _is_scheme_stable(v, version_scheme)]
+
+        def _best(pool):
+            """Return the (version_tuple, raw_tag) with the highest version, preferring 2+ components."""
+            if not pool:
+                return None
+            multi = [(v, tag) for v, tag in pool if len(v) >= 2]
+            return max(multi if multi else pool, key=lambda x: x[0])
+
+        def _strip_tag_prefix(raw_tag):
+            m = re.match(r'^[a-zA-Z][a-zA-Z0-9_-]*?(\d)', raw_tag)
+            if m:
+                return raw_tag[raw_tag.index(m.group(1)):]
+            return raw_tag
+
+        stable_best = _best(stable_pool)
+        unstable_best = _best(unstable_pool)
+
+        stable_version = _strip_tag_prefix(stable_best[1]) if stable_best else ''
+        stable_raw_tag = stable_best[1] if stable_best else None
+
+        # Only surface the unstable version when it is strictly newer than stable.
+        unstable_version = None
+        if unstable_best and (not stable_best or unstable_best[0] > stable_best[0]):
+            unstable_version = _strip_tag_prefix(unstable_best[1])
+
+        return stable_version, stable_raw_tag, unstable_version, None
+
+    except subprocess.TimeoutExpired:
+        return None, None, None, 'Timed out after 30 s'
+    except FileNotFoundError:
+        return None, None, None, 'git binary not found'
+    except Exception as e:
+        return None, None, None, str(e)
+
+
 def _parse_version_from_tag(tag):
     """
     Extract a sortable version tuple, a pre-release flag, and a date-version
@@ -4273,16 +4410,19 @@ def _fetch_tag_date(url, raw_tag):
 def _fetch_available_version(package):
     """Clone *package*'s git repository and extract its available version from the manifest.
 
-    Returns ``(version, error)`` where exactly one of the two is ``None``:
-    * ``(str, None)`` on success — version is **not** persisted here; callers
-      are responsible for saving it.
-    * ``(None, str)`` on failure — error contains a human-readable description.
+    Returns ``(version, version_scheme, error)`` where exactly one of
+    *version* / *error* is ``None``:
+    * ``(str, str, None)`` on success — version is **not** persisted here;
+      callers are responsible for saving it.  *version_scheme* is the scheme
+      string extracted from ``x-checker-data`` in the manifest (may be ``''``
+      when the manifest has no scheme; ``None`` when no manifest was found).
+    * ``(None, None, str)`` on failure.
 
     This is the low-level helper used by both the Celery task and the
     synchronous AJAX view so they share identical logic.
     """
     if not package.git_repo_url:
-        return None, 'No git repository URL configured'
+        return None, None, 'No git repository URL configured'
 
     temp_dir = None
     try:
@@ -4312,7 +4452,7 @@ def _fetch_available_version(package):
         if clone_result.returncode != 0:
             msg = f'git clone failed: {clone_result.stderr.strip()}'
             logger.warning(f"_fetch_available_version: {package.package_id}: {msg}")
-            return None, msg
+            return None, None, msg
 
         # Find manifest file (same search order as the build task)
         manifest_file = None
@@ -4333,21 +4473,22 @@ def _fetch_available_version(package):
             # to git tag detection on the same URL — same logic as upstream_url.
             version, _raw_tag, tag_err = _fetch_latest_upstream_tag(package.git_repo_url)
             if version:
-                return _normalise_version(version), None
+                return _normalise_version(version), None, None
             msg = f'No manifest file found; git tag fallback also failed: {tag_err}'
             logger.warning(f"_fetch_available_version: {package.package_id}: {msg}")
-            return None, msg
+            return None, None, msg
 
         version = _extract_version_from_manifest(package.package_id, manifest_file)
+        version_scheme = _extract_version_scheme_from_manifest(manifest_file)
         if not version:
             msg = 'Could not detect version from manifest'
             logger.info(f"_fetch_available_version: {package.package_id}: {msg}")
-            return None, msg
+            return None, version_scheme, msg
 
-        return version, None
+        return version, version_scheme, None
     except Exception as e:
         logger.exception(f"_fetch_available_version: unexpected error for {package.package_id}: {e}")
-        return None, str(e)
+        return None, None, str(e)
     finally:
         if temp_dir and os.path.exists(temp_dir):
             shutil.rmtree(temp_dir, ignore_errors=True)
@@ -4367,16 +4508,24 @@ def check_available_version_task(package_id):
     except Package.DoesNotExist:
         return None
 
-    version, error = _fetch_available_version(package)
+    version, version_scheme, error = _fetch_available_version(package)
     if not version:
         if error:
             logger.warning(f"check_available_version_task: {package.package_id}: {error}")
+        # Even if version detection failed, persist a newly discovered scheme.
+        if version_scheme is not None and version_scheme != package.version_scheme:
+            package.version_scheme = version_scheme
+            package.save(update_fields=['version_scheme'])
         return None
 
+    update_fields = ['available_version', 'available_version_checked_at']
     package.available_version = version
     package.available_version_checked_at = timezone.now()
-    package.save(update_fields=['available_version', 'available_version_checked_at'])
-    logger.info(f"Available version for {package.package_id}: {version!r}")
+    if version_scheme is not None and version_scheme != package.version_scheme:
+        package.version_scheme = version_scheme
+        update_fields.append('version_scheme')
+    package.save(update_fields=update_fields)
+    logger.info(f"Available version for {package.package_id}: {version!r} (scheme={version_scheme!r})")
     return version
 
 
@@ -4485,6 +4634,7 @@ def check_upstream_version_task(package_id):
     version = None
     release_date = None  # datetime.date or None
     raw_tag = None       # original tag string (used for date fetch)
+    unstable_version = None  # scheme-unstable version, only set when newer than stable
 
     # --- Step 1: custom version script ---
     if package.upstream_version_script.strip():
@@ -4502,7 +4652,13 @@ def check_upstream_version_task(package_id):
 
     # --- Step 2: git tag detection (fallback or primary when no script) ---
     if not version and package.upstream_url:
-        version, raw_tag, error = _fetch_latest_upstream_tag(package.upstream_url)
+        if package.version_scheme:
+            # Scheme-aware: separate stable from scheme-unstable tags.
+            version, raw_tag, unstable_version, error = _fetch_upstream_tags_by_scheme(
+                package.upstream_url, package.version_scheme
+            )
+        else:
+            version, raw_tag, error = _fetch_latest_upstream_tag(package.upstream_url)
         if error:
             logger.warning(
                 f"Upstream tag check failed for {package.package_id}: {error}"
@@ -4512,6 +4668,8 @@ def check_upstream_version_task(package_id):
         return None
 
     version = _normalise_version(version)
+    if unstable_version:
+        unstable_version = _normalise_version(unstable_version)
     now = timezone.now()
 
     # --- Release date ---
@@ -4536,12 +4694,17 @@ def check_upstream_version_task(package_id):
         package.upstream_release_date = release_date
 
     package.upstream_version = version
+    package.upstream_unstable_version = unstable_version or ''
     package.upstream_checked_at = now
     package.save(update_fields=[
-        'upstream_version', 'upstream_checked_at',
+        'upstream_version', 'upstream_unstable_version', 'upstream_checked_at',
         'upstream_release_date', 'upstream_version_first_seen_at',
     ])
-    logger.info(f"Upstream version for {package.package_id}: {version!r} (release_date={package.upstream_release_date})")
+    logger.info(
+        f"Upstream version for {package.package_id}: {version!r}"
+        f" (release_date={package.upstream_release_date}"
+        f", unstable={unstable_version!r})"
+    )
     return version
 
 
