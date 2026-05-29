@@ -699,7 +699,7 @@ class PackageCheckUpstreamView(LoginRequiredMixin, View):
 
         # Step 2: git tag fallback
         if not version and package.upstream_url:
-            version, error = _fetch_latest_upstream_tag(package.upstream_url)
+            version, _raw_tag, error = _fetch_latest_upstream_tag(package.upstream_url)
 
         if not version:
             return JsonResponse({'error': error or 'Could not determine upstream version'}, status=502)
