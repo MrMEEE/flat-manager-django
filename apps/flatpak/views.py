@@ -720,10 +720,30 @@ class PackageCheckUpstreamView(LoginRequiredMixin, View):
         package.upstream_unstable_version = unstable_version or ''
         package.upstream_checked_at = tz.now()
         package.save(update_fields=['upstream_version', 'upstream_unstable_version', 'upstream_checked_at'])
+
+        # Build pre-formatted date strings so the JS can reconstruct the detail view.
+        from django.utils.timesince import timesince as _timesince
+        def _fmt_ago(value):
+            result = _timesince(value)
+            parts = [p.strip() for p in result.split(',')]
+            filtered = [p for p in parts if not any(u in p for u in ('hour', 'minute', 'second'))]
+            return (', '.join(filtered) if filtered else 'less than a day') + ' ago'
+
+        date_label = ''
+        date_ago = ''
+        if package.upstream_release_date:
+            date_label = 'Released ' + package.upstream_release_date.strftime('%B %-d, %Y')
+            date_ago = _fmt_ago(package.upstream_release_date)
+        elif package.upstream_version_first_seen_at:
+            date_label = 'First seen ' + package.upstream_version_first_seen_at.strftime('%B %-d, %Y')
+            date_ago = _fmt_ago(package.upstream_version_first_seen_at)
+
         return JsonResponse({
             'version': version,
             'unstable_version': unstable_version or '',
             'has_update': bool(package.version and version and version != package.version),
+            'date_label': date_label,
+            'date_ago': date_ago,
         })
 
 

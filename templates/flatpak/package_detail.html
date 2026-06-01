@@ -517,6 +517,12 @@
                 if (data.has_update) {
                     html += ' <span class="badge bg-warning text-dark ms-1" title="Newer upstream version available"><i class="bi bi-arrow-up-circle"></i> Update available</span>';
                 }
+                if (data.unstable_version) {
+                    html += ` <span class="text-muted ms-2" title="A newer unstable release exists upstream">(Unstable Release ${data.unstable_version} exists)</span>`;
+                }
+                if (data.date_label) {
+                    html += `<br><small class="text-muted">${data.date_label}<br><span class="text-muted">${data.date_ago}</span></small>`;
+                }
                 valueEl.innerHTML = html;
             }
             if (checkedEl) { checkedEl.textContent = 'checked just now'; }
