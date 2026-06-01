@@ -1068,10 +1068,10 @@ def check_rpm_upstream_version_task(package_id: int):
     error = None
 
     if package.upstream_version_script.strip():
-        version, error = _run_version_script(package.upstream_version_script, package.name)
+        version, _release_date, error = _run_version_script(package.upstream_version_script, package.name)
 
     if not version and package.upstream_url:
-        version, error = _fetch_latest_upstream_tag(package.upstream_url)
+        version, _raw_tag, error = _fetch_latest_upstream_tag(package.upstream_url)
 
     if not version:
         logger.warning("rpm upstream check: no version for %s: %s", package.name, error)
