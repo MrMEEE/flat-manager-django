@@ -223,6 +223,27 @@ class RpmPackageDeleteView(BuildAdminRequiredMixin, DeleteView):
         return response
 
 
+def _next_build_number(package, distribution):
+    """Return the next build_number for the given package+distribution combo.
+
+    Resets to 1 when the version in the most recent build differs from the
+    package's current available_version (i.e. the version has changed since
+    the last build).  Falls back to incrementing when either version is not
+    yet known.
+    """
+    last = (
+        RpmBuild.objects
+        .filter(package=package, distribution=distribution)
+        .order_by('-build_number')
+        .first()
+    )
+    if last is None:
+        return 1
+    if last.version and package.available_version and last.version != package.available_version:
+        return 1
+    return last.build_number + 1
+
+
 class RpmPackageBuildView(BuildAdminRequiredMixin, View):
     """POST — trigger builds immediately using each distribution's default-enabled repos."""
 
@@ -232,13 +253,7 @@ class RpmPackageBuildView(BuildAdminRequiredMixin, View):
 
         queued = 0
         for dist in package.distributions.filter(is_active=True):
-            last = (
-                RpmBuild.objects
-                .filter(package=package, distribution=dist)
-                .order_by('-build_number')
-                .first()
-            )
-            next_number = (last.build_number + 1) if last else 1
+            next_number = _next_build_number(package, dist)
             build = RpmBuild.objects.create(
                 package=package,
                 distribution=dist,
@@ -374,16 +389,10 @@ class RpmBuildRetryView(BuildAdminRequiredMixin, View):
         old_build = get_object_or_404(RpmBuild, pk=pk)
         from apps.rpm.tasks import rpm_build_task
 
-        last = (
-            RpmBuild.objects
-            .filter(package=old_build.package, distribution=old_build.distribution)
-            .order_by('-build_number')
-            .first()
-        )
         new_build = RpmBuild.objects.create(
             package=old_build.package,
             distribution=old_build.distribution,
-            build_number=(last.build_number + 1) if last else 1,
+            build_number=_next_build_number(old_build.package, old_build.distribution),
             status='pending',
         )
         # Copy the repo selection from the original build
