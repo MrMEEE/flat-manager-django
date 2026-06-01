@@ -699,7 +699,7 @@ class PackageCheckUpstreamView(LoginRequiredMixin, View):
 
         # Step 1: custom version script
         if package.upstream_version_script.strip():
-            version, error = _run_version_script(package.upstream_version_script, package.package_id)
+            version, _release_date, error = _run_version_script(package.upstream_version_script, package.package_id)
 
         # Step 2: git tag fallback (scheme-aware when configured)
         if not version and package.upstream_url:
