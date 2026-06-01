@@ -173,9 +173,12 @@ CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 CELERY_OPS_WORKER_CONCURRENCY = int(os.environ.get('CELERY_OPS_WORKER_CONCURRENCY', '4'))
 
 # Channels Configuration
+# RedisPubSubChannelLayer uses Redis native SUBSCRIBE/PUBLISH (event-driven)
+# instead of polling with BZPOPMIN every 5 s, which avoids spurious timeout errors.
+# Compatible with our consumers since they only use group_add/group_send/group_discard.
 CHANNEL_LAYERS = {
     'default': {
-        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'BACKEND': 'channels_redis.pubsub.RedisPubSubChannelLayer',
         'CONFIG': {
             "hosts": [os.environ.get('REDIS_URL', 'redis://localhost:6379/1')],
         },
