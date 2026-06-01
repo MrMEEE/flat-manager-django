@@ -1340,6 +1340,37 @@ class BuildUnpublishView(LoginRequiredMixin, View):
         return JsonResponse({'status': 'ok', 'message': f'Build #{build.build_number} unpublished'})
 
 
+class BuildRecommitView(BuildAdminRequiredMixin, View):
+    """Reset a failed/stuck build back to 'built' and re-queue the commit task."""
+
+    def post(self, request, pk):
+        from apps.flatpak.tasks import commit_package_task
+
+        build = get_object_or_404(Build, pk=pk)
+
+        if not build.package:
+            return JsonResponse({'error': 'Re-commit is only supported for package builds'}, status=400)
+
+        if build.status not in ('failed', 'built', 'committed'):
+            return JsonResponse(
+                {'error': f'Cannot re-commit a build with status: {build.status}'},
+                status=400,
+            )
+
+        package = build.package
+
+        # Reset the build and package back to 'built' so commit_package_task accepts it
+        build.status = 'built'
+        build.save(update_fields=['status'])
+
+        package.status = 'built'
+        package.save(update_fields=['status'])
+
+        commit_package_task.delay(package.id)
+
+        return JsonResponse({'status': 'ok', 'message': f'Re-commit queued for build #{build.build_number}'})
+
+
 class BuildDeleteView(LoginRequiredMixin, View):
     """Permanently delete a build and remove its OSTree refs from all repos."""
 
@@ -2004,12 +2035,20 @@ class PackagePublishView(LoginRequiredMixin, View):
         
         package = get_object_or_404(Package, pk=pk)
         
-        # Only allow publish for committed packages
+        # Only allow publish for committed packages.
+        # If package.status is 'failed' but the latest build committed successfully
+        # (e.g. a Celery timeout fired after the OSTree commit completed), sync the
+        # package status from the build record so the user isn't stuck.
         if package.status != 'committed':
-            return JsonResponse(
-                {'error': f'Package must be committed before publishing (current: {package.status})'}, 
-                status=400
-            )
+            latest_build = package.builds.order_by('-build_number').first()
+            if latest_build and latest_build.status == 'committed':
+                package.status = 'committed'
+                package.save(update_fields=['status'])
+            else:
+                return JsonResponse(
+                    {'error': f'Package must be committed before publishing (current: {package.status})'}, 
+                    status=400
+                )
         
         # Queue publish task
         publish_package_task.delay(package.id)

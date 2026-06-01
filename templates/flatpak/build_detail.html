@@ -51,6 +51,15 @@
         <button type="button" class="btn btn-outline-success" id="btn-publish" onclick="publishBuild()">
             <i class="bi bi-cloud-upload"></i> Publish
         </button>
+        {% if build.package %}
+        <button type="button" class="btn btn-outline-warning" id="btn-recommit" onclick="recommitBuild()">
+            <i class="bi bi-arrow-clockwise"></i> Re-commit
+        </button>
+        {% endif %}
+        {% elif build.status == 'failed' and build.package %}
+        <button type="button" class="btn btn-outline-warning" id="btn-recommit" onclick="recommitBuild()">
+            <i class="bi bi-arrow-clockwise"></i> Re-commit
+        </button>
         {% endif %}
         {% if build.status in 'building,committing,publishing' %}
         <button type="button" class="btn btn-outline-danger" id="btn-cancel" onclick="cancelBuildRecord({{ build.pk }})">
@@ -296,8 +305,8 @@
     function updateActionButtons(status) {
         const container = document.getElementById('action-buttons');
         if (!container) return;
-        // Remove only commit/publish buttons, keep Back button
-        container.querySelectorAll('#btn-commit, #btn-publish').forEach(b => b.remove());
+        // Remove only commit/publish/recommit buttons, keep Back button
+        container.querySelectorAll('#btn-commit, #btn-publish, #btn-recommit').forEach(b => b.remove());
         const backBtn = container.querySelector('a.btn-outline-secondary');
         if (status === 'built') {
             const btn = document.createElement('button');
@@ -307,11 +316,26 @@
             btn.onclick = commitBuild;
             container.insertBefore(btn, backBtn);
         } else if (status === 'committed') {
+            const pub = document.createElement('button');
+            pub.type = 'button'; pub.id = 'btn-publish';
+            pub.className = 'btn btn-outline-success';
+            pub.innerHTML = '<i class="bi bi-cloud-upload"></i> Publish';
+            pub.onclick = publishBuild;
+            container.insertBefore(pub, backBtn);
+            if (packageId) {
+                const rec = document.createElement('button');
+                rec.type = 'button'; rec.id = 'btn-recommit';
+                rec.className = 'btn btn-outline-warning';
+                rec.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Re-commit';
+                rec.onclick = recommitBuild;
+                container.insertBefore(rec, backBtn);
+            }
+        } else if (status === 'failed' && packageId) {
             const btn = document.createElement('button');
-            btn.type = 'button'; btn.id = 'btn-publish';
-            btn.className = 'btn btn-outline-success';
-            btn.innerHTML = '<i class="bi bi-cloud-upload"></i> Publish';
-            btn.onclick = publishBuild;
+            btn.type = 'button'; btn.id = 'btn-recommit';
+            btn.className = 'btn btn-outline-warning';
+            btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Re-commit';
+            btn.onclick = recommitBuild;
             container.insertBefore(btn, backBtn);
         }
     }
@@ -379,6 +403,27 @@
                     showError('Publish Failed', d.error || r.statusText || 'Unknown error');
                 }
             } catch (e) { showError('Publish Error', e.message); }
+        });
+    }
+
+    async function recommitBuild() {
+        showConfirm('Re-commit Build', 'Reset this build to "built" and re-run the commit step?', 'Re-commit', 'btn-warning', async () => {
+            try {
+                const r = await fetch(`/builds/${buildId}/recommit/`, {
+                    method: 'POST',
+                    headers: { 'X-CSRFToken': '{{ csrf_token }}', 'Content-Type': 'application/json' },
+                    credentials: 'same-origin'
+                });
+                if (r.ok) {
+                    buildStatus = 'committing';
+                    updateStatusBadge('committing');
+                    updateActionButtons('committing');
+                    startPolling();
+                } else {
+                    const d = await safeJson(r);
+                    showError('Re-commit Failed', d.error || r.statusText || 'Unknown error');
+                }
+            } catch (e) { showError('Re-commit Error', e.message); }
         });
     }
 
