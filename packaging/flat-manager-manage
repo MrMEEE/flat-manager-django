@@ -58,16 +58,6 @@ case "${1:-}" in
                 exit 0
                 ;;
         esac
-        echo ""
-        printf "Proceed with update? [y/N] "
-        read -r CONFIRM
-        case "${CONFIRM}" in
-            [yY]|[yY][eE][sS]) ;;
-            *)
-                echo "Update cancelled."
-                exit 0
-                ;;
-        esac
         URLS=$(printf '%s' "${RELEASE_JSON}" | \
             python3 -c "import sys,json; [print(a['browser_download_url']) for a in json.load(sys.stdin)['assets']]" \
             | grep "\.el${OS_VER}\." | grep '\.rpm$' \
