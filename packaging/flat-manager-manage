@@ -26,10 +26,8 @@ case "${1:-}" in
         }
         LATEST_TAG=$(printf '%s' "${RELEASE_JSON}" | \
             python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])" 2>/dev/null)
-        # Strip leading 'v' inside python so the result is always a bare semver,
-        # regardless of the sh dialect or any whitespace quirks.
-        LATEST_VER=$(printf '%s' "${LATEST_TAG}" | \
-            python3 -c "import sys; t=sys.stdin.read().strip(); print(t[1:] if t.startswith('v') else t)")
+        # Strip one or more leading 'v' characters (tags were historically 'vv0.x.x')
+        LATEST_VER=$(echo "${LATEST_TAG}" | sed 's/^v*//')
         if [ -z "${LATEST_VER}" ]; then
             echo "ERROR: could not parse release tag from GitHub response." >&2
             exit 1
