@@ -1340,7 +1340,7 @@ class BuildUnpublishView(LoginRequiredMixin, View):
         return JsonResponse({'status': 'ok', 'message': f'Build #{build.build_number} unpublished'})
 
 
-class BuildRecommitView(BuildAdminRequiredMixin, View):
+class BuildRecommitView(LoginRequiredMixin, View):
     """Reset a failed/stuck build back to 'built' and re-queue the commit task."""
 
     def post(self, request, pk):
