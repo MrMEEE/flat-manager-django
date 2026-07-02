@@ -24,6 +24,7 @@ urlpatterns = [
     path('rpms/builds/<int:pk>/retry/', views.RpmBuildRetryView.as_view(), name='build_retry'),
     path('rpms/builds/<int:pk>/cancel/', views.RpmBuildCancelView.as_view(), name='build_cancel'),
     path('rpms/builds/<int:pk>/delete/', views.RpmBuildDeleteView.as_view(), name='build_delete'),
+    path('rpms/builds/<int:pk>/download/<str:filename>', views.RpmBuildRpmDownloadView.as_view(), name='build_rpm_download'),
 
     # Spec file scanner
     path('rpms/scan-spec-files/', views.RpmScanSpecFilesView.as_view(), name='scan_spec_files'),

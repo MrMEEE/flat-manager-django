@@ -13,7 +13,7 @@ from apps.users.mixins import (
 )
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView
 from django.views import View
-from django.http import JsonResponse
+from django.http import FileResponse, Http404, JsonResponse
 from django.urls import reverse_lazy, reverse
 from django.contrib import messages
 from django.shortcuts import get_object_or_404, redirect, render
@@ -431,6 +431,24 @@ class RpmBuildDeleteView(BuildAdminRequiredMixin, View):
         build.delete()
         messages.success(request, "Build deleted.")
         return redirect('rpm:package_detail', pk=package_pk)
+
+
+class RpmBuildRpmDownloadView(LoginRequiredMixin, View):
+    """GET — serve a built RPM file as a download attachment."""
+
+    def get(self, request, pk, filename):
+        build = get_object_or_404(RpmBuild, pk=pk)
+        # Validate: filename must be one of the recorded outputs (prevents path traversal)
+        if filename not in (build.rpm_files or []):
+            raise Http404("RPM file not found.")
+        filepath = os.path.join(build.distribution.repo_path, filename)
+        if not os.path.isfile(filepath):
+            raise Http404("RPM file no longer exists on disk.")
+        return FileResponse(
+            open(filepath, 'rb'),
+            as_attachment=True,
+            filename=filename,
+        )
 
 
 # ---------------------------------------------------------------------------

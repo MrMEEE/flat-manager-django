@@ -142,7 +142,13 @@
             <div class="card-body">
                 <ul class="list-unstyled mb-0">
                     {% for rpm in build.rpm_files %}
-                    <li><code class="small">{{ rpm }}</code></li>
+                    <li class="d-flex align-items-center gap-2 mb-1">
+                        <code class="small flex-grow-1">{{ rpm }}</code>
+                        <a href="{% url 'rpm:build_rpm_download' build.pk rpm %}"
+                           title="Download {{ rpm }}" class="text-secondary">
+                            <i class="bi bi-download"></i>
+                        </a>
+                    </li>
                     {% endfor %}
                 </ul>
             </div>
