@@ -1,8 +1,8 @@
 [Unit]
 Description=Flat Manager — all services
 Documentation=https://github.com/MrMEEE/flat-manager-django
-Wants=flat-manager-web.service flat-manager-celery.service flat-manager-celery-beat.service
-After=flat-manager-web.service flat-manager-celery.service flat-manager-celery-beat.service
+Wants=flat-manager-web.service flat-manager-celery.service flat-manager-celery-beat.service flat-manager-celery-ops.service
+After=flat-manager-web.service flat-manager-celery.service flat-manager-celery-beat.service flat-manager-celery-ops.service
 
 [Install]
 WantedBy=multi-user.target
