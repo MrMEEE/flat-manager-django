@@ -1863,6 +1863,173 @@ def _get_flatpak_remote_commit(remote_name, ref):
     return commit
 
 
+def _dependency_type_from_ref(full_ref):
+    """Classify a dependency ref for UI/status display."""
+    parts = full_ref.split('/')
+    app_id = parts[1] if len(parts) >= 2 else parts[0]
+    if '.Sdk.Extension.' in app_id:
+        return 'Extension'
+    if app_id.endswith('.Sdk') or '.Sdk.' in app_id:
+        return 'SDK'
+    if app_id.endswith('.BaseApp') or '.BaseApp.' in app_id:
+        return 'BaseApp'
+    return 'Runtime'
+
+
+def _normalise_runtime_ref(value, fallback_arch='x86_64', fallback_branch='stable'):
+    """Normalise metadata dependency value to runtime/<id>/<arch>/<branch>."""
+    raw = (value or '').strip()
+    if not raw:
+        return ''
+
+    if raw.startswith('runtime/') or raw.startswith('app/'):
+        parts = raw.split('/')
+        if len(parts) >= 4:
+            return f"runtime/{parts[1]}/{parts[2]}/{parts[3]}"
+        return ''
+
+    if '//' in raw:
+        app_id, branch = raw.split('//', 1)
+        branch = branch or fallback_branch
+        return f"runtime/{app_id}/{fallback_arch}/{branch}"
+
+    parts = raw.split('/')
+    if len(parts) >= 3:
+        return f"runtime/{parts[0]}/{parts[1]}/{parts[2]}"
+    if len(parts) == 2:
+        return f"runtime/{parts[0]}/{fallback_arch}/{parts[1]}"
+    return ''
+
+
+def _extract_dependency_refs_from_metadata(metadata, current_ref):
+    """Parse flatpak metadata output and return normalised dependency refs."""
+    refs = []
+    kv = {}
+    section = ''
+
+    for line in (metadata or '').splitlines():
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        if line.startswith('[') and line.endswith(']'):
+            section = line[1:-1].strip().lower()
+            continue
+        if '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        kv[f"{section}.{key.strip().lower()}"] = value.strip()
+
+    ref_parts = (current_ref or '').split('/')
+    ref_arch = ref_parts[2] if len(ref_parts) >= 4 else 'x86_64'
+    ref_branch = ref_parts[3] if len(ref_parts) >= 4 else 'stable'
+
+    runtime_val = kv.get('application.runtime', '')
+    sdk_val = kv.get('application.sdk', '')
+    base_val = kv.get('application.base', '')
+    sdk_exts_val = kv.get('application.sdk-extensions', '')
+
+    runtime_full = _normalise_runtime_ref(runtime_val, fallback_arch=ref_arch, fallback_branch=ref_branch)
+    if runtime_full:
+        refs.append(runtime_full)
+
+    sdk_full = _normalise_runtime_ref(sdk_val, fallback_arch=ref_arch, fallback_branch=ref_branch)
+    if sdk_full:
+        refs.append(sdk_full)
+
+    base_full = _normalise_runtime_ref(base_val, fallback_arch=ref_arch, fallback_branch=ref_branch)
+    if base_full:
+        refs.append(base_full)
+
+    sdk_branch = ''
+    if sdk_full:
+        sdk_parts = sdk_full.split('/')
+        if len(sdk_parts) >= 4:
+            sdk_branch = sdk_parts[3]
+    if not sdk_branch:
+        sdk_branch = ref_branch
+
+    if sdk_exts_val:
+        for ext_name in [e.strip() for e in sdk_exts_val.split(';') if e.strip()]:
+            refs.append(f"runtime/{ext_name}/{ref_arch}/{sdk_branch}")
+
+    # De-duplicate while preserving order
+    unique_refs = []
+    seen = set()
+    for ref in refs:
+        if not ref or ref in seen:
+            continue
+        seen.add(ref)
+        unique_refs.append(ref)
+    return unique_refs
+
+
+def _read_remote_metadata(remote_name, ref):
+    """Read metadata for a ref from remote; returns (metadata_text, resolved_ref)."""
+    _commit, resolved_ref = _resolve_remote_ref(remote_name, ref)
+    candidates = [resolved_ref]
+    if resolved_ref != ref:
+        candidates.append(ref)
+
+    for candidate in candidates:
+        for scope_flag in ('', '--system', '--user'):
+            cmd = ['flatpak', 'remote-info']
+            if scope_flag:
+                cmd.append(scope_flag)
+            cmd.extend(['--show-metadata', remote_name, candidate])
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            except Exception:
+                continue
+            if result.returncode == 0 and (result.stdout or '').strip():
+                return result.stdout, candidate
+    return '', resolved_ref or ref
+
+
+def _collect_external_ref_dependencies(remote_name, root_ref, max_nodes=200):
+    """Collect direct and transitive dependency refs for an external ref."""
+    queue = [root_ref]
+    visited = set()
+    direct = []
+    all_refs = []
+    graph = {}
+    errors = []
+
+    while queue and len(visited) < max_nodes:
+        current = queue.pop(0)
+        if current in visited:
+            continue
+        visited.add(current)
+
+        metadata, resolved_current = _read_remote_metadata(remote_name, current)
+        if not metadata:
+            errors.append(f"Could not read metadata for {current}")
+            graph[resolved_current] = []
+            continue
+
+        deps = _extract_dependency_refs_from_metadata(metadata, resolved_current)
+        graph[resolved_current] = deps
+
+        if current == root_ref:
+            direct = list(deps)
+
+        for dep in deps:
+            if dep not in all_refs:
+                all_refs.append(dep)
+            if dep not in visited and dep not in queue:
+                queue.append(dep)
+
+    if queue:
+        errors.append(f"Dependency traversal stopped after {max_nodes} refs")
+
+    return {
+        'direct': direct,
+        'all': all_refs,
+        'graph': graph,
+        'errors': errors,
+        'types': {ref: _dependency_type_from_ref(ref) for ref in all_refs},
+    }
+
+
 @shared_task
 def pull_external_ref_task(external_ref_id):
     """
@@ -1948,6 +2115,20 @@ def pull_external_ref_task(external_ref_id):
         else:
             _log_external(ext, 'warning',
                           f"Could not determine upstream commit for {ref} via flatpak remote-info")
+
+        # Build a dependency snapshot (direct + transitive refs) from upstream
+        # metadata so External details and Missing Dependencies can include
+        # imported refs as first-class dependency sources.
+        dep_snapshot = _collect_external_ref_dependencies(remote_name, ref)
+        ext.dependencies = dep_snapshot
+        _log_external(
+            ext,
+            'info',
+            f"Resolved dependencies: {len(dep_snapshot.get('all', []))} transitive "
+            f"({len(dep_snapshot.get('direct', []))} direct)",
+        )
+        for dep_err in dep_snapshot.get('errors', [])[:10]:
+            _log_external(ext, 'warning', dep_err)
 
         # Pull the exact commit from the remote. We create/update the plain ref
         # explicitly afterwards instead of relying on --mirror ref semantics.

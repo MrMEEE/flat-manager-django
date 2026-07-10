@@ -1,0 +1,266 @@
+{% extends 'base.html' %}
+
+{% block title %}Add Flathub App - Flat Manager{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-shop"></i> Add Flathub App</h2>
+    <a href="{% url 'flatpak:external_list' %}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back to Externals
+    </a>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-md-5">
+                <label for="searchInput" class="form-label fw-semibold">Search Flathub</label>
+                <input id="searchInput" class="form-control" type="text" placeholder="Type app name or ID (e.g. Firefox, org.mozilla.firefox)">
+                <div class="form-text">Results update automatically as you type.</div>
+            </div>
+            <div class="col-md-4">
+                <label for="repositorySelect" class="form-label fw-semibold">Destination Repository</label>
+                <select id="repositorySelect" class="form-select">
+                    <option value="">Select repository</option>
+                    {% for repo in repositories %}
+                    <option value="{{ repo.pk }}" {% if default_repo and default_repo.pk == repo.pk %}selected{% endif %}>{{ repo.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label for="remoteSelect" class="form-label fw-semibold">Remote</label>
+                <select id="remoteSelect" class="form-select">
+                    <option value="">Select remote</option>
+                    {% for remote in remotes %}
+                    <option value="{{ remote.pk }}" {% if default_remote and default_remote.pk == remote.pk %}selected{% endif %}>{{ remote.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="statusArea" class="mb-3"></div>
+
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-grid"></i> Flathub Results</h5>
+        <span id="resultCount" class="badge bg-secondary">0</span>
+    </div>
+    <div class="card-body p-0">
+        <div id="resultsEmpty" class="p-4 text-muted text-center">
+            Start typing in the search box to browse Flathub apps.
+        </div>
+        <div class="table-responsive" id="resultsWrap" style="display:none;">
+            <table class="table table-hover mb-0 align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width:64px"></th>
+                        <th>App</th>
+                        <th>Type</th>
+                        <th>Ref</th>
+                        <th class="text-end">Action</th>
+                    </tr>
+                </thead>
+                <tbody id="resultsBody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const searchUrl = "{% url 'flatpak:flathub_app_search' %}";
+    const importUrl = "{% url 'flatpak:external_bulk_import' %}";
+    const csrfToken = "{{ csrf_token }}";
+
+    const searchInput = document.getElementById('searchInput');
+    const repositorySelect = document.getElementById('repositorySelect');
+    const remoteSelect = document.getElementById('remoteSelect');
+    const resultCount = document.getElementById('resultCount');
+    const resultsBody = document.getElementById('resultsBody');
+    const resultsWrap = document.getElementById('resultsWrap');
+    const resultsEmpty = document.getElementById('resultsEmpty');
+    const statusArea = document.getElementById('statusArea');
+
+    let debounceTimer = null;
+    let lastQuery = '';
+
+    function esc(text) {
+        return (text || '').replace(/[&<>\"']/g, function (m) {
+            return ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[m];
+        });
+    }
+
+    function setStatus(kind, msg) {
+        if (!msg) {
+            statusArea.innerHTML = '';
+            return;
+        }
+        const cls = kind === 'error' ? 'danger' : (kind === 'ok' ? 'success' : 'secondary');
+        statusArea.innerHTML = '<div class="alert alert-' + cls + ' mb-0">' + esc(msg) + '</div>';
+    }
+
+    function renderResults(items) {
+        resultCount.textContent = String(items.length);
+        if (!items.length) {
+            resultsWrap.style.display = 'none';
+            resultsEmpty.style.display = '';
+            resultsEmpty.textContent = 'No matching apps found.';
+            return;
+        }
+
+        const repoId = repositorySelect.value;
+        const remoteId = remoteSelect.value;
+        const canAdd = !!repoId && !!remoteId;
+
+        const rows = items.map(function (item, idx) {
+            const icon = item.icon ? '<img src="' + esc(item.icon) + '" alt="" style="width:40px;height:40px;border-radius:8px;object-fit:cover;">' : '<i class="bi bi-box-seam fs-4 text-muted"></i>';
+            const verified = item.verified ? ' <span class="badge bg-success">Verified</span>' : '';
+            const type = esc(item.type || 'unknown');
+            const addDisabled = canAdd ? '' : 'disabled';
+            const title = canAdd ? 'Add this app as External ref' : 'Select repository and remote first';
+            const flathubUrl = 'https://flathub.org/apps/' + encodeURIComponent(item.app_id);
+            return '' +
+                '<tr>' +
+                '  <td>' + icon + '</td>' +
+                '  <td><div class="fw-semibold">' + esc(item.name) + verified + '</div><div class="small text-muted">' + esc(item.developer_name || '') + '</div><div><code class="small">' + esc(item.app_id) + '</code></div><div class="small text-muted">' + esc(item.summary || '') + '</div></td>' +
+                '  <td><span class="badge bg-light text-dark border">' + type + '</span></td>' +
+                '  <td><code class="small">' + esc(item.ref) + '</code></td>' +
+                '  <td class="text-end">' +
+                '    <a class="btn btn-sm btn-outline-secondary me-1" href="' + flathubUrl + '" target="_blank" rel="noopener noreferrer" title="Open app page on Flathub">' +
+                '      <i class="bi bi-box-arrow-up-right"></i> Flathub Page' +
+                '    </a>' +
+                '    <button class="btn btn-sm btn-primary add-external-btn" data-index="' + idx + '" title="' + esc(title) + '" ' + addDisabled + '><i class="bi bi-plus-circle"></i> Add as External</button>' +
+                '  </td>' +
+                '</tr>';
+        }).join('');
+
+        resultsBody.innerHTML = rows;
+        resultsWrap.style.display = '';
+        resultsEmpty.style.display = 'none';
+
+        const buttons = resultsBody.querySelectorAll('.add-external-btn');
+        buttons.forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                const item = items[Number(btn.dataset.index)];
+                addAsExternal(item, btn);
+            });
+        });
+    }
+
+    function addAsExternal(item, button) {
+        const repositoryId = repositorySelect.value;
+        const remoteId = remoteSelect.value;
+        if (!repositoryId || !remoteId) {
+            setStatus('error', 'Please select repository and remote first.');
+            return;
+        }
+
+        button.disabled = true;
+        const oldHtml = button.innerHTML;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Adding';
+
+        fetch(importUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken,
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                repository_id: Number(repositoryId),
+                remote_id: Number(remoteId),
+                refs: [item.ref],
+            }),
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (data.error) {
+                throw new Error(data.error);
+            }
+            if (data.created > 0) {
+                setStatus('ok', item.name + ' queued for pull as External ref.');
+                button.classList.remove('btn-primary');
+                button.classList.add('btn-success');
+                button.innerHTML = '<i class="bi bi-check-circle"></i> Added';
+            } else {
+                setStatus('info', item.name + ' is already tracked as External ref.');
+                button.classList.remove('btn-primary');
+                button.classList.add('btn-outline-secondary');
+                button.innerHTML = '<i class="bi bi-check2"></i> Already exists';
+            }
+            button.disabled = true;
+        })
+        .catch(function (err) {
+            setStatus('error', 'Could not add app: ' + err.message);
+            button.disabled = false;
+            button.innerHTML = oldHtml;
+        });
+    }
+
+    function doSearch() {
+        const query = searchInput.value.trim();
+        if (query.length < 2) {
+            renderResults([]);
+            resultCount.textContent = '0';
+            resultsWrap.style.display = 'none';
+            resultsEmpty.style.display = '';
+            resultsEmpty.textContent = 'Type at least 2 characters to search.';
+            setStatus('', '');
+            return;
+        }
+        if (query === lastQuery) {
+            return;
+        }
+        lastQuery = query;
+
+        setStatus('info', 'Searching Flathub...');
+
+        fetch(searchUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken,
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({ query: query }),
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (data.error) {
+                throw new Error(data.error);
+            }
+            renderResults(data.results || []);
+            setStatus('', '');
+        })
+        .catch(function (err) {
+            renderResults([]);
+            setStatus('error', err.message || 'Search failed');
+        });
+    }
+
+    searchInput.addEventListener('input', function () {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(doSearch, 250);
+    });
+
+    repositorySelect.addEventListener('change', function () {
+        const buttons = resultsBody.querySelectorAll('.add-external-btn');
+        buttons.forEach(function (btn) {
+            btn.disabled = !(repositorySelect.value && remoteSelect.value);
+        });
+    });
+
+    remoteSelect.addEventListener('change', function () {
+        const buttons = resultsBody.querySelectorAll('.add-external-btn');
+        buttons.forEach(function (btn) {
+            btn.disabled = !(repositorySelect.value && remoteSelect.value);
+        });
+    });
+})();
+</script>
+{% endblock %}

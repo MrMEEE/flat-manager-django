@@ -1,6 +1,9 @@
 import os
 import subprocess
 import logging
+import json
+from urllib import request as urllib_request
+from urllib import error as urllib_error
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth.decorators import login_required
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView
@@ -10,7 +13,8 @@ from django.urls import reverse_lazy, reverse
 from django.contrib import messages
 from django.shortcuts import render, redirect, get_object_or_404
 from django.conf import settings
-from .models import GPGKey, Repository, RepositorySubset, Package, Build, Promotion, BuildStreamSource, Client, ExternalRef, ExternalRefVersion, ExternalRefPromotion, Organisation
+from apps.users.mixins import BuildAdminRequiredMixin
+from .models import GPGKey, Repository, RepositorySubset, Package, Build, Promotion, BuildStreamSource, Client, ExternalRef, ExternalRefVersion, ExternalRefPromotion, Organisation, FlatpakRemote
 from .forms import GPGKeyGenerateForm, GPGKeyImportForm, GPGKeyRenewForm
 from .utils.gpg import generate_gpg_key, import_gpg_key, renew_gpg_key
 from .utils.ostree import init_ostree_repo, sign_repo_summary, delete_ostree_repo, temp_gpg_homedir, update_repo_metadata
@@ -1340,7 +1344,7 @@ class BuildUnpublishView(LoginRequiredMixin, View):
         return JsonResponse({'status': 'ok', 'message': f'Build #{build.build_number} unpublished'})
 
 
-class BuildRecommitView(LoginRequiredMixin, View):
+class BuildRecommitView(BuildAdminRequiredMixin, View):
     """Reset a failed/stuck build back to 'built' and re-queue the commit task."""
 
     def post(self, request, pk):
@@ -2502,7 +2506,7 @@ def dependencies_list(request):
     # For each known dep, check managed status against flat-manager DB
     all_bst = list(BuildStreamSource.objects.only('pk', 'name', 'produced_refs'))
     all_pkg = list(Package.objects.only('pk', 'package_id', 'package_name'))
-    all_ext = list(ExternalRef.objects.only('pk', 'ref', 'display_name', 'status'))
+    all_ext = list(ExternalRef.objects.only('pk', 'ref', 'display_name', 'status', 'dependencies'))
 
     # ExternalRef lookup by tail (name/arch/branch, stripping leading type prefix)
     ext_by_tail = {}
@@ -2545,7 +2549,52 @@ def dependencies_list(request):
     # Missing Dependencies: deps required by built packages but not yet  #
     # tracked as an ExternalRef.                                          #
     # ------------------------------------------------------------------ #
+    def _dep_type_from_full_ref(full_ref):
+        parts = full_ref.split('/')
+        app_id = parts[1] if len(parts) >= 2 else parts[0]
+        if '.Sdk.Extension.' in app_id:
+            return 'Extension'
+        if app_id.endswith('.Sdk') or '.Sdk.' in app_id:
+            return 'SDK'
+        if app_id.endswith('.BaseApp') or '.BaseApp.' in app_id:
+            return 'BaseApp'
+        return 'Runtime'
+
     _missing = {}  # key: tail (name/arch/branch)
+
+    def _register_missing_dependency(_full_ref, _dtype, required_by_pkg=None, required_by_external=None):
+        _tail = _ref_tail(_full_ref)
+        if _tail in ext_by_tail:
+            return
+        if _tail not in _missing:
+            _parts = _full_ref.split('/')
+            _app_id = _parts[1] if len(_parts) >= 2 else (_parts[0] if _parts else _full_ref)
+            _branch = _parts[3] if len(_parts) >= 4 else (_parts[-1] if _parts else '')
+            _missing[_tail] = {
+                'full_ref': _full_ref,
+                'app_id': _app_id,
+                'type': _dtype,
+                'branch': _branch,
+                'ostree_ref': _full_ref if _full_ref.startswith(('runtime/', 'app/')) else f"runtime/{_full_ref}",
+                'required_by': [],
+                'required_by_external': [],
+                'add_external_url': (
+                    external_create_url + '?' + urlencode({
+                        'ref': _full_ref if _full_ref.startswith(('runtime/', 'app/')) else f"runtime/{_full_ref}"
+                    })
+                ),
+            }
+
+        if required_by_pkg is not None:
+            _rb = _missing[_tail]['required_by']
+            if not any(_r['pk'] == required_by_pkg['pk'] for _r in _rb):
+                _rb.append(required_by_pkg)
+
+        if required_by_external is not None:
+            _re = _missing[_tail]['required_by_external']
+            if not any(_r['pk'] == required_by_external['pk'] for _r in _re):
+                _re.append(required_by_external)
+
     for _pkg in Package.objects.only('pk', 'package_id', 'package_name', 'dependencies'):
         _deps = _pkg.dependencies
         if not _deps:
@@ -2560,25 +2609,24 @@ def dependencies_list(request):
             if _f:
                 _items.append((_f, 'Extension'))
         for _full_ref, _dtype in _items:
-            _tail = _ref_tail(_full_ref)
-            if _tail in ext_by_tail:
-                continue  # already tracked as ExternalRef
-            if _tail not in _missing:
-                _parts = _full_ref.split('/')
-                _missing[_tail] = {
-                    'full_ref': _full_ref,
-                    'app_id': _parts[0] if _parts else _full_ref,
-                    'type': _dtype,
-                    'branch': _parts[-1] if len(_parts) >= 1 else '',
-                    'ostree_ref': f"runtime/{_full_ref}",
-                    'required_by': [],
-                    'add_external_url': (
-                        external_create_url + '?' + urlencode({'ref': f"runtime/{_full_ref}"})
-                    ),
-                }
-            _rb = _missing[_tail]['required_by']
-            if not any(_r['pk'] == _pkg.pk for _r in _rb):
-                _rb.append({'pk': _pkg.pk, 'name': _pkg.package_name or _pkg.package_id})
+            _register_missing_dependency(
+                _full_ref,
+                _dtype,
+                required_by_pkg={'pk': _pkg.pk, 'name': _pkg.package_name or _pkg.package_id},
+            )
+
+    # Include dependency snapshots from imported externals as sources.
+    for _ext in all_ext:
+        _dep_data = _ext.dependencies or {}
+        for _full_ref in (_dep_data.get('all') or []):
+            _register_missing_dependency(
+                _full_ref,
+                _dep_type_from_full_ref(_full_ref),
+                required_by_external={
+                    'pk': _ext.pk,
+                    'name': _ext.display_name or _ext.ref,
+                },
+            )
     missing_deps = sorted(_missing.values(), key=lambda d: (d['type'], d['app_id']))
 
     # ------------------------------------------------------------------ #
@@ -2771,6 +2819,86 @@ class ExternalRefListView(LoginRequiredMixin, ListView):
         return ctx
 
 
+class FlathubAppCatalogView(LoginRequiredMixin, View):
+    """Searchable Flathub app catalog page for quick ExternalRef creation."""
+
+    def get(self, request):
+        repositories = Repository.objects.filter(parent_repos__isnull=True, is_active=True).order_by('name')
+        remotes = FlatpakRemote.objects.filter(is_active=True).order_by('priority', 'name')
+
+        default_remote = remotes.filter(url__icontains='flathub').first() or remotes.filter(name__icontains='flathub').first()
+        default_repo = repositories.first()
+
+        return render(
+            request,
+            'flatpak/flathub_app_catalog.html',
+            {
+                'repositories': repositories,
+                'remotes': remotes,
+                'default_repo': default_repo,
+                'default_remote': default_remote,
+            },
+        )
+
+
+class FlathubAppSearchView(LoginRequiredMixin, View):
+    """AJAX proxy for Flathub API search to avoid CORS and hide API details."""
+
+    FLATHUB_SEARCH_URL = 'https://flathub.org/api/v2/search'
+
+    def post(self, request):
+        try:
+            payload = json.loads(request.body or '{}')
+        except (TypeError, ValueError):
+            return JsonResponse({'error': 'Invalid JSON payload'}, status=400)
+
+        query = (payload.get('query') or '').strip()
+        if len(query) < 2:
+            return JsonResponse({'results': []})
+
+        body = json.dumps({'query': query}).encode('utf-8')
+        req = urllib_request.Request(
+            self.FLATHUB_SEARCH_URL,
+            data=body,
+            headers={'Content-Type': 'application/json'},
+            method='POST',
+        )
+
+        try:
+            with urllib_request.urlopen(req, timeout=15) as resp:
+                raw = json.loads(resp.read().decode('utf-8'))
+        except urllib_error.HTTPError as exc:
+            return JsonResponse({'error': f'Flathub API error ({exc.code})'}, status=502)
+        except Exception as exc:
+            return JsonResponse({'error': f'Failed to query Flathub: {exc}'}, status=502)
+
+        results = []
+        for hit in (raw.get('hits') or [])[:50]:
+            app_id = (hit.get('app_id') or '').strip()
+            if not app_id:
+                continue
+
+            kind = hit.get('type') or ''
+            ref_prefix = 'app' if kind in ('desktop-application', 'mobile-application') else 'runtime'
+
+            arches = hit.get('arches') or []
+            arch = 'x86_64' if 'x86_64' in arches else (arches[0] if arches else 'x86_64')
+
+            results.append({
+                'app_id': app_id,
+                'name': hit.get('name') or app_id,
+                'summary': hit.get('summary') or '',
+                'developer_name': hit.get('developer_name') or '',
+                'icon': hit.get('icon') or '',
+                'verified': bool(hit.get('verification_verified')),
+                'type': kind,
+                'arch': arch,
+                'ref': f'{ref_prefix}/{app_id}/{arch}/stable',
+            })
+
+        return JsonResponse({'results': results})
+
+
 class ExternalRefBulkActionView(LoginRequiredMixin, View):
     def post(self, request, *args, **kwargs):
         from .models import ExternalRef
@@ -2887,6 +3015,45 @@ class ExternalRefDetailView(LoginRequiredMixin, DetailView):
     def get_queryset(self):
         from .models import ExternalRef
         return ExternalRef.objects.select_related('repository', 'remote', 'created_by')
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ext = self.object
+
+        dep_data = ext.dependencies or {}
+        direct_refs = dep_data.get('direct') or []
+        all_refs = dep_data.get('all') or []
+
+        # Match refs ignoring type prefix differences (runtime/app).
+        def _ref_tail(ref_str):
+            parts = ref_str.split('/')
+            return '/'.join(parts[-3:]) if len(parts) >= 3 else ref_str
+
+        tracked = {
+            _ref_tail(e.ref): e
+            for e in ExternalRef.objects.only('pk', 'ref', 'display_name')
+        }
+
+        dep_rows = []
+        for ref in all_refs:
+            tail = _ref_tail(ref)
+            dep_rows.append({
+                'ref': ref,
+                'is_direct': ref in direct_refs,
+                'tracked_external': tracked.get(tail),
+                'type': (dep_data.get('types') or {}).get(ref, ''),
+            })
+
+        ctx['external_dependency_rows'] = dep_rows
+        ctx['external_dependency_errors'] = dep_data.get('errors') or []
+
+        external_versions = list(
+            ext.versions.order_by('-pulled_at').prefetch_related('promotions', 'promotions__target_repo')
+        )
+        for ver in external_versions:
+            ver.available_promotion_targets = get_available_external_ref_promotion_targets(ext, current_version=ver)
+        ctx['external_versions'] = external_versions
+        return ctx
 
 
 class ExternalRefCreateView(LoginRequiredMixin, CreateView):

@@ -117,6 +117,59 @@
                 {% endif %}
             </div>
         </div>
+
+        <div class="card mt-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-diagram-3"></i> Dependencies</h5>
+                <span class="badge bg-secondary">{{ external_dependency_rows|length }}</span>
+            </div>
+            <div class="card-body p-0">
+                {% if external_dependency_rows %}
+                <ul class="list-group list-group-flush">
+                    {% for dep in external_dependency_rows %}
+                    <li class="list-group-item py-2">
+                        <div class="d-flex justify-content-between align-items-start gap-2">
+                            <div>
+                                <code class="small">{{ dep.ref }}</code>
+                                <div class="small mt-1">
+                                    {% if dep.is_direct %}
+                                    <span class="badge bg-info text-dark">Direct</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">Transitive</span>
+                                    {% endif %}
+                                    {% if dep.type %}
+                                    <span class="badge bg-light text-dark border">{{ dep.type }}</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <div class="text-end">
+                                {% if dep.tracked_external %}
+                                <a href="{% url 'flatpak:external_detail' dep.tracked_external.pk %}" class="badge bg-success text-decoration-none">
+                                    <i class="bi bi-check-circle"></i> Tracked
+                                </a>
+                                {% else %}
+                                <span class="badge bg-warning text-dark"><i class="bi bi-exclamation-triangle"></i> Untracked</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <div class="p-3 text-muted">
+                    No dependency snapshot yet. Pull this external ref to detect direct and transitive dependencies.
+                </div>
+                {% endif %}
+            </div>
+            {% if external_dependency_errors %}
+            <div class="card-footer">
+                <div class="small text-warning">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    Some dependencies could not be resolved from upstream metadata.
+                </div>
+            </div>
+            {% endif %}
+        </div>
     </div>
 </div>
 

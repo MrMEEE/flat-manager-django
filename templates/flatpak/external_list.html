@@ -5,9 +5,14 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2><i class="bi bi-cloud-download"></i> Externals</h2>
-    <a href="{% url 'flatpak:external_create' %}" class="btn btn-primary">
-        <i class="bi bi-plus-circle"></i> New External Ref
-    </a>
+    <div class="d-flex gap-2">
+        <a href="{% url 'flatpak:flathub_app_catalog' %}" class="btn btn-outline-primary">
+            <i class="bi bi-search"></i> Add Flathub App
+        </a>
+        <a href="{% url 'flatpak:external_create' %}" class="btn btn-primary">
+            <i class="bi bi-plus-circle"></i> New External Ref
+        </a>
+    </div>
 </div>
 
 {# Filter bar #}

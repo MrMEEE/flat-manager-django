@@ -63,6 +63,11 @@
                     {% for pkg in dep.required_by %}
                     <a href="{% url 'flatpak:package_detail' pkg.pk %}" class="badge bg-primary text-decoration-none me-1">{{ pkg.name }}</a>
                     {% endfor %}
+                    {% for ext in dep.required_by_external %}
+                    <a href="{% url 'flatpak:external_detail' ext.pk %}" class="badge bg-info text-dark text-decoration-none me-1">
+                        <i class="bi bi-cloud-download"></i> {{ ext.name }}
+                    </a>
+                    {% endfor %}
                 </td>
                 <td class="text-end">
                     <a href="{{ dep.add_external_url }}" target="_blank"

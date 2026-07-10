@@ -737,6 +737,14 @@ class ExternalRef(models.Model):
         default=False,
         help_text="True when upstream_commit differs from the last pulled commit_hash"
     )
+    dependencies = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text=(
+            "Resolved dependency snapshot from upstream metadata "
+            "(direct + transitive refs)"
+        ),
+    )
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     error_message = models.TextField(blank=True)
     log = models.TextField(blank=True, help_text="Pull/publish log output")
