@@ -679,6 +679,9 @@ fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 %changelog
+* Sat Jul 11 2026 Release Bot <m@rtinjuhl.dk> - 0.9.0-1
+- Release 0.9.0
+
 * Thu Jul 02 2026 Release Bot <m@rtinjuhl.dk> - 0.8.23-1
 - Release 0.8.23
 
