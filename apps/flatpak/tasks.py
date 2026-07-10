@@ -1876,6 +1876,22 @@ def _dependency_type_from_ref(full_ref):
     return 'Runtime'
 
 
+def _is_runtime_relevant_external_ref(full_ref):
+    """Return True for refs needed to run an imported external.
+
+    For imported apps/runtimes we want runtime-side requirements only.
+    SDKs and SDK extensions are build-time dependencies and should not be
+    surfaced under External dependencies or Missing Dependencies.
+    """
+    parts = full_ref.split('/')
+    app_id = parts[1] if len(parts) >= 2 else parts[0]
+    if '.Sdk.Extension.' in app_id:
+        return False
+    if app_id.endswith('.Sdk') or '.Sdk.' in app_id:
+        return False
+    return True
+
+
 def _normalise_runtime_ref(value, fallback_arch='x86_64', fallback_branch='stable'):
     """Normalise metadata dependency value to runtime/<id>/<arch>/<branch>."""
     raw = (value or '').strip()
@@ -1924,39 +1940,21 @@ def _extract_dependency_refs_from_metadata(metadata, current_ref):
     ref_branch = ref_parts[3] if len(ref_parts) >= 4 else 'stable'
 
     runtime_val = kv.get('application.runtime', '')
-    sdk_val = kv.get('application.sdk', '')
     base_val = kv.get('application.base', '')
-    sdk_exts_val = kv.get('application.sdk-extensions', '')
 
     runtime_full = _normalise_runtime_ref(runtime_val, fallback_arch=ref_arch, fallback_branch=ref_branch)
     if runtime_full:
         refs.append(runtime_full)
 
-    sdk_full = _normalise_runtime_ref(sdk_val, fallback_arch=ref_arch, fallback_branch=ref_branch)
-    if sdk_full:
-        refs.append(sdk_full)
-
     base_full = _normalise_runtime_ref(base_val, fallback_arch=ref_arch, fallback_branch=ref_branch)
     if base_full:
         refs.append(base_full)
-
-    sdk_branch = ''
-    if sdk_full:
-        sdk_parts = sdk_full.split('/')
-        if len(sdk_parts) >= 4:
-            sdk_branch = sdk_parts[3]
-    if not sdk_branch:
-        sdk_branch = ref_branch
-
-    if sdk_exts_val:
-        for ext_name in [e.strip() for e in sdk_exts_val.split(';') if e.strip()]:
-            refs.append(f"runtime/{ext_name}/{ref_arch}/{sdk_branch}")
 
     # De-duplicate while preserving order
     unique_refs = []
     seen = set()
     for ref in refs:
-        if not ref or ref in seen:
+        if not ref or ref in seen or not _is_runtime_relevant_external_ref(ref):
             continue
         seen.add(ref)
         unique_refs.append(ref)
