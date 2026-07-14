@@ -98,11 +98,11 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
     adds the repos selected for *build* plus the distribution's local built-RPMs
     repo (when it already has metadata).
 
-    Subscription-managed repos (no stored URL) are emitted as `enabled=1`
-    override stanzas only — the base mock config's RHSM plugin already provides
-    the actual baseurl from the host entitlement certs.
+    RHSM-managed repos can be provided by mock's subscription-manager plugin,
+    while repos with an explicit URL can be emitted directly into yum.conf.
 
-    Repos with an explicit URL (EPEL, manual) get a full stanza including that
+    Repos with an explicit URL (EPEL, third-party, Satellite, or RHSM repos
+    that were discovered with a concrete baseurl) get a full stanza including that
     URL so that builds work on machines that are not RHSM-subscribed.
     """
     build_id = build.pk
@@ -114,22 +114,15 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
 
     selected_repos = list(build.selected_repos.all())
 
-    # When subscription repos are selected, enable mock's subscription_manager
+    # When RHSM repos are selected, enable mock's subscription_manager
     # plugin.  This plugin is specifically designed to make RHSM entitlement
     # certs available inside both the bootstrap and the main chroot so that dnf
     # can resolve baseurls for subscription-gated repos.
-    #
-    # Subscription repos must NOT be written to yum.conf: they have no stored
-    # baseurl, and adding an empty stanza would silently override whatever the
-    # RHSM dnf plugin injects, causing "Cannot find a valid baseurl".  The base
-    # mock config + subscription_manager plugin handle these repos automatically.
-    has_subscription_repos = any(r.source == 'subscription' for r in selected_repos)
-    if has_subscription_repos:
+    has_rhsm_repos = any(r.source == 'rhsm' for r in selected_repos)
+    if has_rhsm_repos:
         cfg += "\nconfig_opts['plugin_conf']['subscription_manager_enable'] = True\n"
 
     for repo in selected_repos:
-        if repo.source == 'subscription':
-            continue  # handled by base config + subscription_manager plugin
         cfg += "\nconfig_opts['yum.conf'] += \"\"\"\n"
         cfg += f"[{repo.repo_id}]\n"
         cfg += f"name={repo.name}\n"
@@ -622,8 +615,8 @@ def rpm_build_task(self, build_id):
 # ---------------------------------------------------------------------------
 
 # EPEL metalink templates keyed by RHEL major version.
-# EPEL repos are always offered alongside subscription repos discovered from
-# the container; they are pre-populated with a public metalink so builds can
+# EPEL repos are always offered alongside repos discovered from the UBI
+# container; they are pre-populated with a public metalink so builds can
 # use them on machines without a full Red Hat subscription.
 _EPEL_REPOS: dict[str, dict] = {
     '7': {
@@ -652,63 +645,165 @@ _EPEL_REPOS: dict[str, dict] = {
     },
 }
 
-def _parse_dnf_repolist_all(output: str) -> list[dict]:
-    """
-    Parse the text output of ``dnf repolist --all`` into a list of
-    ``{'repo_id': ..., 'name': ...}`` dicts.
+def _classify_rpm_repo_source(repo: dict) -> str:
+    """Classify a discovered repo as RHSM, Satellite/Katello, EPEL, or third-party."""
+    repo_id = (repo.get('repo_id') or '').lower()
+    name = (repo.get('name') or '').lower()
+    repo_file = (repo.get('repo_file') or '').lower()
+    baseurl = (repo.get('baseurl') or '').lower()
+    metalink = (repo.get('metalink') or '').lower()
+    mirrorlist = (repo.get('mirrorlist') or '').lower()
+    url = ' '.join(v for v in (baseurl, metalink, mirrorlist) if v)
 
-    The command outputs lines like:
+    if repo_id == 'epel' or 'fedoraproject.org/metalink?repo=epel' in url:
+        return 'epel'
+    if '/pulp/' in url or '/pulp/' in repo_file or '/katello/' in url or '/katello/' in repo_file:
+        return 'satellite'
+    if 'cdn-ubi.redhat.com/' in url or repo_file.endswith('/ubi.repo'):
+        return 'ubi'
+    if (
+        'cdn.redhat.com/' in url
+        or repo_file.endswith('/redhat.repo')
+        or name.startswith('red hat')
+    ):
+        return 'rhsm'
+    return 'third_party'
 
-        rhel-10-for-x86_64-baseos-rpms/x86_64   Red Hat ... - BaseOS   enabled
-        !codeready-builder-...                   CodeReady ...         disabled
 
-    A leading ``!`` marks disabled repos in some dnf versions; a trailing
-    ``enabled``/``disabled`` column may or may not be present.
-    """
+def _parse_dnf_repolist_verbose(output: str) -> list[dict]:
+    """Parse ``dnf repolist -v --all`` output into repository metadata dicts."""
     repos: list[dict] = []
-    for line in output.splitlines():
-        stripped = line.strip().lstrip('!')
-        # Skip blank lines, the header row, and dnf metadata lines
-        if (
-            not stripped
-            or stripped.startswith('Last ')
-            or stripped.lower().startswith('repo id')
-            or stripped.startswith('Updating ')
-            or stripped.startswith('Red Hat Subscription')
-        ):
+    current: dict | None = None
+
+    def _finish_current():
+        nonlocal current
+        if not current or not current.get('repo_id'):
+            current = None
+            return
+        current['source'] = _classify_rpm_repo_source(current)
+        current['default_enabled'] = (
+            current['repo_id'].endswith('-baseos-rpms')
+            or current['repo_id'].endswith('-appstream-rpms')
+        )
+        current['gpgcheck'] = str(current.get('gpgcheck_raw', '1')).strip() not in ('0', 'false', 'False')
+        repos.append({
+            'repo_id': current.get('repo_id', ''),
+            'name': current.get('name') or current.get('repo_id', ''),
+            'baseurl': current.get('baseurl', ''),
+            'metalink': current.get('metalink', ''),
+            'mirrorlist': current.get('mirrorlist', ''),
+            'gpgcheck': current['gpgcheck'],
+            'source': current['source'],
+            'default_enabled': current['default_enabled'],
+        })
+        current = None
+
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith('Last ') or line.startswith('Updating ') or line.startswith('Red Hat Subscription'):
             continue
-        parts = stripped.split()
-        if len(parts) < 2:
+        if line.startswith('Repo-id'):
+            _finish_current()
+            current = {'repo_id': line.split(':', 1)[1].strip().split('/')[0]}
             continue
-        repo_id = parts[0].split('/')[0]  # strip /arch suffix if present
-        last = parts[-1]
-        if last in ('enabled', 'disabled'):
-            name = ' '.join(parts[1:-1])
-        else:
-            name = ' '.join(parts[1:])
-        repos.append({'repo_id': repo_id, 'name': name or repo_id})
+        if current is None or ':' not in line:
+            continue
+        key, value = line.split(':', 1)
+        key = key.strip().lower()
+        value = value.strip()
+        if key == 'repo-name':
+            current['name'] = value
+        elif key == 'repo-baseurl':
+            current['baseurl'] = value
+        elif key == 'repo-metalink':
+            current['metalink'] = value
+        elif key in ('repo-mirrors', 'repo-mirrorlist'):
+            current['mirrorlist'] = value
+        elif key == 'repo-filename':
+            current['repo_file'] = value
+        elif key == 'repo-gpgcheck':
+            current['gpgcheck_raw'] = value
+
+    _finish_current()
+    return repos
+
+
+def _parse_ubi_repo_file(output: str, arch: str) -> list[dict]:
+    """Parse ``/etc/yum.repos.d/ubi.repo`` content into repository metadata dicts."""
+    repos: list[dict] = []
+    current: dict | None = None
+
+    def _expand(value: str) -> str:
+        return value.replace('$basearch', arch).replace('${basearch}', arch)
+
+    def _finish_current():
+        nonlocal current
+        if not current or not current.get('repo_id'):
+            current = None
+            return
+        current['repo_id'] = _expand(current['repo_id'])
+        current['baseurl'] = _expand(current.get('baseurl', ''))
+        current['metalink'] = _expand(current.get('metalink', ''))
+        current['mirrorlist'] = _expand(current.get('mirrorlist', ''))
+        current['source'] = _classify_rpm_repo_source(current)
+        current['default_enabled'] = str(current.get('enabled_raw', '0')).strip() in ('1', 'true', 'True')
+        current['gpgcheck'] = str(current.get('gpgcheck_raw', '1')).strip() not in ('0', 'false', 'False')
+        repos.append({
+            'repo_id': current.get('repo_id', ''),
+            'name': current.get('name') or current.get('repo_id', ''),
+            'baseurl': current.get('baseurl', ''),
+            'metalink': current.get('metalink', ''),
+            'mirrorlist': current.get('mirrorlist', ''),
+            'gpgcheck': current['gpgcheck'],
+            'source': current['source'],
+            'default_enabled': current['default_enabled'],
+        })
+        current = None
+
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith('#'):
+            continue
+        if line.startswith('[') and line.endswith(']'):
+            _finish_current()
+            current = {'repo_id': line[1:-1].strip(), 'repo_file': '/etc/yum.repos.d/ubi.repo'}
+            continue
+        if current is None or '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        key = key.strip().lower()
+        value = value.strip()
+        if key == 'name':
+            current['name'] = value
+        elif key == 'baseurl':
+            current['baseurl'] = value
+        elif key == 'metalink':
+            current['metalink'] = value
+        elif key == 'mirrorlist':
+            current['mirrorlist'] = value
+        elif key == 'enabled':
+            current['enabled_raw'] = value
+        elif key == 'gpgcheck':
+            current['gpgcheck_raw'] = value
+
+    _finish_current()
     return repos
 
 
 def _discover_repos_via_container(rhel_version: str, arch: str) -> list[dict] | None:
     """
-    Start a UBI container matching *rhel_version*, bind-mount the host
-    RHSM entitlement certificates inside it, run ``dnf repolist --all``,
-    and return the detected repos as a list of dicts suitable for upsert
-    into ``RpmRepository``.
+    Start a plain UBI container matching *rhel_version*, run
+    ``dnf repolist --all -v`` inside it, and return the detected repos as a
+    list of dicts suitable for upsert into ``RpmRepository``.
 
     Returns ``None`` when podman is unavailable, the container image cannot
-    be pulled, or no repos are found (e.g. the host has no valid RHSM certs).
+    be pulled, or no repos are found.
     """
     image = f'registry.access.redhat.com/ubi{rhel_version}/ubi:latest'
-    cmd = [
-        'podman', 'run', '--rm', '--quiet',
-        '-v', '/etc/rhsm:/etc/rhsm:ro',
-        '-v', '/etc/pki/entitlement:/etc/pki/entitlement:ro',
-        '-v', '/etc/pki/consumer:/etc/pki/consumer:ro',
-        image,
-        'bash', '-c', 'dnf repolist --all 2>/dev/null',
-    ]
+    repo_cmd = ['dnf', 'repolist', '--all', '-v']
+    if str(rhel_version) == '7':
+        repo_cmd = ['yum', 'repolist', 'all', '-v']
+    cmd = ['podman', 'run', '--rm', '--quiet', image, *repo_cmd]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
@@ -724,38 +819,45 @@ def _discover_repos_via_container(rhel_version: str, arch: str) -> list[dict] | 
         )
         return None
 
-    parsed = _parse_dnf_repolist_all(result.stdout)
-    if not parsed:
-        logger.warning(
-            "Container repo discovery: dnf repolist produced no usable output for RHEL %s "
-            "(stdout=%r, stderr=%r)",
-            rhel_version, result.stdout[:300], result.stderr[:300],
-        )
+    parsed = _parse_dnf_repolist_verbose(result.stdout)
+    if parsed:
+        return parsed
+
+    fallback_cmd = [
+        'podman', 'run', '--rm', '--quiet', image,
+        'sh', '-lc', 'cat /etc/yum.repos.d/ubi.repo',
+    ]
+    try:
+        fallback_result = subprocess.run(fallback_cmd, capture_output=True, text=True, timeout=60)
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning("Container repo discovery fallback failed for RHEL %s: %s", rhel_version, exc)
         return None
 
-    return [
-        {
-            'repo_id': r['repo_id'],
-            'name': r['name'],
-            'baseurl': '',
-            'source': 'subscription',
-            'default_enabled': (
-                r['repo_id'].endswith('-baseos-rpms')
-                or r['repo_id'].endswith('-appstream-rpms')
-            ),
-        }
-        for r in parsed
-    ]
+    fallback_parsed = _parse_ubi_repo_file(fallback_result.stdout, arch)
+    if fallback_parsed:
+        logger.info(
+            "Container repo discovery: using ubi.repo fallback for RHEL %s after unusable repolist output",
+            rhel_version,
+        )
+        return fallback_parsed
+
+    logger.warning(
+        "Container repo discovery: no usable repo data for RHEL %s "
+        "(repolist_stdout=%r, repolist_stderr=%r, ubi_repo_stdout=%r, ubi_repo_stderr=%r)",
+        rhel_version,
+        result.stdout[:300], result.stderr[:300],
+        fallback_result.stdout[:300], fallback_result.stderr[:300],
+    )
+    return None
 
 
 def sync_rpm_repositories_for_distribution(dist) -> tuple[int, int]:
     """
     Discover and upsert RpmRepository records for *dist*.
 
-    Subscription repos are discovered by starting a UBI container for the
-    distribution's RHEL version with the host's RHSM entitlement certs
-    bind-mounted and running ``dnf repolist --all`` inside it.  EPEL is
-    always added as an extra option (disabled by default).
+    Distribution repos are discovered by starting a matching plain UBI
+    container and running ``dnf repolist --all -v`` inside it. EPEL is always
+    added as an extra option (disabled by default).
 
     The user's ``enabled`` (default) flag is preserved on existing records;
     only metadata (name, URLs) is updated on re-sync.
@@ -788,7 +890,7 @@ def sync_rpm_repositories_for_distribution(dist) -> tuple[int, int]:
                 'metalink': data.get('metalink', ''),
                 'gpgcheck': data.get('gpgcheck', True),
                 'enabled': data.get('default_enabled', False),
-                'source': data.get('source', 'subscription'),
+                'source': data.get('source', 'rhsm'),
                 'last_synced': now,
             },
         )

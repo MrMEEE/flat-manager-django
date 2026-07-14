@@ -63,6 +63,7 @@
                                 <th>Name</th>
                                 <th>Source</th>
                                 <th>URL</th>
+                                <th class="text-center">Enabled in flat-manager</th>
                                 <th class="text-center">Enabled for this package</th>
                             </tr>
                         </thead>
@@ -70,16 +71,20 @@
                             {% for repo in repos %}
                             {% with is_enabled=repo.pk|stringformat:"s" %}
                             <tr id="pkg-repo-row-{{ repo.pk }}"
-                                class="{% if repo.pk not in default_repo_pks %}text-muted{% endif %}">
+                                class="{% if not repo.enabled or repo.pk not in default_repo_pks %}text-muted{% endif %}">
                                 <td><code>{{ repo.repo_id }}</code></td>
                                 <td>{{ repo.name }}</td>
                                 <td>
-                                    {% if repo.source == 'subscription' %}
+                                    {% if repo.source == 'rhsm' %}
                                     <span class="badge bg-danger">RHSM</span>
+                                    {% elif repo.source == 'ubi' %}
+                                    <span class="badge bg-warning text-dark">UBI</span>
+                                    {% elif repo.source == 'satellite' %}
+                                    <span class="badge bg-primary">Satellite</span>
                                     {% elif repo.source == 'epel' %}
                                     <span class="badge bg-info text-dark">EPEL</span>
                                     {% else %}
-                                    <span class="badge bg-secondary">Manual</span>
+                                    <span class="badge bg-secondary">3rd Party</span>
                                     {% endif %}
                                 </td>
                                 <td>
@@ -87,12 +92,28 @@
                                     <span class="text-truncate d-inline-block" style="max-width:20rem"
                                           title="{{ repo.baseurl }}">{{ repo.baseurl }}</span>
                                     {% elif repo.metalink %}
-                                    <span class="text-muted fst-italic">metalink</span>
+                                    <span class="text-truncate d-inline-block text-muted fst-italic" style="max-width:20rem"
+                                        title="{{ repo.metalink }}">{{ repo.metalink }}</span>
                                     {% elif repo.mirrorlist %}
-                                    <span class="text-muted fst-italic">mirrorlist</span>
+                                    <span class="text-truncate d-inline-block text-muted fst-italic" style="max-width:20rem"
+                                        title="{{ repo.mirrorlist }}">{{ repo.mirrorlist }}</span>
                                     {% else %}
                                     <span class="text-muted fst-italic">subscription</span>
                                     {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    <button type="button"
+                                            class="btn btn-sm repo-toggle-btn
+                                                   {% if repo.enabled %}btn-success{% else %}btn-outline-secondary{% endif %}"
+                                            data-url="{% url 'rpm:repository_toggle' repo.pk %}"
+                                            data-repo-pk="{{ repo.pk }}"
+                                            title="Enable or disable this repo for flat-manager">
+                                        {% if repo.enabled %}
+                                        <i class="bi bi-toggle-on"></i>
+                                        {% else %}
+                                        <i class="bi bi-toggle-off"></i>
+                                        {% endif %}
+                                    </button>
                                 </td>
                                 <td class="text-center">
                                     <button type="button"
@@ -160,6 +181,47 @@ document.getElementById('repoFilter').addEventListener('input', function() {
     });
 });
 
+function updateRepoRowState(row) {
+    if (!row) {
+        return;
+    }
+    var flatToggle = row.querySelector('.repo-toggle-btn');
+    var packageToggle = row.querySelector('.pkg-repo-toggle-btn');
+    var flatEnabled = flatToggle && flatToggle.classList.contains('btn-success');
+    var packageEnabled = packageToggle && packageToggle.classList.contains('btn-success');
+    row.classList.toggle('text-muted', !flatEnabled || !packageEnabled);
+}
+
+document.querySelectorAll('.repo-toggle-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        var url = btn.dataset.url;
+        var repoPk = btn.dataset.repoPk;
+        fetch(url, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}',
+                'Content-Type': 'application/json',
+            },
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.ok) { return; }
+            var row = document.getElementById('pkg-repo-row-' + repoPk);
+            if (data.enabled) {
+                btn.classList.remove('btn-outline-secondary');
+                btn.classList.add('btn-success');
+                btn.innerHTML = '<i class="bi bi-toggle-on"></i>';
+            } else {
+                btn.classList.remove('btn-success');
+                btn.classList.add('btn-outline-secondary');
+                btn.innerHTML = '<i class="bi bi-toggle-off"></i>';
+            }
+            updateRepoRowState(row);
+        })
+        .catch(function(err) { console.error('Repo toggle error:', err); });
+    });
+});
+
 document.querySelectorAll('.pkg-repo-toggle-btn').forEach(function(btn) {
     btn.addEventListener('click', function() {
         var url = btn.dataset.url;
@@ -179,13 +241,12 @@ document.querySelectorAll('.pkg-repo-toggle-btn').forEach(function(btn) {
                 btn.classList.remove('btn-outline-secondary');
                 btn.classList.add('btn-success');
                 btn.innerHTML = '<i class="bi bi-toggle-on"></i>';
-                row.classList.remove('text-muted');
             } else {
                 btn.classList.remove('btn-success');
                 btn.classList.add('btn-outline-secondary');
                 btn.innerHTML = '<i class="bi bi-toggle-off"></i>';
-                row.classList.add('text-muted');
             }
+            updateRepoRowState(row);
         })
         .catch(function(err) { console.error('Repo toggle error:', err); });
     });

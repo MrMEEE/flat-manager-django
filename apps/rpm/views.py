@@ -178,6 +178,16 @@ class RpmPackageCreateView(BuildAdminRequiredMixin, CreateView):
     def form_valid(self, form):
         form.instance.created_by = self.request.user
         response = super().form_valid(form)
+        from apps.rpm.models import RpmRepository
+
+        selected_distributions = form.cleaned_data.get('distributions')
+        if selected_distributions:
+            self.object.default_repos.set(
+                RpmRepository.objects.filter(
+                    distribution__in=selected_distributions,
+                    enabled=True,
+                )
+            )
         # Queue one build per selected distribution
         self._trigger_builds(self.object)
         messages.success(
@@ -195,6 +205,7 @@ class RpmPackageCreateView(BuildAdminRequiredMixin, CreateView):
                 build_number=1,
                 status='pending',
             )
+            build.selected_repos.set(package.default_repos.filter(distribution=dist))
             rpm_build_task.delay(build.pk)
 
     def get_success_url(self):
@@ -245,7 +256,7 @@ def _next_build_number(package, distribution):
 
 
 class RpmPackageBuildView(BuildAdminRequiredMixin, View):
-    """POST — trigger builds immediately using each distribution's default-enabled repos."""
+    """POST — trigger builds immediately using each distribution's package-selected repos."""
 
     def post(self, request, pk):
         package = get_object_or_404(RpmPackage, pk=pk)
@@ -395,8 +406,10 @@ class RpmBuildRetryView(BuildAdminRequiredMixin, View):
             build_number=_next_build_number(old_build.package, old_build.distribution),
             status='pending',
         )
-        # Copy the repo selection from the original build
-        new_build.selected_repos.set(old_build.selected_repos.all())
+        # Use the package's current repo selection for this distribution.
+        new_build.selected_repos.set(
+            old_build.package.default_repos.filter(distribution=old_build.distribution)
+        )
         rpm_build_task.delay(new_build.pk)
         messages.success(request, "Retry queued.")
         return redirect('rpm:build_detail', pk=new_build.pk)

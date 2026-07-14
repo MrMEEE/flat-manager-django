@@ -103,12 +103,16 @@
                                 <td><code>{{ repo.repo_id }}</code></td>
                                 <td>{{ repo.name }}</td>
                                 <td>
-                                    {% if repo.source == 'subscription' %}
+                                    {% if repo.source == 'rhsm' %}
                                     <span class="badge bg-danger">RHSM</span>
+                                    {% elif repo.source == 'ubi' %}
+                                    <span class="badge bg-warning text-dark">UBI</span>
+                                    {% elif repo.source == 'satellite' %}
+                                    <span class="badge bg-primary">Satellite</span>
                                     {% elif repo.source == 'epel' %}
                                     <span class="badge bg-info text-dark">EPEL</span>
                                     {% else %}
-                                    <span class="badge bg-secondary">Manual</span>
+                                    <span class="badge bg-secondary">3rd Party</span>
                                     {% endif %}
                                 </td>
                                 <td>

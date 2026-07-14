@@ -106,7 +106,7 @@
                         {% with repos=build.selected_repos.all %}
                         {% if repos %}
                             {% for repo in repos %}
-                            <span class="badge {% if repo.source == 'subscription' %}bg-danger{% elif repo.source == 'epel' %}bg-info text-dark{% else %}bg-secondary{% endif %} me-1"
+                                    <span class="badge {% if repo.source == 'rhsm' %}bg-danger{% elif repo.source == 'ubi' %}bg-warning text-dark{% elif repo.source == 'satellite' %}bg-primary{% elif repo.source == 'epel' %}bg-info text-dark{% else %}bg-secondary{% endif %} me-1"
                                   title="{{ repo.repo_id }}">{{ repo.name|truncatechars:30 }}</span>
                             {% endfor %}
                         {% else %}

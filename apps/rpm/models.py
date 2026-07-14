@@ -370,17 +370,19 @@ class RpmPackageSigningKey(models.Model):
 class RpmRepository(models.Model):
     """
     A yum/dnf repository that can be included in mock builds for a given
-    distribution.  Populated by the repo-sync task (subscription-manager or
-    well-known RHEL patterns) and the built-in EPEL definition.
+    distribution. Populated by the repo-sync task from UBI/DNF metadata and
+    the built-in EPEL definition.
 
-    Subscription-managed repos (source='subscription') have no baseurl/metalink
-    stored here — they rely on the RHSM plugin inside the mock chroot.  Repos
-    with an explicit URL (EPEL, manual) include the full address.
+    Repositories are sourced from RHSM, UBI, Satellite/Katello, or third-party
+    definitions discovered during sync. Public repos like EPEL include their
+    explicit metalink/baseurl.
     """
     SOURCE_CHOICES = [
-        ('subscription', 'RHSM Subscription'),
+        ('rhsm', 'RHSM Subscription'),
+        ('ubi', 'UBI'),
+        ('satellite', 'Satellite / Katello'),
         ('epel', 'EPEL'),
-        ('manual', 'Manual / Custom'),
+        ('third_party', 'Third Party / Custom'),
     ]
 
     distribution = models.ForeignKey(
@@ -388,7 +390,7 @@ class RpmRepository(models.Model):
     )
     repo_id = models.CharField(max_length=255, help_text="DNF/yum repo ID")
     name = models.CharField(max_length=500, help_text="Human-readable repository name")
-    baseurl = models.TextField(blank=True, help_text="Base URL (blank for subscription repos)")
+    baseurl = models.TextField(blank=True, help_text="Base URL when available")
     mirrorlist = models.TextField(blank=True)
     metalink = models.TextField(blank=True)
     gpgcheck = models.BooleanField(default=True)
@@ -396,7 +398,7 @@ class RpmRepository(models.Model):
         default=False,
         help_text="Pre-selected by default when configuring a new build for this distribution",
     )
-    source = models.CharField(max_length=50, choices=SOURCE_CHOICES, default='subscription')
+    source = models.CharField(max_length=50, choices=SOURCE_CHOICES, default='rhsm')
     last_synced = models.DateTimeField(null=True, blank=True)
 
     class Meta:
@@ -414,7 +416,9 @@ class RpmRepository(models.Model):
 
     def get_source_badge(self):
         return {
-            'subscription': 'warning',
+            'rhsm': 'danger',
+            'ubi': 'warning',
+            'satellite': 'primary',
             'epel': 'info',
-            'manual': 'secondary',
+            'third_party': 'secondary',
         }.get(self.source, 'secondary')
