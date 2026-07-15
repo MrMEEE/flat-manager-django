@@ -514,7 +514,7 @@ def rpm_build_task(self, build_id):
         )
         log_rpm_build(
             build,
-            'info',
+            'info',create_mock
             f"Internet access {'enabled' if build.package.allow_internet_access else 'disabled'} for this build",
         )
         log_rpm_build(
@@ -692,10 +692,9 @@ def _parse_dnf_repolist_verbose(output: str) -> list[dict]:
             current = None
             return
         current['source'] = _classify_rpm_repo_source(current)
-        current['default_enabled'] = (
-            current['repo_id'].endswith('-baseos-rpms')
-            or current['repo_id'].endswith('-appstream-rpms')
-        )
+        # Use the Repo-status field reported by dnf repolist -v.
+        # Fall back to False (disabled) if the field is absent.
+        current['default_enabled'] = current.get('status_raw', '').lower() == 'enabled'
         current['gpgcheck'] = str(current.get('gpgcheck_raw', '1')).strip() not in ('0', 'false', 'False')
         repos.append({
             'repo_id': current.get('repo_id', ''),
@@ -733,6 +732,8 @@ def _parse_dnf_repolist_verbose(output: str) -> list[dict]:
             current['mirrorlist'] = value
         elif key == 'repo-filename':
             current['repo_file'] = value
+        elif key == 'repo-status':
+            current['status_raw'] = value
         elif key == 'repo-gpgcheck':
             current['gpgcheck_raw'] = value
         elif key in ('repo-gpgkey', 'repo-gpg-key'):
@@ -854,7 +855,7 @@ def _fetch_gpgkey_files_from_container(image: str, file_paths: list) -> dict:
 
     logger.debug(
         "_fetch_gpgkey_files_from_container: raw output (%d bytes): %s",
-        len(result.stdout), result.stdout[:1000],
+        len(result.stdout), result.stdout[:1000],   
     )
     contents: dict = {}
     current_path: str | None = None
@@ -971,7 +972,7 @@ def _discover_repos_via_container(rhel_version: str, arch: str) -> list[dict] | 
         try:
             gk_result = subprocess.run(
                 ['podman', 'run', '--rm', '--quiet', image,
-                 'sh', '-lc', 'cat /etc/yum.repos.d/*.repo 2>/dev/null || true'],
+                 'sh', '-lc', 'dnf repolist --all && cat /etc/yum.repos.d/*.repo 2>/dev/null || true'],
                 capture_output=True, text=True, timeout=60,
             )
             logger.debug(
