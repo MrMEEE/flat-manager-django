@@ -176,7 +176,7 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
         cfg += "\nconfig_opts['plugin_conf']['subscription_manager_enable'] = True\n"
 
     for repo in selected_repos:
-        cfg += "\nconfig_opts['yum.conf'] += \"\"\"\n"
+        cfg += f"\nconfig_opts[{_conf_key!r}] += \"\"\"\n"
         cfg += f"[{repo.repo_id}]\n"
         cfg += f"name={repo.name}\n"
         if repo.baseurl:
@@ -203,7 +203,7 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
     repodata = os.path.join(local_repo_path, 'repodata', 'repomd.xml')
     if os.path.exists(repodata):
         cfg += (
-            "\nconfig_opts['yum.conf'] += \"\"\"\n"
+            f"\nconfig_opts[{_conf_key!r}] += \"\"\"\n"
             f"[flat-manager-built-{build_id}]\n"
             f"name=Flat Manager Built RPMs\n"
             f"baseurl=file://{local_repo_path}\n"
