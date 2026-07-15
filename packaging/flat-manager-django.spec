@@ -503,8 +503,8 @@ exit 0
 %post
 %systemd_post flat-manager-web.service flat-manager-celery.service flat-manager-celery-ops.service flat-manager-celery-beat.service flat-manager.target
 
-chown -R %{app_user}:%{app_group} %{data_dir} %{log_dir} %{conf_dir}
-chown    %{app_user}:%{app_group} %{install_dir}
+#chown -R %{app_user}:%{app_group} %{data_dir} %{log_dir} %{conf_dir}
+#chown    %{app_user}:%{app_group} %{install_dir}
 systemd-tmpfiles --create %{_tmpfilesdir}/flat-manager.conf 2>/dev/null || :
 
 # Add nginx to the flat-manager group so it can read OSTree repo data served
