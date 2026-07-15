@@ -112,6 +112,13 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
     cfg += f"config_opts['use_host_resolv'] = {bool(allow_internet_access)}\n"
     cfg += f"config_opts['cleanup_on_success'] = {bool(cleanup_on_success)}\n"
 
+    # Resolve cfg_path early so we can write gpgkey files alongside it
+    if cfg_path is None:
+        cfg_path = os.path.join(tempfile.gettempdir(), f'fmd-mock-{build_id}.cfg')
+    os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
+    gpgkeys_dir = os.path.join(os.path.dirname(cfg_path), 'gpgkeys')
+    os.makedirs(gpgkeys_dir, exist_ok=True)
+
     selected_repos = list(build.selected_repos.all())
 
     # When RHSM repos are selected, enable mock's subscription_manager
@@ -135,7 +142,13 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
         cfg += "enabled=1\n"
         cfg += f"gpgcheck={1 if repo.gpgcheck else 0}\n"
         if repo.gpgcheck and repo.gpgkey:
-            cfg += f"gpgkey={repo.gpgkey}\n"
+            # Write the stored armored key content to a file in the build dir
+            # and reference it as a file:// URL so mock doesn't need internet.
+            safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', repo.repo_id)
+            key_path = os.path.join(gpgkeys_dir, f'{safe_id}.gpg')
+            with open(key_path, 'w') as _kf:
+                _kf.write(repo.gpgkey)
+            cfg += f"gpgkey=file://{key_path}\n"
         elif repo.source == 'epel' and repo.gpgcheck:
             rhel_ver = build.distribution.rhel_version
             cfg += f"gpgkey=https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-{rhel_ver}\n"
@@ -154,10 +167,6 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
             "\"\"\"\n"
         )
 
-    if cfg_path is None:
-        cfg_root = tempfile.gettempdir()
-        cfg_path = os.path.join(cfg_root, f'fmd-mock-{build_id}.cfg')
-    os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
     with open(cfg_path, 'w') as fh:
         fh.write(cfg)
     return cfg_path
@@ -798,6 +807,90 @@ def _parse_ubi_repo_file(output: str, arch: str) -> list[dict]:
     return repos
 
 
+def _fetch_gpgkey_files_from_container(image: str, file_paths: list) -> dict:
+    """
+    Cat a set of absolute file paths inside a container and return their
+    contents as a ``{path: content}`` dict.  Paths that are unreadable are
+    silently omitted.
+    """
+    if not file_paths:
+        return {}
+    unique_paths = sorted(set(file_paths))
+    parts = []
+    for p in unique_paths:
+        # Use a unique sentinel so we can split the combined output
+        sep = f'===FMDK:{p}==='
+        parts.append(f'printf "%s\\n" "{sep}"; cat "{p}" 2>/dev/null; printf "%s\\n" "===FMDEND==="')
+    script = '; '.join(parts)
+    try:
+        result = subprocess.run(
+            ['podman', 'run', '--rm', '--quiet', image, 'sh', '-c', script],
+            capture_output=True, text=True, timeout=60,
+        )
+    except Exception as exc:
+        logger.debug("_fetch_gpgkey_files_from_container failed: %s", exc)
+        return {}
+
+    contents: dict = {}
+    current_path: str | None = None
+    current_lines: list = []
+    for line in result.stdout.splitlines():
+        if line.startswith('===FMDK:') and line.endswith('==='):
+            if current_path is not None:
+                contents[current_path] = '\n'.join(current_lines).strip()
+            current_path = line[8:-3]
+            current_lines = []
+        elif line == '===FMDEND===':
+            if current_path is not None:
+                contents[current_path] = '\n'.join(current_lines).strip()
+            current_path = None
+            current_lines = []
+        elif current_path is not None:
+            current_lines.append(line)
+
+    return {k: v for k, v in contents.items() if v}
+
+
+def _enrich_repos_with_gpgkey_content(repos: list, image: str, arch: str) -> None:
+    """
+    Replace gpgkey file:// / absolute-path URLs in *repos* with the actual
+    armored GPG key content fetched from *image*.  Modifies *repos* in-place.
+    https:// URLs are left unchanged so mock can fetch them at build time.
+    """
+    file_paths: list = []
+    for repo in repos:
+        for url in repo.get('gpgkey', '').split():
+            if url.startswith('file://'):
+                file_paths.append(url[7:])
+            elif url.startswith('/'):
+                file_paths.append(url)
+
+    if not file_paths:
+        return
+
+    key_contents = _fetch_gpgkey_files_from_container(image, file_paths)
+    if not key_contents:
+        return
+
+    for repo in repos:
+        gpgkey_val = repo.get('gpgkey', '')
+        if not gpgkey_val:
+            continue
+        key_parts: list = []
+        for url in gpgkey_val.split():
+            if url.startswith('file://'):
+                path = url[7:]
+            elif url.startswith('/'):
+                path = url
+            else:
+                continue
+            content = key_contents.get(path, '')
+            if content:
+                key_parts.append(content)
+        if key_parts:
+            repo['gpgkey'] = '\n'.join(key_parts)
+
+
 def _discover_repos_via_container(rhel_version: str, arch: str) -> list[dict] | None:
     """
     Start a plain UBI container matching *rhel_version*, run
@@ -829,6 +922,23 @@ def _discover_repos_via_container(rhel_version: str, arch: str) -> list[dict] | 
 
     parsed = _parse_dnf_repolist_verbose(result.stdout)
     if parsed:
+        # dnf repolist -v does not include gpgkey.  Get the gpgkey= values from
+        # the .repo files inside the container, then fetch the actual key files
+        # they reference and store the armored key content in the parsed dicts.
+        try:
+            gk_result = subprocess.run(
+                ['podman', 'run', '--rm', '--quiet', image,
+                 'sh', '-lc', 'cat /etc/yum.repos.d/*.repo 2>/dev/null || true'],
+                capture_output=True, text=True, timeout=60,
+            )
+            gk_repos = _parse_ubi_repo_file(gk_result.stdout, arch)
+            gk_map = {r['repo_id']: r.get('gpgkey', '') for r in gk_repos}
+            for repo in parsed:
+                if not repo.get('gpgkey') and gk_map.get(repo['repo_id']):
+                    repo['gpgkey'] = gk_map[repo['repo_id']]
+            _enrich_repos_with_gpgkey_content(parsed, image, arch)
+        except Exception as exc:
+            logger.debug("Could not enrich gpgkeys for RHEL %s: %s", rhel_version, exc)
         return parsed
 
     fallback_cmd = [
@@ -843,6 +953,7 @@ def _discover_repos_via_container(rhel_version: str, arch: str) -> list[dict] | 
 
     fallback_parsed = _parse_ubi_repo_file(fallback_result.stdout, arch)
     if fallback_parsed:
+        _enrich_repos_with_gpgkey_content(fallback_parsed, image, arch)
         logger.info(
             "Container repo discovery: using ubi.repo fallback for RHEL %s after unusable repolist output",
             rhel_version,
