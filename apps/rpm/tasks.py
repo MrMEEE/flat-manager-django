@@ -162,6 +162,8 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
     os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
     gpgkeys_dir = os.path.join(os.path.dirname(cfg_path), 'gpgkeys')
     os.makedirs(gpgkeys_dir, exist_ok=True)
+    certs_dir = os.path.join(os.path.dirname(cfg_path), 'certs')
+    os.makedirs(certs_dir, exist_ok=True)
 
     selected_repos = list(build.selected_repos.all())
 
@@ -201,13 +203,29 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
         # Include mutual-TLS fields for RHSM/Satellite repos.  The
         # subscription_manager plugin copies these cert files into the chroot
         # at the same paths, so the references remain valid inside mock.
-        if repo.sslcacert:
-            cfg += f"sslcacert={repo.sslcacert}\n"
-        if repo.sslclientcert:
-            cfg += f"sslclientcert={repo.sslclientcert}\n"
+        # If the DB holds PEM content (fetched at sync time), write it to a
+        # file in the build dir and reference that path — this way the build
+        # works even if the entitlement certs on the host have been rotated.
+        safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', repo.repo_id)
+        for ssl_field, suffix in (
+            ('sslcacert', 'cacert.pem'),
+            ('sslclientcert', 'clientcert.pem'),
+            ('sslclientkey', 'clientkey.pem'),
+        ):
+            val = getattr(repo, ssl_field, '') or ''
+            if not val:
+                continue
+            if val.startswith('-----BEGIN'):
+                # PEM content stored in DB — write to build dir
+                cert_path = os.path.join(certs_dir, f'{safe_id}-{suffix}')
+                with open(cert_path, 'w') as _cf:
+                    _cf.write(val)
+                cfg += f"{ssl_field}={cert_path}\n"
+            else:
+                # Fallback: plain path stored (pre-migration data)
+                cfg += f"{ssl_field}={val}\n"
+        if (getattr(repo, 'sslclientcert', '') or ''):
             cfg += "sslverify=1\n"
-        if repo.sslclientkey:
-            cfg += f"sslclientkey={repo.sslclientkey}\n"
         cfg += "\"\"\"\n"
 
     repodata = os.path.join(local_repo_path, 'repodata', 'repomd.xml')
@@ -1008,6 +1026,57 @@ def _enrich_repos_with_gpgkey_content(repos: list, image: str, arch: str) -> Non
             repo['gpgkey'] = '\n'.join(combined)
 
 
+def _enrich_repos_with_ssl_cert_content(repos: list, image: str) -> None:
+    """
+    Replace ``sslcacert`` / ``sslclientcert`` / ``sslclientkey`` path values
+    in *repos* with the actual PEM content fetched from *image*.
+
+    The paths come from the ``.repo`` files inside the container
+    (e.g. ``/etc/pki/entitlement/12345.pem``).  We cat them from inside the
+    same container so the correct entitlement certs are used.
+
+    Already-PEM content (starts with ``-----BEGIN``) is left unchanged.
+    Modifies *repos* in-place.
+    """
+    paths_to_fetch: list = []
+    for repo in repos:
+        for field in ('sslcacert', 'sslclientcert', 'sslclientkey'):
+            val = repo.get(field, '')
+            if val and not val.startswith('-----BEGIN'):
+                paths_to_fetch.append(val)
+
+    if not paths_to_fetch:
+        logger.info("_enrich_repos_with_ssl_cert_content: no SSL cert paths to fetch")
+        return
+
+    logger.info(
+        "_enrich_repos_with_ssl_cert_content: will fetch %d SSL cert path(s) from %s: %s",
+        len(paths_to_fetch), image, paths_to_fetch,
+    )
+
+    cert_contents = _fetch_gpgkey_files_from_container(image, paths_to_fetch)
+    if not cert_contents:
+        logger.warning("_enrich_repos_with_ssl_cert_content: could not fetch any SSL cert content from container")
+        return
+
+    for repo in repos:
+        for field in ('sslcacert', 'sslclientcert', 'sslclientkey'):
+            val = repo.get(field, '')
+            if not val or val.startswith('-----BEGIN'):
+                continue
+            if val in cert_contents:
+                repo[field] = cert_contents[val]
+                logger.info(
+                    "_enrich_repos_with_ssl_cert_content: repo %s %s — fetched %d chars of PEM content",
+                    repo['repo_id'], field, len(cert_contents[val]),
+                )
+            else:
+                logger.warning(
+                    "_enrich_repos_with_ssl_cert_content: repo %s %s — could not fetch content for path %r",
+                    repo['repo_id'], field, val,
+                )
+
+
 def _discover_repos_via_container(rhel_version: str, arch: str) -> list[dict] | None:
     """
     Start a plain UBI container matching *rhel_version*, run
@@ -1095,14 +1164,15 @@ def _discover_repos_via_container(rhel_version: str, arch: str) -> list[dict] | 
                         rhel_version, repo['repo_id'],
                     )
             _enrich_repos_with_gpgkey_content(parsed, image, arch)
+            _enrich_repos_with_ssl_cert_content(parsed, image)
             for repo in parsed:
                 logger.info(
                     "Container repo discovery: RHEL %s — repo %s final gpgkey: %s | sslcacert: %s | sslclientcert: %s | sslclientkey: %s",
                     rhel_version, repo['repo_id'],
                     'armored key (%d chars)' % len(repo['gpgkey']) if repo.get('gpgkey') else 'NONE',
-                    repo.get('sslcacert') or 'NONE',
-                    repo.get('sslclientcert') or 'NONE',
-                    repo.get('sslclientkey') or 'NONE',
+                    'PEM (%d chars)' % len(repo['sslcacert']) if repo.get('sslcacert', '').startswith('-----BEGIN') else (repo.get('sslcacert') or 'NONE'),
+                    'PEM (%d chars)' % len(repo['sslclientcert']) if repo.get('sslclientcert', '').startswith('-----BEGIN') else (repo.get('sslclientcert') or 'NONE'),
+                    'PEM (%d chars)' % len(repo['sslclientkey']) if repo.get('sslclientkey', '').startswith('-----BEGIN') else (repo.get('sslclientkey') or 'NONE'),
                 )
         except Exception as exc:
             logger.warning("Could not enrich gpgkeys for RHEL %s: %s", rhel_version, exc)
