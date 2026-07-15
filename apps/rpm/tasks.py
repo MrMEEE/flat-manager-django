@@ -830,9 +830,12 @@ def _fetch_gpgkey_files_from_container(image: str, file_paths: list) -> dict:
     for p in unique_paths:
         sep = f'===FMDK:{p}==='
         if p.startswith('http://') or p.startswith('https://'):
-            # Try curl first, fall back to wget; both write to stdout
+            # Try curl first, fall back to wget; both write to stdout.
+            # SSL verification is disabled (-k / --no-check-certificate) because
+            # GPG key files are cryptographically verified by rpm itself and
+            # the container may not have the CA bundle for internal servers.
             fetch = (
-                f'curl -fsSL "{p}" 2>/dev/null || wget -qO- "{p}" 2>/dev/null || true'
+                f'curl -fsSLk "{p}" 2>/dev/null || wget -qO- --no-check-certificate "{p}" 2>/dev/null || true'
             )
         else:
             # Local path (strip leading file:// if present)
