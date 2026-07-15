@@ -160,8 +160,6 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
     if cfg_path is None:
         cfg_path = os.path.join(tempfile.gettempdir(), f'fmd-mock-{build_id}.cfg')
     os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
-    gpgkeys_dir = os.path.join(os.path.dirname(cfg_path), 'gpgkeys')
-    os.makedirs(gpgkeys_dir, exist_ok=True)
 
     selected_repos = list(build.selected_repos.all())
 
@@ -175,12 +173,15 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
     if has_rhsm_repos:
         cfg += "\nconfig_opts['plugin_conf']['subscription_manager_enable'] = True\n"
 
-    # Inject PEM cert content into the chroot via config_opts['files'].
-    # Mock will write these files into the chroot before dnf runs, so the
-    # paths we reference in the repo stanzas will exist inside the chroot.
-    # We use /etc/pki/fmd/ as the chroot-internal directory.
+    # Inject GPG keys and SSL certs/keys into the chroot via config_opts['files'].
+    # Mock writes these files into the chroot before dnf runs, so the paths we
+    # reference in the repo stanzas exist inside the chroot, not on the host.
+    # GPG keys go to /etc/pki/fmd/gpgkeys/, SSL material to /etc/pki/fmd/certs/.
     for repo in selected_repos:
         safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', repo.repo_id)
+        if repo.gpgcheck and repo.gpgkey:
+            chroot_gpg = f'/etc/pki/fmd/gpgkeys/{safe_id}.gpg'
+            cfg += f"\nconfig_opts['files'][{chroot_gpg!r}] = \"\"\"\\\n{repo.gpgkey}\"\"\"\n"
         for ssl_field, suffix in (
             ('sslcacert', 'cacert.pem'),
             ('sslclientcert', 'clientcert.pem'),
@@ -188,7 +189,7 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
         ):
             val = getattr(repo, ssl_field, '') or ''
             if val and val.startswith('-----BEGIN'):
-                chroot_path = f'/etc/pki/fmd/{safe_id}-{suffix}'
+                chroot_path = f'/etc/pki/fmd/certs/{safe_id}-{suffix}'
                 cfg += f"\nconfig_opts['files'][{chroot_path!r}] = \"\"\"\\\n{val}\"\"\"\n"
 
     for repo in selected_repos:
@@ -205,16 +206,12 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
         cfg += "enabled=1\n"
         cfg += f"gpgcheck={1 if repo.gpgcheck else 0}\n"
         if repo.gpgcheck and repo.gpgkey:
-            # Write the stored armored key content to a file in the build dir
-            # and reference it as a file:// URL so mock doesn't need internet.
-            key_path = os.path.join(gpgkeys_dir, f'{safe_id}.gpg')
-            with open(key_path, 'w') as _kf:
-                _kf.write(repo.gpgkey)
-            cfg += f"gpgkey=file://{key_path}\n"
+            # Reference the chroot-internal path injected via files[] above
+            cfg += f"gpgkey=file:///etc/pki/fmd/gpgkeys/{safe_id}.gpg\n"
         elif repo.source == 'epel' and repo.gpgcheck:
             rhel_ver = build.distribution.rhel_version
             cfg += f"gpgkey=https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-{rhel_ver}\n"
-        # Reference the chroot-internal cert paths we injected via files[] above.
+        # Reference the chroot-internal cert paths injected via files[] above.
         for ssl_field, suffix in (
             ('sslcacert', 'cacert.pem'),
             ('sslclientcert', 'clientcert.pem'),
@@ -225,11 +222,20 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
                 continue
             if val.startswith('-----BEGIN'):
                 # PEM was injected into chroot at this path
-                cfg += f"{ssl_field}=/etc/pki/fmd/{safe_id}-{suffix}\n"
-            else:
-                # Plain path (pre-sync fallback) — subscription_manager plugin
-                # will have copied it to the same path inside the chroot
+                cfg += f"{ssl_field}=/etc/pki/fmd/certs/{safe_id}-{suffix}\n"
+            elif val.startswith('/etc/pki/') or val.startswith('/etc/rhsm/'):
+                # Standard system path — subscription_manager plugin copies
+                # /etc/pki/entitlement/, /etc/pki/consumer/ and /etc/rhsm/
+                # into the chroot at the same paths, so this reference is valid.
                 cfg += f"{ssl_field}={val}\n"
+            else:
+                # Non-system path (e.g. stale host build-dir path from old data)
+                # — skip it; trigger a repo re-sync to populate PEM content.
+                logger.warning(
+                    "_create_mock_config: repo %s %s value %r does not look like a "
+                    "system cert path or PEM content — skipping (re-sync to fix)",
+                    repo.repo_id, ssl_field, val,
+                )
         if getattr(repo, 'sslclientcert', '') or '':
             cfg += "sslverify=1\n"
         cfg += "\"\"\"\n"
