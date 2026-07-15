@@ -262,10 +262,9 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
 
     # Log the files[] section of the generated config for diagnostics
     files_lines = [l for l in cfg.splitlines() if "config_opts['files']" in l]
-    logger.info(
-        "_create_mock_config: build %s — %d files[] entries in config:\n%s",
-        build_id, len(files_lines), '\n'.join(files_lines),
-    )
+    files_summary = f"Mock config files[] entries ({len(files_lines)}): " + '; '.join(files_lines)
+    logger.info("_create_mock_config: build %s — %s", build_id, files_summary)
+    log_rpm_build(build, 'info', files_summary)
 
     return cfg_path
 
