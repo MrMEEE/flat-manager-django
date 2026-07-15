@@ -1063,14 +1063,30 @@ def _discover_repos_via_container(rhel_version: str, arch: str) -> list[dict] | 
                 rhel_version, len(gk_repos),
                 ', '.join(f"{r['repo_id']}(gpgkey={r.get('gpgkey','')!r})" for r in gk_repos),
             )
-            gk_map = {r['repo_id']: r.get('gpgkey', '') for r in gk_repos}
+            gk_map = {r['repo_id']: r for r in gk_repos}
             for repo in parsed:
-                if not repo.get('gpgkey') and gk_map.get(repo['repo_id']):
-                    repo['gpgkey'] = gk_map[repo['repo_id']]
-                    logger.info(
-                        "Container repo discovery: RHEL %s — repo %s gpgkey set from .repo file: %r",
-                        rhel_version, repo['repo_id'], repo['gpgkey'],
-                    )
+                gk = gk_map.get(repo['repo_id'])
+                if gk:
+                    if not repo.get('gpgkey') and gk.get('gpgkey'):
+                        repo['gpgkey'] = gk['gpgkey']
+                        logger.info(
+                            "Container repo discovery: RHEL %s — repo %s gpgkey set from .repo file: %r",
+                            rhel_version, repo['repo_id'], repo['gpgkey'],
+                        )
+                    # SSL client cert fields only exist in .repo files, not in
+                    # dnf repolist -v output, so always copy them if present.
+                    for ssl_field in ('sslcacert', 'sslclientcert', 'sslclientkey'):
+                        if gk.get(ssl_field):
+                            repo[ssl_field] = gk[ssl_field]
+                            logger.info(
+                                "Container repo discovery: RHEL %s — repo %s %s set from .repo file: %r",
+                                rhel_version, repo['repo_id'], ssl_field, gk[ssl_field],
+                            )
+                        else:
+                            logger.info(
+                                "Container repo discovery: RHEL %s — repo %s has no %s in .repo files",
+                                rhel_version, repo['repo_id'], ssl_field,
+                            )
                 elif not repo.get('gpgkey'):
                     logger.info(
                         "Container repo discovery: RHEL %s — repo %s has no gpgkey in .repo files",
@@ -1079,9 +1095,12 @@ def _discover_repos_via_container(rhel_version: str, arch: str) -> list[dict] | 
             _enrich_repos_with_gpgkey_content(parsed, image, arch)
             for repo in parsed:
                 logger.info(
-                    "Container repo discovery: RHEL %s — repo %s final gpgkey: %s",
+                    "Container repo discovery: RHEL %s — repo %s final gpgkey: %s | sslcacert: %s | sslclientcert: %s | sslclientkey: %s",
                     rhel_version, repo['repo_id'],
                     'armored key (%d chars)' % len(repo['gpgkey']) if repo.get('gpgkey') else 'NONE',
+                    repo.get('sslcacert') or 'NONE',
+                    repo.get('sslclientcert') or 'NONE',
+                    repo.get('sslclientkey') or 'NONE',
                 )
         except Exception as exc:
             logger.warning("Could not enrich gpgkeys for RHEL %s: %s", rhel_version, exc)
