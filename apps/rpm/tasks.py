@@ -92,6 +92,43 @@ def _update_package_status(package):
 # Mock helpers
 # ---------------------------------------------------------------------------
 
+def _extract_dnf_conf_main_section(base_config: str) -> tuple[str, str]:
+    """
+    Read ``/etc/mock/{base_config}.cfg``, find the ``config_opts['dnf.conf']``
+    or ``config_opts['yum.conf']`` assignment, strip all repo stanzas from it
+    keeping only ``[main]``, and return ``(key, cleaned_value)``.
+
+    The returned key is whichever of ``'dnf.conf'`` / ``'yum.conf'`` was found
+    (``'dnf.conf'`` takes precedence).  Falls back to ``('dnf.conf', '[main]\\n')``
+    if the file cannot be read or parsed.
+    """
+    cfg_file = f'/etc/mock/{base_config}.cfg'
+    try:
+        with open(cfg_file, encoding='utf-8', errors='replace') as fh:
+            content = fh.read()
+    except OSError as exc:
+        logger.warning("_extract_dnf_conf_main_section: cannot read %s: %s", cfg_file, exc)
+        return ('dnf.conf', '[main]\n')
+
+    for key in ('dnf.conf', 'yum.conf'):
+        pattern = re.compile(
+            r"config_opts\[(['\"])" + re.escape(key) + r"\1\]\s*=\s*[\"']{3}(.*?)[\"']{3}",
+            re.DOTALL,
+        )
+        m = pattern.search(content)
+        if not m:
+            continue
+        raw_conf = m.group(2)
+        # Keep only the [main] section — everything before the first non-[main] section
+        main_m = re.search(r'\[main\].*?(?=\n\[|\Z)', raw_conf, re.DOTALL)
+        if not main_m:
+            return (key, '[main]\n')
+        return (key, '\n' + main_m.group(0).strip() + '\n')
+
+    logger.warning("_extract_dnf_conf_main_section: no dnf.conf/yum.conf found in %s", cfg_file)
+    return ('dnf.conf', '[main]\n')
+
+
 def _create_mock_config(base_config, build, local_repo_path, allow_internet_access=False, cleanup_on_success=True, cfg_path=None):
     """
     Write a temporary Mock config that inherits from the stock RHEL config and
@@ -112,20 +149,12 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
     cfg += f"config_opts['use_host_resolv'] = {bool(allow_internet_access)}\n"
     cfg += f"config_opts['cleanup_on_success'] = {bool(cleanup_on_success)}\n"
 
-    # Strip all repo stanzas from the inherited dnf.conf / yum.conf, keeping
-    # only [main].  The base config (e.g. rhel-10-x86_64.cfg) defines
-    # baseos/appstream/crb/… inline with enabled=1 (implicit).  We rebuild
-    # both conf keys so that ONLY the repos we explicitly add below are active.
-    cfg += """
-import re as _re
-def _strip_repos(conf_str):
-    m = _re.search(r'\\[main\\].*?(?=\\n\\[|\\Z)', conf_str, _re.DOTALL)
-    return ('\\n' + m.group(0).strip() + '\\n') if m else '[main]\\n'
-for _key in ('dnf.conf', 'yum.conf'):
-    if _key in config_opts and config_opts[_key].strip():
-        config_opts[_key] = _strip_repos(config_opts[_key])
-del _re, _strip_repos, _key
-"""
+    # Read the base mock config, strip all repo stanzas from its dnf.conf /
+    # yum.conf keeping only [main], and assign the cleaned value back.
+    # This ensures ONLY repos we explicitly add below are active.
+    _conf_key, _main_section = _extract_dnf_conf_main_section(base_config)
+    cfg += f"\nconfig_opts[{_conf_key!r}] = {_main_section!r}\n"
+
 
     # Resolve cfg_path early so we can write gpgkey files alongside it
     if cfg_path is None:
