@@ -394,6 +394,10 @@ class RpmRepository(models.Model):
     mirrorlist = models.TextField(blank=True)
     metalink = models.TextField(blank=True)
     gpgcheck = models.BooleanField(default=True)
+    gpgkey = models.TextField(
+        blank=True,
+        help_text="GPG key URL(s) for this repository (space-separated if multiple), as provided by the repo metadata",
+    )
     enabled = models.BooleanField(
         default=False,
         help_text="Pre-selected by default when configuring a new build for this distribution",

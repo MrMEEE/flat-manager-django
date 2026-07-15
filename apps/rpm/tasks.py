@@ -134,7 +134,9 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
             cfg += f"mirrorlist={repo.mirrorlist}\n"
         cfg += "enabled=1\n"
         cfg += f"gpgcheck={1 if repo.gpgcheck else 0}\n"
-        if repo.source == 'epel' and repo.gpgcheck:
+        if repo.gpgcheck and repo.gpgkey:
+            cfg += f"gpgkey={repo.gpgkey}\n"
+        elif repo.source == 'epel' and repo.gpgcheck:
             rhel_ver = build.distribution.rhel_version
             cfg += f"gpgkey=https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-{rhel_ver}\n"
         cfg += "\"\"\"\n"
@@ -693,6 +695,7 @@ def _parse_dnf_repolist_verbose(output: str) -> list[dict]:
             'metalink': current.get('metalink', ''),
             'mirrorlist': current.get('mirrorlist', ''),
             'gpgcheck': current['gpgcheck'],
+            'gpgkey': current.get('gpgkey', ''),
             'source': current['source'],
             'default_enabled': current['default_enabled'],
         })
@@ -723,6 +726,8 @@ def _parse_dnf_repolist_verbose(output: str) -> list[dict]:
             current['repo_file'] = value
         elif key == 'repo-gpgcheck':
             current['gpgcheck_raw'] = value
+        elif key in ('repo-gpgkey', 'repo-gpg-key'):
+            current['gpgkey'] = value
 
     _finish_current()
     return repos
@@ -755,6 +760,7 @@ def _parse_ubi_repo_file(output: str, arch: str) -> list[dict]:
             'metalink': current.get('metalink', ''),
             'mirrorlist': current.get('mirrorlist', ''),
             'gpgcheck': current['gpgcheck'],
+            'gpgkey': current.get('gpgkey', ''),
             'source': current['source'],
             'default_enabled': current['default_enabled'],
         })
@@ -785,6 +791,8 @@ def _parse_ubi_repo_file(output: str, arch: str) -> list[dict]:
             current['enabled_raw'] = value
         elif key == 'gpgcheck':
             current['gpgcheck_raw'] = value
+        elif key == 'gpgkey':
+            current['gpgkey'] = _expand(value)
 
     _finish_current()
     return repos
@@ -889,6 +897,7 @@ def sync_rpm_repositories_for_distribution(dist) -> tuple[int, int]:
                 'mirrorlist': data.get('mirrorlist', ''),
                 'metalink': data.get('metalink', ''),
                 'gpgcheck': data.get('gpgcheck', True),
+                'gpgkey': data.get('gpgkey', ''),
                 'enabled': data.get('default_enabled', False),
                 'source': data.get('source', 'rhsm'),
                 'last_synced': now,
@@ -898,7 +907,7 @@ def sync_rpm_repositories_for_distribution(dist) -> tuple[int, int]:
             created_count += 1
         else:
             # Preserve user's enabled choice; update only metadata.
-            meta_fields = ['name', 'baseurl', 'mirrorlist', 'metalink', 'gpgcheck', 'source']
+            meta_fields = ['name', 'baseurl', 'mirrorlist', 'metalink', 'gpgcheck', 'gpgkey', 'source']
             changed = False
             for field in meta_fields:
                 new_val = data.get(field)
