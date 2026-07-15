@@ -179,12 +179,16 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
     # GPG keys go to /etc/pki/fmd/gpgkeys/, SSL material to /etc/pki/fmd/certs/.
     # Ensure config_opts['files'] exists as a dict (not all base configs define it).
     cfg += "\nconfig_opts['files'] = config_opts.get('files', {})\n"
+    injected_files = []
     for repo in selected_repos:
         safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', repo.repo_id)
-        if repo.gpgcheck and repo.gpgkey:
+        # Only inject a key file when we have actual armored key content.
+        # If gpgkey is a URL/path, it should stay as-is in the repo stanza.
+        if repo.gpgcheck and repo.gpgkey and repo.gpgkey.startswith('-----BEGIN'):
             chroot_gpg = f'/etc/pki/fmd/gpgkeys/{safe_id}.gpg'
             pem_val = repo.gpgkey.rstrip('\n') + '\n'
             cfg += f"\nconfig_opts['files'][{chroot_gpg!r}] = \"\"\"\\\n{pem_val}\"\"\"\n"
+            injected_files.append((repo.repo_id, 'gpgkey', chroot_gpg))
         for ssl_field, suffix in (
             ('sslcacert', 'cacert.pem'),
             ('sslclientcert', 'clientcert.pem'),
@@ -195,6 +199,7 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
                 chroot_path = f'/etc/pki/fmd/certs/{safe_id}-{suffix}'
                 pem_val = val.rstrip('\n') + '\n'
                 cfg += f"\nconfig_opts['files'][{chroot_path!r}] = \"\"\"\\\n{pem_val}\"\"\"\n"
+                injected_files.append((repo.repo_id, ssl_field, chroot_path))
 
     for repo in selected_repos:
         safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', repo.repo_id)
@@ -209,9 +214,12 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
             cfg += f"mirrorlist={repo.mirrorlist}\n"
         cfg += "enabled=1\n"
         cfg += f"gpgcheck={1 if repo.gpgcheck else 0}\n"
-        if repo.gpgcheck and repo.gpgkey:
+        if repo.gpgcheck and repo.gpgkey and repo.gpgkey.startswith('-----BEGIN'):
             # Reference the chroot-internal path injected via files[] above
             cfg += f"gpgkey=file:///etc/pki/fmd/gpgkeys/{safe_id}.gpg\n"
+        elif repo.gpgcheck and repo.gpgkey:
+            # Preserve URL/path style gpgkey values from repo discovery.
+            cfg += f"gpgkey={repo.gpgkey}\n"
         elif repo.source == 'epel' and repo.gpgcheck:
             rhel_ver = build.distribution.rhel_version
             cfg += f"gpgkey=https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-{rhel_ver}\n"
@@ -240,7 +248,7 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
                     "system cert path or PEM content — skipping (re-sync to fix)",
                     repo.repo_id, ssl_field, val,
                 )
-        if getattr(repo, 'sslclientcert', '') or '':
+        if any(getattr(repo, f, '') for f in ('sslcacert', 'sslclientcert', 'sslclientkey')):
             cfg += "sslverify=1\n"
         cfg += "\"\"\"\n"
 
@@ -265,6 +273,12 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
     files_summary = f"Mock config files[] entries ({len(files_lines)}): " + '; '.join(files_lines)
     logger.info("_create_mock_config: build %s — %s", build_id, files_summary)
     log_rpm_build(build, 'info', files_summary)
+    if injected_files:
+        log_rpm_build(build, 'info', f"Mock config will inject {len(injected_files)} file(s) into chroot:")
+        for repo_id, field, path in injected_files:
+            log_rpm_build(build, 'info', f"[files] {repo_id} {field} -> {path}")
+    else:
+        log_rpm_build(build, 'info', "Mock config has no inline files[] injections for this build")
 
     return cfg_path
 
@@ -624,7 +638,7 @@ def rpm_build_task(self, build_id):
         _check_paths = []
         for repo in build.selected_repos.all():
             safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', repo.repo_id)
-            if repo.gpgcheck and repo.gpgkey:
+            if repo.gpgcheck and repo.gpgkey and repo.gpgkey.startswith('-----BEGIN'):
                 _check_paths.append(f'/etc/pki/fmd/gpgkeys/{safe_id}.gpg')
             for ssl_field, suffix in (
                 ('sslcacert', 'cacert.pem'),
@@ -637,9 +651,15 @@ def rpm_build_task(self, build_id):
         if _check_paths:
             log_rpm_build(build, 'info', "Verifying GPG/SSL files inside mock chroot…")
             try:
-                check_script = '; '.join(
-                    f'[ -f {p} ] && echo "FMDCK_OK: {p}" || echo "FMDCK_MISSING: {p}"'
-                    for p in _check_paths
+                quoted_paths = ' '.join(shlex.quote(p) for p in _check_paths)
+                check_script = (
+                    f'for p in {quoted_paths}; do '
+                    'if [ -f "$p" ]; then '
+                    'echo "FMDCK_OK: $p"; '
+                    'else '
+                    'echo "FMDCK_MISSING: $p"; '
+                    'fi; '
+                    'done'
                 )
                 check_result = subprocess.run(
                     ['mock', '-r', mock_cfg_path, '--shell', check_script],
@@ -648,15 +668,25 @@ def rpm_build_task(self, build_id):
                 any_missing = False
                 raw_output = check_result.stdout + check_result.stderr
                 logger.debug("cert-check raw output: %r", raw_output[:2000])
-                for line in raw_output.splitlines():
-                    line = line.strip()
-                    if 'FMDCK_MISSING:' in line:
-                        path = line[line.index('FMDCK_MISSING:') + 14:].strip()
+                ok_paths = re.findall(r'FMDCK_OK:\s*([^\r\n]+)', raw_output)
+                missing_paths = re.findall(r'FMDCK_MISSING:\s*([^\r\n]+)', raw_output)
+                if not ok_paths and not missing_paths:
+                    log_rpm_build(build, 'warning',
+                                  "[cert-check] No FMDCK markers found in mock output; "
+                                  "capturing first output chunk for debugging")
+                    for line in raw_output.splitlines()[:20]:
+                        line = line.strip()
+                        if line:
+                            log_rpm_build(build, 'info', f"[cert-check raw] {line}")
+                for path in ok_paths:
+                    path = path.strip()
+                    if path:
+                        log_rpm_build(build, 'info', f"[cert-check] OK: {path}")
+                for path in missing_paths:
+                    path = path.strip()
+                    if path:
                         log_rpm_build(build, 'warning', f"[cert-check] MISSING: {path}")
                         any_missing = True
-                    elif 'FMDCK_OK:' in line:
-                        path = line[line.index('FMDCK_OK:') + 9:].strip()
-                        log_rpm_build(build, 'info', f"[cert-check] OK: {path}")
                 if any_missing:
                     log_rpm_build(build, 'warning',
                                   "Some GPG/SSL files are missing in the chroot — "
@@ -1059,9 +1089,11 @@ def _enrich_repos_with_gpgkey_content(repos: list, image: str, arch: str) -> Non
     """
     keys_to_fetch: list = []
     for repo in repos:
-        for token in repo.get('gpgkey', '').split():
-            if token.startswith('-----BEGIN'):
-                continue  # already armored content, nothing to fetch
+        gpgkey_val = (repo.get('gpgkey') or '').strip()
+        if not gpgkey_val or gpgkey_val.startswith('-----BEGIN'):
+            # Already armored key material (or empty) should be left as-is.
+            continue
+        for token in gpgkey_val.split():
             keys_to_fetch.append(token)
 
     if not keys_to_fetch:
@@ -1080,6 +1112,8 @@ def _enrich_repos_with_gpgkey_content(repos: list, image: str, arch: str) -> Non
     for repo in repos:
         gpgkey_val = repo.get('gpgkey', '')
         if not gpgkey_val:
+            continue
+        if gpgkey_val.lstrip().startswith('-----BEGIN'):
             continue
         key_parts: list = []
         already_armored: list = []
