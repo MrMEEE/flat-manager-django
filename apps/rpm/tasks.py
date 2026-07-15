@@ -177,6 +177,8 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
     # Mock writes these files into the chroot before dnf runs, so the paths we
     # reference in the repo stanzas exist inside the chroot, not on the host.
     # GPG keys go to /etc/pki/fmd/gpgkeys/, SSL material to /etc/pki/fmd/certs/.
+    # Ensure config_opts['files'] exists as a dict (not all base configs define it).
+    cfg += "\nconfig_opts['files'] = config_opts.get('files', {})\n"
     for repo in selected_repos:
         safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', repo.repo_id)
         if repo.gpgcheck and repo.gpgkey:
@@ -257,6 +259,14 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
 
     with open(cfg_path, 'w') as fh:
         fh.write(cfg)
+
+    # Log the files[] section of the generated config for diagnostics
+    files_lines = [l for l in cfg.splitlines() if "config_opts['files']" in l]
+    logger.info(
+        "_create_mock_config: build %s — %d files[] entries in config:\n%s",
+        build_id, len(files_lines), '\n'.join(files_lines),
+    )
+
     return cfg_path
 
 
