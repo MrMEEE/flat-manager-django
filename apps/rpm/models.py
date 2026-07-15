@@ -398,6 +398,18 @@ class RpmRepository(models.Model):
         blank=True,
         help_text="GPG key URL(s) for this repository (space-separated if multiple), as provided by the repo metadata",
     )
+    sslcacert = models.TextField(
+        blank=True,
+        help_text="Path to CA certificate used to verify the server (e.g. /etc/rhsm/ca/katello-server-ca.pem)",
+    )
+    sslclientcert = models.TextField(
+        blank=True,
+        help_text="Path to client certificate for mutual TLS (RHSM/Satellite entitlement cert)",
+    )
+    sslclientkey = models.TextField(
+        blank=True,
+        help_text="Path to client private key for mutual TLS (RHSM/Satellite entitlement key)",
+    )
     enabled = models.BooleanField(
         default=False,
         help_text="Pre-selected by default when configuring a new build for this distribution",

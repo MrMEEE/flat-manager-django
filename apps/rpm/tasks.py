@@ -198,6 +198,16 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
         elif repo.source == 'epel' and repo.gpgcheck:
             rhel_ver = build.distribution.rhel_version
             cfg += f"gpgkey=https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-{rhel_ver}\n"
+        # Include mutual-TLS fields for RHSM/Satellite repos.  The
+        # subscription_manager plugin copies these cert files into the chroot
+        # at the same paths, so the references remain valid inside mock.
+        if repo.sslcacert:
+            cfg += f"sslcacert={repo.sslcacert}\n"
+        if repo.sslclientcert:
+            cfg += f"sslclientcert={repo.sslclientcert}\n"
+            cfg += "sslverify=1\n"
+        if repo.sslclientkey:
+            cfg += f"sslclientkey={repo.sslclientkey}\n"
         cfg += "\"\"\"\n"
 
     repodata = os.path.join(local_repo_path, 'repodata', 'repomd.xml')
@@ -830,6 +840,9 @@ def _parse_ubi_repo_file(output: str, arch: str) -> list[dict]:
             'mirrorlist': current.get('mirrorlist', ''),
             'gpgcheck': current['gpgcheck'],
             'gpgkey': current.get('gpgkey', ''),
+            'sslcacert': current.get('sslcacert', ''),
+            'sslclientcert': current.get('sslclientcert', ''),
+            'sslclientkey': current.get('sslclientkey', ''),
             'source': current['source'],
             'default_enabled': current['default_enabled'],
         })
@@ -862,6 +875,12 @@ def _parse_ubi_repo_file(output: str, arch: str) -> list[dict]:
             current['gpgcheck_raw'] = value
         elif key == 'gpgkey':
             current['gpgkey'] = _expand(value)
+        elif key == 'sslcacert':
+            current['sslcacert'] = value
+        elif key == 'sslclientcert':
+            current['sslclientcert'] = value
+        elif key == 'sslclientkey':
+            current['sslclientkey'] = value
 
     _finish_current()
     return repos
@@ -1219,6 +1238,9 @@ def sync_rpm_repositories_for_distribution(dist) -> tuple[int, int]:
                 'metalink': data.get('metalink', ''),
                 'gpgcheck': data.get('gpgcheck', True),
                 'gpgkey': data.get('gpgkey', ''),
+                'sslcacert': data.get('sslcacert', ''),
+                'sslclientcert': data.get('sslclientcert', ''),
+                'sslclientkey': data.get('sslclientkey', ''),
                 'enabled': data.get('default_enabled', False),
                 'source': data.get('source', 'rhsm'),
                 'last_synced': now,
@@ -1228,7 +1250,8 @@ def sync_rpm_repositories_for_distribution(dist) -> tuple[int, int]:
             created_count += 1
         else:
             # Preserve user's enabled choice; update only metadata.
-            meta_fields = ['name', 'baseurl', 'mirrorlist', 'metalink', 'gpgcheck', 'gpgkey', 'source']
+            meta_fields = ['name', 'baseurl', 'mirrorlist', 'metalink', 'gpgcheck', 'gpgkey',
+                           'sslcacert', 'sslclientcert', 'sslclientkey', 'source']
             changed = False
             for field in meta_fields:
                 new_val = data.get(field)
