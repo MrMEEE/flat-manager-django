@@ -165,11 +165,13 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
 
     selected_repos = list(build.selected_repos.all())
 
-    # When RHSM repos are selected, enable mock's subscription_manager
-    # plugin.  This plugin is specifically designed to make RHSM entitlement
-    # certs available inside both the bootstrap and the main chroot so that dnf
-    # can resolve baseurls for subscription-gated repos.
-    has_rhsm_repos = any(r.source == 'rhsm' for r in selected_repos)
+    # When RHSM or Satellite/Katello repos are selected, enable mock's
+    # subscription_manager plugin.  This plugin copies the host's RHSM
+    # entitlement certificates (/etc/pki/consumer/ and /etc/pki/entitlement/)
+    # into both the bootstrap and the main chroot so that dnf can authenticate
+    # against subscription-gated repos (including Satellite/Katello CDN repos
+    # that require a valid consumer cert for access).
+    has_rhsm_repos = any(r.source in ('rhsm', 'satellite') for r in selected_repos)
     if has_rhsm_repos:
         cfg += "\nconfig_opts['plugin_conf']['subscription_manager_enable'] = True\n"
 
