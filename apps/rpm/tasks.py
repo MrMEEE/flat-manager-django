@@ -637,13 +637,17 @@ def rpm_build_task(self, build_id):
                     capture_output=True, text=True, timeout=120,
                 )
                 any_missing = False
-                for line in (check_result.stdout + check_result.stderr).splitlines():
+                raw_output = check_result.stdout + check_result.stderr
+                logger.debug("cert-check raw output: %r", raw_output[:2000])
+                for line in raw_output.splitlines():
                     line = line.strip()
-                    if line.startswith('FMDCK_MISSING:'):
-                        log_rpm_build(build, 'warning', f"[cert-check] MISSING: {line[14:].strip()}")
+                    if 'FMDCK_MISSING:' in line:
+                        path = line[line.index('FMDCK_MISSING:') + 14:].strip()
+                        log_rpm_build(build, 'warning', f"[cert-check] MISSING: {path}")
                         any_missing = True
-                    elif line.startswith('FMDCK_OK:'):
-                        log_rpm_build(build, 'info', f"[cert-check] OK: {line[9:].strip()}")
+                    elif 'FMDCK_OK:' in line:
+                        path = line[line.index('FMDCK_OK:') + 9:].strip()
+                        log_rpm_build(build, 'info', f"[cert-check] OK: {path}")
                 if any_missing:
                     log_rpm_build(build, 'warning',
                                   "Some GPG/SSL files are missing in the chroot — "
