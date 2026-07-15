@@ -628,8 +628,8 @@ def rpm_build_task(self, build_id):
         if _check_paths:
             log_rpm_build(build, 'info', "Verifying GPG/SSL files inside mock chroot…")
             try:
-                check_script = ' && '.join(
-                    f'{{ [ -f {p} ] && echo "OK: {p}" || echo "MISSING: {p}"; }}'
+                check_script = '; '.join(
+                    f'[ -f {p} ] && echo "FMDCK_OK: {p}" || echo "FMDCK_MISSING: {p}"'
                     for p in _check_paths
                 )
                 check_result = subprocess.run(
@@ -639,13 +639,11 @@ def rpm_build_task(self, build_id):
                 any_missing = False
                 for line in (check_result.stdout + check_result.stderr).splitlines():
                     line = line.strip()
-                    if not line:
-                        continue
-                    if line.startswith('MISSING:'):
-                        log_rpm_build(build, 'warning', f"[cert-check] {line}")
+                    if line.startswith('FMDCK_MISSING:'):
+                        log_rpm_build(build, 'warning', f"[cert-check] MISSING: {line[14:].strip()}")
                         any_missing = True
-                    elif line.startswith('OK:'):
-                        log_rpm_build(build, 'info', f"[cert-check] {line}")
+                    elif line.startswith('FMDCK_OK:'):
+                        log_rpm_build(build, 'info', f"[cert-check] OK: {line[9:].strip()}")
                 if any_missing:
                     log_rpm_build(build, 'warning',
                                   "Some GPG/SSL files are missing in the chroot — "
