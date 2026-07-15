@@ -181,7 +181,8 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
         safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', repo.repo_id)
         if repo.gpgcheck and repo.gpgkey:
             chroot_gpg = f'/etc/pki/fmd/gpgkeys/{safe_id}.gpg'
-            cfg += f"\nconfig_opts['files'][{chroot_gpg!r}] = \"\"\"\\\n{repo.gpgkey}\"\"\"\n"
+            pem_val = repo.gpgkey.rstrip('\n') + '\n'
+            cfg += f"\nconfig_opts['files'][{chroot_gpg!r}] = \"\"\"\\\n{pem_val}\"\"\"\n"
         for ssl_field, suffix in (
             ('sslcacert', 'cacert.pem'),
             ('sslclientcert', 'clientcert.pem'),
@@ -190,7 +191,8 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
             val = getattr(repo, ssl_field, '') or ''
             if val and val.startswith('-----BEGIN'):
                 chroot_path = f'/etc/pki/fmd/certs/{safe_id}-{suffix}'
-                cfg += f"\nconfig_opts['files'][{chroot_path!r}] = \"\"\"\\\n{val}\"\"\"\n"
+                pem_val = val.rstrip('\n') + '\n'
+                cfg += f"\nconfig_opts['files'][{chroot_path!r}] = \"\"\"\\\n{pem_val}\"\"\"\n"
 
     for repo in selected_repos:
         safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', repo.repo_id)
@@ -623,6 +625,48 @@ def rpm_build_task(self, build_id):
                     log_rpm_build(build, 'info', f"[repolist] {line}")
         except Exception as _exc:
             log_rpm_build(build, 'warning', f"Could not query chroot repolist: {_exc}")
+
+        # ---- Verify injected GPG/SSL files exist inside the chroot ----
+        _check_paths = []
+        for repo in build.selected_repos.all():
+            safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', repo.repo_id)
+            if repo.gpgcheck and repo.gpgkey:
+                _check_paths.append(f'/etc/pki/fmd/gpgkeys/{safe_id}.gpg')
+            for ssl_field, suffix in (
+                ('sslcacert', 'cacert.pem'),
+                ('sslclientcert', 'clientcert.pem'),
+                ('sslclientkey', 'clientkey.pem'),
+            ):
+                val = getattr(repo, ssl_field, '') or ''
+                if val and val.startswith('-----BEGIN'):
+                    _check_paths.append(f'/etc/pki/fmd/certs/{safe_id}-{suffix}')
+        if _check_paths:
+            log_rpm_build(build, 'info', "Verifying GPG/SSL files inside mock chroot…")
+            try:
+                check_script = ' && '.join(
+                    f'{{ [ -f {p} ] && echo "OK: {p}" || echo "MISSING: {p}"; }}'
+                    for p in _check_paths
+                )
+                check_result = subprocess.run(
+                    ['mock', '-r', mock_cfg_path, '--shell', check_script],
+                    capture_output=True, text=True, timeout=120,
+                )
+                any_missing = False
+                for line in (check_result.stdout + check_result.stderr).splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if line.startswith('MISSING:'):
+                        log_rpm_build(build, 'warning', f"[cert-check] {line}")
+                        any_missing = True
+                    elif line.startswith('OK:'):
+                        log_rpm_build(build, 'info', f"[cert-check] {line}")
+                if any_missing:
+                    log_rpm_build(build, 'warning',
+                                  "Some GPG/SSL files are missing in the chroot — "
+                                  "try re-syncing repositories to refresh cert content")
+            except Exception as _exc:
+                log_rpm_build(build, 'warning', f"Could not verify chroot GPG/SSL files: {_exc}")
 
         # ---- Build SRPM ----
         log_rpm_build(build, 'info', f"Building SRPM ({dist.display_name})")
