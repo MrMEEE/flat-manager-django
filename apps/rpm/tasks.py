@@ -162,8 +162,6 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
     os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
     gpgkeys_dir = os.path.join(os.path.dirname(cfg_path), 'gpgkeys')
     os.makedirs(gpgkeys_dir, exist_ok=True)
-    certs_dir = os.path.join(os.path.dirname(cfg_path), 'certs')
-    os.makedirs(certs_dir, exist_ok=True)
 
     selected_repos = list(build.selected_repos.all())
 
@@ -177,7 +175,24 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
     if has_rhsm_repos:
         cfg += "\nconfig_opts['plugin_conf']['subscription_manager_enable'] = True\n"
 
+    # Inject PEM cert content into the chroot via config_opts['files'].
+    # Mock will write these files into the chroot before dnf runs, so the
+    # paths we reference in the repo stanzas will exist inside the chroot.
+    # We use /etc/pki/fmd/ as the chroot-internal directory.
     for repo in selected_repos:
+        safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', repo.repo_id)
+        for ssl_field, suffix in (
+            ('sslcacert', 'cacert.pem'),
+            ('sslclientcert', 'clientcert.pem'),
+            ('sslclientkey', 'clientkey.pem'),
+        ):
+            val = getattr(repo, ssl_field, '') or ''
+            if val and val.startswith('-----BEGIN'):
+                chroot_path = f'/etc/pki/fmd/{safe_id}-{suffix}'
+                cfg += f"\nconfig_opts['files'][{chroot_path!r}] = \"\"\"\\\n{val}\"\"\"\n"
+
+    for repo in selected_repos:
+        safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', repo.repo_id)
         cfg += f"\nconfig_opts[{_conf_key!r}] += \"\"\"\n"
         cfg += f"[{repo.repo_id}]\n"
         cfg += f"name={repo.name}\n"
@@ -192,7 +207,6 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
         if repo.gpgcheck and repo.gpgkey:
             # Write the stored armored key content to a file in the build dir
             # and reference it as a file:// URL so mock doesn't need internet.
-            safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', repo.repo_id)
             key_path = os.path.join(gpgkeys_dir, f'{safe_id}.gpg')
             with open(key_path, 'w') as _kf:
                 _kf.write(repo.gpgkey)
@@ -200,13 +214,7 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
         elif repo.source == 'epel' and repo.gpgcheck:
             rhel_ver = build.distribution.rhel_version
             cfg += f"gpgkey=https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-{rhel_ver}\n"
-        # Include mutual-TLS fields for RHSM/Satellite repos.  The
-        # subscription_manager plugin copies these cert files into the chroot
-        # at the same paths, so the references remain valid inside mock.
-        # If the DB holds PEM content (fetched at sync time), write it to a
-        # file in the build dir and reference that path — this way the build
-        # works even if the entitlement certs on the host have been rotated.
-        safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', repo.repo_id)
+        # Reference the chroot-internal cert paths we injected via files[] above.
         for ssl_field, suffix in (
             ('sslcacert', 'cacert.pem'),
             ('sslclientcert', 'clientcert.pem'),
@@ -216,15 +224,13 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
             if not val:
                 continue
             if val.startswith('-----BEGIN'):
-                # PEM content stored in DB — write to build dir
-                cert_path = os.path.join(certs_dir, f'{safe_id}-{suffix}')
-                with open(cert_path, 'w') as _cf:
-                    _cf.write(val)
-                cfg += f"{ssl_field}={cert_path}\n"
+                # PEM was injected into chroot at this path
+                cfg += f"{ssl_field}=/etc/pki/fmd/{safe_id}-{suffix}\n"
             else:
-                # Fallback: plain path stored (pre-migration data)
+                # Plain path (pre-sync fallback) — subscription_manager plugin
+                # will have copied it to the same path inside the chroot
                 cfg += f"{ssl_field}={val}\n"
-        if (getattr(repo, 'sslclientcert', '') or ''):
+        if getattr(repo, 'sslclientcert', '') or '':
             cfg += "sslverify=1\n"
         cfg += "\"\"\"\n"
 
