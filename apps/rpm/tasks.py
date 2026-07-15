@@ -822,6 +822,10 @@ def _fetch_gpgkey_files_from_container(image: str, file_paths: list) -> dict:
     if not file_paths:
         return {}
     unique_paths = sorted(set(file_paths))
+    logger.info(
+        "_fetch_gpgkey_files_from_container: image=%s, fetching %d path(s)/URL(s): %s",
+        image, len(unique_paths), unique_paths,
+    )
     parts = []
     for p in unique_paths:
         sep = f'===FMDK:{p}==='
@@ -845,6 +849,10 @@ def _fetch_gpgkey_files_from_container(image: str, file_paths: list) -> dict:
         logger.debug("_fetch_gpgkey_files_from_container failed: %s", exc)
         return {}
 
+    logger.debug(
+        "_fetch_gpgkey_files_from_container: raw output (%d bytes): %s",
+        len(result.stdout), result.stdout[:1000],
+    )
     contents: dict = {}
     current_path: str | None = None
     current_lines: list = []
@@ -862,7 +870,13 @@ def _fetch_gpgkey_files_from_container(image: str, file_paths: list) -> dict:
         elif current_path is not None:
             current_lines.append(line)
 
-    return {k: v for k, v in contents.items() if v}
+    result = {k: v for k, v in contents.items() if v}
+    logger.info(
+        "_fetch_gpgkey_files_from_container: retrieved key content for %d/%d path(s): %s",
+        len(result), len(unique_paths),
+        {k: f'{len(v)} chars' for k, v in result.items()},
+    )
+    return result
 
 
 def _enrich_repos_with_gpgkey_content(repos: list, image: str, arch: str) -> None:
@@ -884,7 +898,13 @@ def _enrich_repos_with_gpgkey_content(repos: list, image: str, arch: str) -> Non
             keys_to_fetch.append(token)
 
     if not keys_to_fetch:
+        logger.info("_enrich_repos_with_gpgkey_content: no gpgkey paths/URLs to fetch")
         return
+
+    logger.info(
+        "_enrich_repos_with_gpgkey_content: will fetch %d gpgkey path(s)/URL(s): %s",
+        len(keys_to_fetch), keys_to_fetch,
+    )
 
     key_contents = _fetch_gpgkey_files_from_container(image, keys_to_fetch)
     if not key_contents:
@@ -937,6 +957,11 @@ def _discover_repos_via_container(rhel_version: str, arch: str) -> list[dict] | 
 
     parsed = _parse_dnf_repolist_verbose(result.stdout)
     if parsed:
+        logger.info(
+            "Container repo discovery: RHEL %s — dnf repolist found %d repo(s): %s",
+            rhel_version, len(parsed),
+            ', '.join(r['repo_id'] for r in parsed),
+        )
         # dnf repolist -v does not include gpgkey.  Get the gpgkey= values from
         # the .repo files inside the container, then fetch the actual key files
         # they reference and store the armored key content in the parsed dicts.
@@ -946,14 +971,38 @@ def _discover_repos_via_container(rhel_version: str, arch: str) -> list[dict] | 
                  'sh', '-lc', 'cat /etc/yum.repos.d/*.repo 2>/dev/null || true'],
                 capture_output=True, text=True, timeout=60,
             )
+            logger.debug(
+                "Container repo discovery: RHEL %s — raw .repo files content (%d bytes):\n%s",
+                rhel_version, len(gk_result.stdout), gk_result.stdout[:2000],
+            )
             gk_repos = _parse_ubi_repo_file(gk_result.stdout, arch)
+            logger.info(
+                "Container repo discovery: RHEL %s — parsed %d repo stanza(s) from .repo files: %s",
+                rhel_version, len(gk_repos),
+                ', '.join(f"{r['repo_id']}(gpgkey={r.get('gpgkey','')!r})" for r in gk_repos),
+            )
             gk_map = {r['repo_id']: r.get('gpgkey', '') for r in gk_repos}
             for repo in parsed:
                 if not repo.get('gpgkey') and gk_map.get(repo['repo_id']):
                     repo['gpgkey'] = gk_map[repo['repo_id']]
+                    logger.info(
+                        "Container repo discovery: RHEL %s — repo %s gpgkey set from .repo file: %r",
+                        rhel_version, repo['repo_id'], repo['gpgkey'],
+                    )
+                elif not repo.get('gpgkey'):
+                    logger.info(
+                        "Container repo discovery: RHEL %s — repo %s has no gpgkey in .repo files",
+                        rhel_version, repo['repo_id'],
+                    )
             _enrich_repos_with_gpgkey_content(parsed, image, arch)
+            for repo in parsed:
+                logger.info(
+                    "Container repo discovery: RHEL %s — repo %s final gpgkey: %s",
+                    rhel_version, repo['repo_id'],
+                    'armored key (%d chars)' % len(repo['gpgkey']) if repo.get('gpgkey') else 'NONE',
+                )
         except Exception as exc:
-            logger.debug("Could not enrich gpgkeys for RHEL %s: %s", rhel_version, exc)
+            logger.warning("Could not enrich gpgkeys for RHEL %s: %s", rhel_version, exc)
         return parsed
 
     fallback_cmd = [

@@ -15,6 +15,7 @@ Environment=PATH=/opt/flat-manager/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/
 ExecStart=/opt/flat-manager/venv/bin/celery \
     -A config beat \
     --loglevel=info \
+    --logfile=/var/log/flat-manager/celery-beat.log \
     --scheduler django_celery_beat.schedulers:DatabaseScheduler
 
 RuntimeDirectory=flat-manager

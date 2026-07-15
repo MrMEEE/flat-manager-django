@@ -17,7 +17,8 @@ ExecStart=/opt/flat-manager/venv/bin/celery \
     -A config worker \
     --queues=build \
     --hostname=build@%h \
-    --loglevel=info
+    --loglevel=info \
+    --logfile=/var/log/flat-manager/celery.log
 
 RuntimeDirectory=flat-manager
 RuntimeDirectoryMode=0750

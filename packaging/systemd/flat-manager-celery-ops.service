@@ -19,7 +19,8 @@ ExecStart=/opt/flat-manager/venv/bin/celery \
     --queues=ops \
     --concurrency=${CELERY_OPS_WORKER_CONCURRENCY} \
     --hostname=ops@%h \
-    --loglevel=info
+    --loglevel=info \
+    --logfile=/var/log/flat-manager/celery-ops.log
 
 RuntimeDirectory=flat-manager
 RuntimeDirectoryMode=0750

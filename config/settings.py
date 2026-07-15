@@ -259,6 +259,11 @@ LOGGING = {
             'filename': os.path.join(_LOG_DIR, 'django.log'),
             'formatter': 'verbose',
         },
+        'rpm_file': {
+            'class': 'logging.FileHandler',
+            'filename': os.path.join(_LOG_DIR, 'rpm.log'),
+            'formatter': 'verbose',
+        },
     },
     'root': {
         'handlers': ['console', 'file'],
@@ -272,6 +277,11 @@ LOGGING = {
         },
         'celery': {
             'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'apps.rpm': {
+            'handlers': ['console', 'file', 'rpm_file'],
             'level': 'INFO',
             'propagate': False,
         },
