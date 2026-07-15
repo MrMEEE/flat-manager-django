@@ -611,21 +611,6 @@ def rpm_build_task(self, build_id):
             f"Chroot cleanup on success: {'enabled' if build.package.cleanup_on_success else 'disabled'}",
         )
 
-        # ---- Log active repos inside the chroot ----
-        log_rpm_build(build, 'info', "Querying enabled repositories inside mock chroot…")
-        try:
-            repolist_result = subprocess.run(
-                ['mock', '-r', mock_cfg_path, '--shell', 'dnf repolist --enabled -v 2>/dev/null || yum repolist enabled -v 2>/dev/null || echo "(repolist unavailable)"'],
-                capture_output=True, text=True, timeout=120,
-            )
-            repolist_output = (repolist_result.stdout + repolist_result.stderr).strip()
-            for line in repolist_output.splitlines():
-                line = line.strip()
-                if line:
-                    log_rpm_build(build, 'info', f"[repolist] {line}")
-        except Exception as _exc:
-            log_rpm_build(build, 'warning', f"Could not query chroot repolist: {_exc}")
-
         # ---- Verify injected GPG/SSL files exist inside the chroot ----
         _check_paths = []
         for repo in build.selected_repos.all():
@@ -667,6 +652,21 @@ def rpm_build_task(self, build_id):
                                   "try re-syncing repositories to refresh cert content")
             except Exception as _exc:
                 log_rpm_build(build, 'warning', f"Could not verify chroot GPG/SSL files: {_exc}")
+
+        # ---- Log active repos inside the chroot ----
+        log_rpm_build(build, 'info', "Querying enabled repositories inside mock chroot…")
+        try:
+            repolist_result = subprocess.run(
+                ['mock', '-r', mock_cfg_path, '--shell', 'dnf repolist --enabled -v 2>/dev/null || yum repolist enabled -v 2>/dev/null || echo "(repolist unavailable)"'],
+                capture_output=True, text=True, timeout=120,
+            )
+            repolist_output = (repolist_result.stdout + repolist_result.stderr).strip()
+            for line in repolist_output.splitlines():
+                line = line.strip()
+                if line:
+                    log_rpm_build(build, 'info', f"[repolist] {line}")
+        except Exception as _exc:
+            log_rpm_build(build, 'warning', f"Could not query chroot repolist: {_exc}")
 
         # ---- Build SRPM ----
         log_rpm_build(build, 'info', f"Building SRPM ({dist.display_name})")
