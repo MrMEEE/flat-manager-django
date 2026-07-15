@@ -1018,9 +1018,11 @@ def _discover_repos_via_container(rhel_version: str, arch: str) -> list[dict] | 
     be pulled, or no repos are found.
     """
     image = f'registry.access.redhat.com/ubi{rhel_version}/ubi:latest'
-    repo_cmd = ['dnf', 'repolist', '--all', '-v']
+    # --disablerepo='*' prevents dnf from fetching any package metadata while
+    # still listing all configured repos — makes discovery much faster.
+    repo_cmd = ['dnf', '--disablerepo=*', 'repolist', '--all', '-v']
     if str(rhel_version) == '7':
-        repo_cmd = ['yum', 'repolist', 'all', '-v']
+        repo_cmd = ['yum', '--disablerepo=*', 'repolist', 'all', '-v']
     cmd = ['podman', 'run', '--rm', '--quiet', image, *repo_cmd]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
@@ -1050,7 +1052,7 @@ def _discover_repos_via_container(rhel_version: str, arch: str) -> list[dict] | 
         try:
             gk_result = subprocess.run(
                 ['podman', 'run', '--rm', '--quiet', image,
-                 'sh', '-lc', 'dnf repolist --all && cat /etc/yum.repos.d/*.repo 2>/dev/null || true'],
+                 'sh', '-lc', 'cat /etc/yum.repos.d/*.repo 2>/dev/null || true'],
                 capture_output=True, text=True, timeout=60,
             )
             logger.debug(
