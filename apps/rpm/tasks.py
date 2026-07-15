@@ -809,18 +809,32 @@ def _parse_ubi_repo_file(output: str, arch: str) -> list[dict]:
 
 def _fetch_gpgkey_files_from_container(image: str, file_paths: list) -> dict:
     """
-    Cat a set of absolute file paths inside a container and return their
-    contents as a ``{path: content}`` dict.  Paths that are unreadable are
-    silently omitted.
+    Retrieve GPG key material for a set of paths/URLs from inside *image*.
+
+    - Absolute paths (``/etc/pki/…``) and ``file://`` paths are cat-ted.
+    - ``http://`` / ``https://`` URLs are downloaded with curl (falling back
+      to wget) inside the container so the key is fetched in the same network
+      context as the container.
+
+    Returns a ``{path_or_url: armored_key_content}`` dict.
+    Entries that are unreadable / unreachable are silently omitted.
     """
     if not file_paths:
         return {}
     unique_paths = sorted(set(file_paths))
     parts = []
     for p in unique_paths:
-        # Use a unique sentinel so we can split the combined output
         sep = f'===FMDK:{p}==='
-        parts.append(f'printf "%s\\n" "{sep}"; cat "{p}" 2>/dev/null; printf "%s\\n" "===FMDEND==="')
+        if p.startswith('http://') or p.startswith('https://'):
+            # Try curl first, fall back to wget; both write to stdout
+            fetch = (
+                f'curl -fsSL "{p}" 2>/dev/null || wget -qO- "{p}" 2>/dev/null || true'
+            )
+        else:
+            # Local path (strip leading file:// if present)
+            local = p[7:] if p.startswith('file://') else p
+            fetch = f'cat "{local}" 2>/dev/null || true'
+        parts.append(f'printf "%s\\n" "{sep}"; {fetch}; printf "%s\\n" "===FMDEND==="')
     script = '; '.join(parts)
     try:
         result = subprocess.run(
@@ -853,22 +867,26 @@ def _fetch_gpgkey_files_from_container(image: str, file_paths: list) -> dict:
 
 def _enrich_repos_with_gpgkey_content(repos: list, image: str, arch: str) -> None:
     """
-    Replace gpgkey file:// / absolute-path URLs in *repos* with the actual
-    armored GPG key content fetched from *image*.  Modifies *repos* in-place.
-    https:// URLs are left unchanged so mock can fetch them at build time.
-    """
-    file_paths: list = []
-    for repo in repos:
-        for url in repo.get('gpgkey', '').split():
-            if url.startswith('file://'):
-                file_paths.append(url[7:])
-            elif url.startswith('/'):
-                file_paths.append(url)
+    Replace gpgkey values in *repos* with the actual armored GPG key content
+    fetched from *image*.  Handles:
 
-    if not file_paths:
+    - ``file:///path`` and absolute paths  → cat inside the container
+    - ``http://`` / ``https://`` URLs      → downloaded inside the container
+
+    Already-armored content (starts with ``-----BEGIN``) is left unchanged.
+    Modifies *repos* in-place.
+    """
+    keys_to_fetch: list = []
+    for repo in repos:
+        for token in repo.get('gpgkey', '').split():
+            if token.startswith('-----BEGIN'):
+                continue  # already armored content, nothing to fetch
+            keys_to_fetch.append(token)
+
+    if not keys_to_fetch:
         return
 
-    key_contents = _fetch_gpgkey_files_from_container(image, file_paths)
+    key_contents = _fetch_gpgkey_files_from_container(image, keys_to_fetch)
     if not key_contents:
         return
 
@@ -877,18 +895,15 @@ def _enrich_repos_with_gpgkey_content(repos: list, image: str, arch: str) -> Non
         if not gpgkey_val:
             continue
         key_parts: list = []
-        for url in gpgkey_val.split():
-            if url.startswith('file://'):
-                path = url[7:]
-            elif url.startswith('/'):
-                path = url
-            else:
-                continue
-            content = key_contents.get(path, '')
-            if content:
-                key_parts.append(content)
-        if key_parts:
-            repo['gpgkey'] = '\n'.join(key_parts)
+        already_armored: list = []
+        for token in gpgkey_val.split():
+            if token.startswith('-----BEGIN'):
+                already_armored.append(token)
+            elif token in key_contents:
+                key_parts.append(key_contents[token])
+        combined = already_armored + key_parts
+        if combined:
+            repo['gpgkey'] = '\n'.join(combined)
 
 
 def _discover_repos_via_container(rhel_version: str, arch: str) -> list[dict] | None:
