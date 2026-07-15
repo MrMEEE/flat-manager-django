@@ -1052,7 +1052,7 @@ def _discover_repos_via_container(rhel_version: str, arch: str) -> list[dict] | 
         try:
             gk_result = subprocess.run(
                 ['podman', 'run', '--rm', '--quiet', image,
-                 'sh', '-lc', 'cat /etc/yum.repos.d/*.repo 2>/dev/null || true'],
+                 'sh', '-lc', 'dnf --disablerepo="*" repolist --all 2>/dev/null; cat /etc/yum.repos.d/*.repo 2>/dev/null || true'],
                 capture_output=True, text=True, timeout=60,
             )
             logger.debug(
