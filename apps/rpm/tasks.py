@@ -94,47 +94,16 @@ def _update_package_status(package):
 
 def _extract_dnf_conf_main_section(base_config: str) -> tuple[str, str]:
     """
-    Read ``/etc/mock/{base_config}.cfg``, find the ``config_opts['dnf.conf']``
-    or ``config_opts['yum.conf']`` assignment, strip all repo stanzas from it
-    keeping only ``[main]``, and return ``(key, cleaned_value)``.
+    Return the minimal package-manager config block we need for unattended
+    builds.  We intentionally do not try to preserve distro-specific repo stanzas
+    from the base config here; Mock repo entries are appended separately below.
 
-    The returned key is whichever of ``'dnf.conf'`` / ``'yum.conf'`` was found
-    (``'dnf.conf'`` takes precedence).  Falls back to ``('dnf.conf', '[main]\\n')``
-    if the file cannot be read or parsed.
+    The returned key is always ``'dnf.conf'``.  The block always includes
+    ``assumeyes=1`` and ``reposdir=/dev/null`` so DNF never prompts and never
+    falls back to host-wide repos.
     """
-    cfg_file = f'/etc/mock/{base_config}.cfg'
-    try:
-        with open(cfg_file, encoding='utf-8', errors='replace') as fh:
-            content = fh.read()
-    except OSError as exc:
-        logger.warning("_extract_dnf_conf_main_section: cannot read %s: %s", cfg_file, exc)
-        return ('dnf.conf', '[main]\n')
-
-    for key in ('dnf.conf', 'yum.conf'):
-        pattern = re.compile(
-            r"config_opts\[(['\"])" + re.escape(key) + r"\1\]\s*=\s*[\"']{3}(.*?)[\"']{3}",
-            re.DOTALL,
-        )
-        m = pattern.search(content)
-        if not m:
-            continue
-        raw_conf = m.group(2)
-        # Keep only the [main] section — everything before the first non-[main] section.
-        # Then force the settings Mock needs for unattended builds.
-        main_m = re.search(r'\[main\].*?(?=\n\[|\Z)', raw_conf, re.DOTALL)
-        if not main_m:
-            main_section = '[main]\n'
-        else:
-            main_section = '\n' + main_m.group(0).strip() + '\n'
-
-        if not re.search(r'(?m)^\s*assumeyes\s*=\s*1\s*$', main_section):
-            main_section += 'assumeyes=1\n'
-        if not re.search(r'(?m)^\s*reposdir\s*=\s*/dev/null\s*$', main_section):
-            main_section += 'reposdir=/dev/null\n'
-        return (key, main_section)
-
-    logger.warning("_extract_dnf_conf_main_section: no dnf.conf/yum.conf found in %s", cfg_file)
-    return ('dnf.conf', '[main]\n')
+    _ = base_config
+    return ('dnf.conf', '[main]\nassumeyes=1\nreposdir=/dev/null\n')
 
 
 def _is_inline_gpg_key_content(value: str) -> bool:
