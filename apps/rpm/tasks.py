@@ -220,6 +220,7 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
     # GPG keys go to /etc/pki/fmd/gpgkeys/, SSL material to /etc/pki/fmd/certs/.
     # Ensure config_opts['files'] exists as a dict (not all base configs define it).
     cfg += "\nconfig_opts['files'] = config_opts.get('files', {})\n"
+    cfg += "config_opts['bootstrap_files'] = config_opts.get('bootstrap_files', {})\n"
     injected_files = []
     for repo in selected_repos:
         safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', repo.repo_id)
@@ -229,6 +230,7 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
             chroot_gpg = f'/etc/pki/fmd/gpgkeys/{safe_id}.gpg'
             pem_val = repo.gpgkey.rstrip('\n') + '\n'
             cfg += f"\nconfig_opts['files'][{chroot_gpg!r}] = \"\"\"\\\n{pem_val}\"\"\"\n"
+            cfg += f"config_opts['bootstrap_files'][{chroot_gpg!r}] = \"\"\"\\\n{pem_val}\"\"\"\n"
             injected_files.append((repo.repo_id, 'gpgkey', chroot_gpg))
         for ssl_field, suffix in (
             ('sslcacert', 'cacert.pem'),
@@ -240,6 +242,7 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
                 chroot_path = f'/etc/pki/fmd/certs/{safe_id}-{suffix}'
                 pem_val = val.rstrip('\n') + '\n'
                 cfg += f"\nconfig_opts['files'][{chroot_path!r}] = \"\"\"\\\n{pem_val}\"\"\"\n"
+                cfg += f"config_opts['bootstrap_files'][{chroot_path!r}] = \"\"\"\\\n{pem_val}\"\"\"\n"
                 injected_files.append((repo.repo_id, ssl_field, chroot_path))
 
     if injected_files:
