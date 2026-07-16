@@ -1432,7 +1432,7 @@ def _discover_repos_from_host(rhel_version: str, arch: str) -> list[dict]:
     return combined
 
 
-def sync_rpm_repositories_for_distribution(dist) -> tuple[int, int]:
+def sync_rpm_repositories_for_distribution(dist) -> tuple[int, int, int]:
     """
     Discover and upsert RpmRepository records for *dist*.
 
@@ -1447,7 +1447,7 @@ def sync_rpm_repositories_for_distribution(dist) -> tuple[int, int]:
     The user's ``enabled`` flag is preserved on existing records;
     only metadata (name, URLs, gpgkey) is updated on re-sync.
 
-    Returns ``(created_count, updated_count)``.
+    Returns ``(created_count, updated_count, removed_count)``.
     """
     from apps.rpm.models import RpmRepository
 
@@ -1455,6 +1455,7 @@ def sync_rpm_repositories_for_distribution(dist) -> tuple[int, int]:
         _discover_repos_via_container(dist.rhel_version, dist.arch)
         or []
     )
+    live_repo_ids = {repo['repo_id'] for repo in repos_data}
 
     # Merge in repos from the host's own yum.repos.d so that RHSM-managed
     # repos (which only appear on a subscribed host, not inside a plain UBI
@@ -1480,6 +1481,7 @@ def sync_rpm_repositories_for_distribution(dist) -> tuple[int, int]:
     now = timezone.now()
     created_count = 0
     updated_count = 0
+    removed_count = 0
 
     for data in repos_data:
         repo, created = RpmRepository.objects.get_or_create(
@@ -1518,9 +1520,27 @@ def sync_rpm_repositories_for_distribution(dist) -> tuple[int, int]:
             if changed:
                 updated_count += 1
 
+    # Remove repos that are no longer discoverable, but only when we were able
+    # to discover at least one live repo source. That avoids deleting the whole
+    # repo set if upstream repo discovery transiently fails.
+    if live_repo_ids:
+        stale_repos = (
+            RpmRepository.objects
+            .filter(distribution=dist)
+            .exclude(repo_id__in={r['repo_id'] for r in repos_data})
+        )
+        for repo in stale_repos:
+            repo.delete()
+            removed_count += 1
+    elif RpmRepository.objects.filter(distribution=dist).exists():
+        logger.warning(
+            "sync_rpm_repositories_for_distribution: skipping stale repo cleanup for %s because no live repos were discovered",
+            dist.name,
+        )
+
     dist.repos_synced_at = now
     dist.save(update_fields=['repos_synced_at'])
-    return created_count, updated_count
+    return created_count, updated_count, removed_count
 
 
 @shared_task(name='rpm.sync_distribution_repos', queue='ops')
@@ -1535,9 +1555,15 @@ def sync_distribution_repos_task(dist_pk: int):
     except RpmDistribution.DoesNotExist:
         logger.warning("sync_distribution_repos_task: dist %s not found", dist_pk)
         return
-    created, updated = sync_rpm_repositories_for_distribution(dist)
-    logger.info("Synced repos for %s: +%d created, %d updated", dist.name, created, updated)
-    return {'created': created, 'updated': updated}
+    created, updated, removed = sync_rpm_repositories_for_distribution(dist)
+    logger.info(
+        "Synced repos for %s: +%d created, %d updated, -%d removed",
+        dist.name,
+        created,
+        updated,
+        removed,
+    )
+    return {'created': created, 'updated': updated, 'removed': removed}
 
 
 @shared_task(name='rpm.sync_rpm_repositories', queue='ops')
@@ -1551,10 +1577,16 @@ def sync_rpm_repositories_task():
     total_created = total_updated = 0
     for dist in RpmDistribution.objects.filter(is_active=True):
         try:
-            created, updated = sync_rpm_repositories_for_distribution(dist)
+            created, updated, removed = sync_rpm_repositories_for_distribution(dist)
             total_created += created
             total_updated += updated
-            logger.info("Synced repos for %s: +%d created, %d updated", dist.name, created, updated)
+            logger.info(
+                "Synced repos for %s: +%d created, %d updated, -%d removed",
+                dist.name,
+                created,
+                updated,
+                removed,
+            )
         except Exception:
             logger.exception("Failed to sync repos for distribution %s", dist.name)
 
