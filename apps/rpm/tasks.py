@@ -185,6 +185,7 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
     """
     build_id = build.pk
     cfg = f"include('/etc/mock/{base_config}.cfg')\n\n"
+    cfg += f"config_opts['root'] = '{base_config}-fmd{build_id}'\n"
     cfg += f"config_opts['uniqueext'] = 'fmd{build_id}'\n"
     cfg += f"config_opts['rpmbuild_networking'] = {bool(allow_internet_access)}\n"
     cfg += f"config_opts['use_host_resolv'] = {bool(allow_internet_access)}\n"
@@ -274,11 +275,6 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
             "config_opts['plugin_conf']['bind_mount_opts']['dirs'].append(" 
             f"({injected_host_pki!r}, '/etc/pki/fmd'))\n"
         )
-        cfg += "config_opts['bootstrap_plugin_conf']['bind_mount_enable'] = True\n"
-        cfg += (
-            "config_opts['bootstrap_plugin_conf']['bind_mount_opts']['dirs'].append(" 
-            f"({injected_host_pki!r}, '/etc/pki/fmd'))\n"
-        )
 
     for repo in selected_repos:
         safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', repo.repo_id)
@@ -365,6 +361,7 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
             log_rpm_build(build, 'info', f"[files] {repo_id} {field} -> {path}")
     else:
         log_rpm_build(build, 'info', "Mock config has no inline files[] injections for this build")
+    log_rpm_build(build, 'info', f"Using isolated mock root: {base_config}-fmd{build_id}")
 
     return cfg_path
 
