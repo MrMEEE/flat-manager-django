@@ -119,11 +119,19 @@ def _extract_dnf_conf_main_section(base_config: str) -> tuple[str, str]:
         if not m:
             continue
         raw_conf = m.group(2)
-        # Keep only the [main] section — everything before the first non-[main] section
+        # Keep only the [main] section — everything before the first non-[main] section.
+        # Then force the settings Mock needs for unattended builds.
         main_m = re.search(r'\[main\].*?(?=\n\[|\Z)', raw_conf, re.DOTALL)
         if not main_m:
-            return (key, '[main]\n')
-        return (key, '\n' + main_m.group(0).strip() + '\n')
+            main_section = '[main]\n'
+        else:
+            main_section = '\n' + main_m.group(0).strip() + '\n'
+
+        if not re.search(r'(?m)^\s*assumeyes\s*=\s*1\s*$', main_section):
+            main_section += 'assumeyes=1\n'
+        if not re.search(r'(?m)^\s*reposdir\s*=\s*/dev/null\s*$', main_section):
+            main_section += 'reposdir=/dev/null\n'
+        return (key, main_section)
 
     logger.warning("_extract_dnf_conf_main_section: no dnf.conf/yum.conf found in %s", cfg_file)
     return ('dnf.conf', '[main]\n')
