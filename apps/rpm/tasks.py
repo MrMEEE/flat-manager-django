@@ -221,6 +221,21 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
     # Ensure config_opts['files'] exists as a dict (not all base configs define it).
     cfg += "\nconfig_opts['files'] = config_opts.get('files', {})\n"
     cfg += "config_opts['bootstrap_files'] = config_opts.get('bootstrap_files', {})\n"
+    injected_host_root = os.path.join(os.path.dirname(cfg_path), 'injected-pki')
+    injected_host_pki = os.path.join(injected_host_root, 'fmd')
+    os.makedirs(injected_host_pki, exist_ok=True)
+
+    def _write_injected_host_file(chroot_path: str, content: str) -> None:
+        """Write injected file content into a host dir that can be bind-mounted."""
+        prefix = '/etc/pki/fmd/'
+        if not chroot_path.startswith(prefix):
+            return
+        rel_path = chroot_path[len(prefix):]
+        host_path = os.path.join(injected_host_pki, rel_path)
+        os.makedirs(os.path.dirname(host_path), exist_ok=True)
+        with open(host_path, 'w', encoding='utf-8') as fh:
+            fh.write(content)
+
     injected_files = []
     for repo in selected_repos:
         safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', repo.repo_id)
@@ -231,6 +246,7 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
             pem_val = repo.gpgkey.rstrip('\n') + '\n'
             cfg += f"\nconfig_opts['files'][{chroot_gpg!r}] = \"\"\"\\\n{pem_val}\"\"\"\n"
             cfg += f"config_opts['bootstrap_files'][{chroot_gpg!r}] = \"\"\"\\\n{pem_val}\"\"\"\n"
+            _write_injected_host_file(chroot_gpg, pem_val)
             injected_files.append((repo.repo_id, 'gpgkey', chroot_gpg))
         for ssl_field, suffix in (
             ('sslcacert', 'cacert.pem'),
@@ -243,6 +259,7 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
                 pem_val = val.rstrip('\n') + '\n'
                 cfg += f"\nconfig_opts['files'][{chroot_path!r}] = \"\"\"\\\n{pem_val}\"\"\"\n"
                 cfg += f"config_opts['bootstrap_files'][{chroot_path!r}] = \"\"\"\\\n{pem_val}\"\"\"\n"
+                _write_injected_host_file(chroot_path, pem_val)
                 injected_files.append((repo.repo_id, ssl_field, chroot_path))
 
     if injected_files:
@@ -250,6 +267,18 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
         # With root_cache, a reused cached root can skip that step and miss our
         # injected cert/key files. Disable root_cache for this build config.
         cfg += "\nconfig_opts['plugin_conf']['root_cache_enable'] = False\n"
+        # Bind-mount injected cert/key files into both main and bootstrap
+        # chroots as a robust fallback to files[] injection.
+        cfg += "config_opts['plugin_conf']['bind_mount_enable'] = True\n"
+        cfg += (
+            "config_opts['plugin_conf']['bind_mount_opts']['dirs'].append(" 
+            f"({injected_host_pki!r}, '/etc/pki/fmd'))\n"
+        )
+        cfg += "config_opts['bootstrap_plugin_conf']['bind_mount_enable'] = True\n"
+        cfg += (
+            "config_opts['bootstrap_plugin_conf']['bind_mount_opts']['dirs'].append(" 
+            f"({injected_host_pki!r}, '/etc/pki/fmd'))\n"
+        )
 
     for repo in selected_repos:
         safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', repo.repo_id)
@@ -320,11 +349,17 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
 
     # Log the files[] section of the generated config for diagnostics
     files_lines = [l for l in cfg.splitlines() if "config_opts['files']" in l]
-    files_summary = f"Mock config files[] entries ({len(files_lines)}): " + '; '.join(files_lines)
+    bootstrap_files_lines = [l for l in cfg.splitlines() if "config_opts['bootstrap_files']" in l]
+    files_summary = (
+        f"Mock config files[] entries ({len(files_lines)}), "
+        f"bootstrap_files[] entries ({len(bootstrap_files_lines)}): "
+        + '; '.join(files_lines + bootstrap_files_lines)
+    )
     logger.info("_create_mock_config: build %s — %s", build_id, files_summary)
     log_rpm_build(build, 'info', files_summary)
     if injected_files:
         log_rpm_build(build, 'info', "Disabled mock root_cache because files[] injection is used")
+        log_rpm_build(build, 'info', f"Bind-mounting injected PKI directory into chroot: {injected_host_pki} -> /etc/pki/fmd")
         log_rpm_build(build, 'info', f"Mock config will inject {len(injected_files)} file(s) into chroot:")
         for repo_id, field, path in injected_files:
             log_rpm_build(build, 'info', f"[files] {repo_id} {field} -> {path}")
@@ -715,7 +750,7 @@ def rpm_build_task(self, build_id):
                     'done'
                 )
                 check_result = subprocess.run(
-                    ['mock', '-r', mock_cfg_path, '--shell', check_script],
+                    ['mock', '-r', mock_cfg_path, '--no-bootstrap-chroot', '--shell', check_script],
                     capture_output=True, text=True, timeout=120,
                 )
                 any_missing = False
@@ -751,7 +786,7 @@ def rpm_build_task(self, build_id):
         log_rpm_build(build, 'info', "Querying enabled repositories inside mock chroot…")
         try:
             repolist_result = subprocess.run(
-                ['mock', '-r', mock_cfg_path, '--shell', 'dnf repolist --enabled -v 2>/dev/null || yum repolist enabled -v 2>/dev/null || echo "(repolist unavailable)"'],
+                ['mock', '-r', mock_cfg_path, '--no-bootstrap-chroot', '--shell', 'dnf repolist --enabled -v 2>/dev/null || yum repolist enabled -v 2>/dev/null || echo "(repolist unavailable)"'],
                 capture_output=True, text=True, timeout=120,
             )
             repolist_output = (repolist_result.stdout + repolist_result.stderr).strip()
