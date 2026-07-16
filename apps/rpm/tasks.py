@@ -242,6 +242,12 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
                 cfg += f"\nconfig_opts['files'][{chroot_path!r}] = \"\"\"\\\n{pem_val}\"\"\"\n"
                 injected_files.append((repo.repo_id, ssl_field, chroot_path))
 
+    if injected_files:
+        # files[] payload is created only during full chroot initialization in Mock.
+        # With root_cache, a reused cached root can skip that step and miss our
+        # injected cert/key files. Disable root_cache for this build config.
+        cfg += "\nconfig_opts['plugin_conf']['root_cache_enable'] = False\n"
+
     for repo in selected_repos:
         safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', repo.repo_id)
         cfg += f"\nconfig_opts[{_conf_key!r}] += \"\"\"\n"
@@ -315,6 +321,7 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
     logger.info("_create_mock_config: build %s — %s", build_id, files_summary)
     log_rpm_build(build, 'info', files_summary)
     if injected_files:
+        log_rpm_build(build, 'info', "Disabled mock root_cache because files[] injection is used")
         log_rpm_build(build, 'info', f"Mock config will inject {len(injected_files)} file(s) into chroot:")
         for repo_id, field, path in injected_files:
             log_rpm_build(build, 'info', f"[files] {repo_id} {field} -> {path}")
@@ -711,8 +718,8 @@ def rpm_build_task(self, build_id):
                 any_missing = False
                 raw_output = check_result.stdout + check_result.stderr
                 logger.debug("cert-check raw output: %r", raw_output[:2000])
-                ok_paths = re.findall(r'FMDCK_OK:\s*([^\r\n]+)', raw_output)
-                missing_paths = re.findall(r'FMDCK_MISSING:\s*([^\r\n]+)', raw_output)
+                ok_paths = re.findall(r'(?m)^FMDCK_OK:\s*([^\r\n]+)$', raw_output)
+                missing_paths = re.findall(r'(?m)^FMDCK_MISSING:\s*([^\r\n]+)$', raw_output)
                 if not ok_paths and not missing_paths:
                     log_rpm_build(build, 'warning',
                                   "[cert-check] No FMDCK markers found in mock output; "
