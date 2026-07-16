@@ -129,6 +129,47 @@ def _extract_dnf_conf_main_section(base_config: str) -> tuple[str, str]:
     return ('dnf.conf', '[main]\n')
 
 
+def _is_inline_gpg_key_content(value: str) -> bool:
+    """Return True when *value* looks like inline key material, not a URL/path."""
+    if not value:
+        return False
+    v = value.strip()
+    if not v:
+        return False
+    # URL/path values belong directly in gpgkey=, but multiline key content must
+    # be injected through config_opts['files'] and referenced via file://.
+    if v.startswith('http://') or v.startswith('https://') or v.startswith('file://'):
+        return False
+    if v.startswith('/'):
+        return False
+    if '\n' in v or '\r' in v:
+        return True
+    if 'BEGIN PGP PUBLIC KEY BLOCK' in v:
+        return True
+    return False
+
+
+def _is_inline_ssl_pem_content(value: str) -> bool:
+    """Return True when *value* looks like inline PEM/cert/key content."""
+    if not value:
+        return False
+    v = value.strip()
+    if not v:
+        return False
+    # URL/path values belong directly in ssl* fields in repo stanzas.
+    if v.startswith('http://') or v.startswith('https://') or v.startswith('file://'):
+        return False
+    if v.startswith('/'):
+        return False
+    # Inline PEM/key content is often multiline and may not start directly with
+    # "-----BEGIN" (e.g. bag attributes or preamble text).
+    if '\n' in v or '\r' in v:
+        return True
+    if '-----BEGIN ' in v:
+        return True
+    return False
+
+
 def _create_mock_config(base_config, build, local_repo_path, allow_internet_access=False, cleanup_on_success=True, cfg_path=None):
     """
     Write a temporary Mock config that inherits from the stock RHEL config and
@@ -184,7 +225,7 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
         safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', repo.repo_id)
         # Only inject a key file when we have actual armored key content.
         # If gpgkey is a URL/path, it should stay as-is in the repo stanza.
-        if repo.gpgcheck and repo.gpgkey and repo.gpgkey.startswith('-----BEGIN'):
+        if repo.gpgcheck and repo.gpgkey and _is_inline_gpg_key_content(repo.gpgkey):
             chroot_gpg = f'/etc/pki/fmd/gpgkeys/{safe_id}.gpg'
             pem_val = repo.gpgkey.rstrip('\n') + '\n'
             cfg += f"\nconfig_opts['files'][{chroot_gpg!r}] = \"\"\"\\\n{pem_val}\"\"\"\n"
@@ -195,7 +236,7 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
             ('sslclientkey', 'clientkey.pem'),
         ):
             val = getattr(repo, ssl_field, '') or ''
-            if val and val.startswith('-----BEGIN'):
+            if val and _is_inline_ssl_pem_content(val):
                 chroot_path = f'/etc/pki/fmd/certs/{safe_id}-{suffix}'
                 pem_val = val.rstrip('\n') + '\n'
                 cfg += f"\nconfig_opts['files'][{chroot_path!r}] = \"\"\"\\\n{pem_val}\"\"\"\n"
@@ -214,7 +255,7 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
             cfg += f"mirrorlist={repo.mirrorlist}\n"
         cfg += "enabled=1\n"
         cfg += f"gpgcheck={1 if repo.gpgcheck else 0}\n"
-        if repo.gpgcheck and repo.gpgkey and repo.gpgkey.startswith('-----BEGIN'):
+        if repo.gpgcheck and repo.gpgkey and _is_inline_gpg_key_content(repo.gpgkey):
             # Reference the chroot-internal path injected via files[] above
             cfg += f"gpgkey=file:///etc/pki/fmd/gpgkeys/{safe_id}.gpg\n"
         elif repo.gpgcheck and repo.gpgkey:
@@ -232,7 +273,7 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
             val = getattr(repo, ssl_field, '') or ''
             if not val:
                 continue
-            if val.startswith('-----BEGIN'):
+            if _is_inline_ssl_pem_content(val):
                 # PEM was injected into chroot at this path
                 cfg += f"{ssl_field}=/etc/pki/fmd/certs/{safe_id}-{suffix}\n"
             elif val.startswith('/etc/pki/') or val.startswith('/etc/rhsm/'):
@@ -638,7 +679,7 @@ def rpm_build_task(self, build_id):
         _check_paths = []
         for repo in build.selected_repos.all():
             safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', repo.repo_id)
-            if repo.gpgcheck and repo.gpgkey and repo.gpgkey.startswith('-----BEGIN'):
+            if repo.gpgcheck and repo.gpgkey and _is_inline_gpg_key_content(repo.gpgkey):
                 _check_paths.append(f'/etc/pki/fmd/gpgkeys/{safe_id}.gpg')
             for ssl_field, suffix in (
                 ('sslcacert', 'cacert.pem'),
@@ -646,12 +687,14 @@ def rpm_build_task(self, build_id):
                 ('sslclientkey', 'clientkey.pem'),
             ):
                 val = getattr(repo, ssl_field, '') or ''
-                if val and val.startswith('-----BEGIN'):
+                if val and _is_inline_ssl_pem_content(val):
                     _check_paths.append(f'/etc/pki/fmd/certs/{safe_id}-{suffix}')
         if _check_paths:
             log_rpm_build(build, 'info', "Verifying GPG/SSL files inside mock chroot…")
             try:
-                quoted_paths = ' '.join(shlex.quote(p) for p in _check_paths)
+                # mock --shell wraps command text; avoid single-quote based
+                # escaping here because it can interfere with that wrapper.
+                quoted_paths = ' '.join(f'"{p}"' for p in _check_paths)
                 check_script = (
                     f'for p in {quoted_paths}; do '
                     'if [ -f "$p" ]; then '
