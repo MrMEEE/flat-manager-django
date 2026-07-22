@@ -2,7 +2,7 @@
 
 A modern reimplementation of [flat-manager](https://github.com/flatpak/flat-manager) in Python/Django, with flatpak lifecycle management, extended with RPM package management, LDAP authentication, and a Bootstrap 5 web UI.
 
-**Current version:** 0.9.10
+**Current version:** 0.9.11
 
 ## Features
 

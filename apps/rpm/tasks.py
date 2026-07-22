@@ -94,39 +94,57 @@ def _update_package_status(package):
 
 def _extract_dnf_conf_main_section(base_config: str) -> tuple[str, str]:
     """
-    Read ``/etc/mock/{base_config}.cfg``, find the ``config_opts['dnf.conf']``
-    or ``config_opts['yum.conf']`` assignment, strip all repo stanzas from it
-    keeping only ``[main]``, and return ``(key, cleaned_value)``.
+    Return the minimal package-manager config block we need for unattended
+    builds.  We intentionally do not try to preserve distro-specific repo stanzas
+    from the base config here; Mock repo entries are appended separately below.
 
-    The returned key is whichever of ``'dnf.conf'`` / ``'yum.conf'`` was found
-    (``'dnf.conf'`` takes precedence).  Falls back to ``('dnf.conf', '[main]\\n')``
-    if the file cannot be read or parsed.
+    The returned key is always ``'dnf.conf'``.  The block always includes
+    ``assumeyes=1`` and ``reposdir=/dev/null`` so DNF never prompts and never
+    falls back to host-wide repos.
     """
-    cfg_file = f'/etc/mock/{base_config}.cfg'
-    try:
-        with open(cfg_file, encoding='utf-8', errors='replace') as fh:
-            content = fh.read()
-    except OSError as exc:
-        logger.warning("_extract_dnf_conf_main_section: cannot read %s: %s", cfg_file, exc)
-        return ('dnf.conf', '[main]\n')
+    _ = base_config
+    return ('dnf.conf', '[main]\nassumeyes=1\nreposdir=/dev/null\n')
 
-    for key in ('dnf.conf', 'yum.conf'):
-        pattern = re.compile(
-            r"config_opts\[(['\"])" + re.escape(key) + r"\1\]\s*=\s*[\"']{3}(.*?)[\"']{3}",
-            re.DOTALL,
-        )
-        m = pattern.search(content)
-        if not m:
-            continue
-        raw_conf = m.group(2)
-        # Keep only the [main] section — everything before the first non-[main] section
-        main_m = re.search(r'\[main\].*?(?=\n\[|\Z)', raw_conf, re.DOTALL)
-        if not main_m:
-            return (key, '[main]\n')
-        return (key, '\n' + main_m.group(0).strip() + '\n')
 
-    logger.warning("_extract_dnf_conf_main_section: no dnf.conf/yum.conf found in %s", cfg_file)
-    return ('dnf.conf', '[main]\n')
+def _is_inline_gpg_key_content(value: str) -> bool:
+    """Return True when *value* looks like inline key material, not a URL/path."""
+    if not value:
+        return False
+    v = value.strip()
+    if not v:
+        return False
+    # URL/path values belong directly in gpgkey=, but multiline key content must
+    # be injected through config_opts['files'] and referenced via file://.
+    if v.startswith('http://') or v.startswith('https://') or v.startswith('file://'):
+        return False
+    if v.startswith('/'):
+        return False
+    if '\n' in v or '\r' in v:
+        return True
+    if 'BEGIN PGP PUBLIC KEY BLOCK' in v:
+        return True
+    return False
+
+
+def _is_inline_ssl_pem_content(value: str) -> bool:
+    """Return True when *value* looks like inline PEM/cert/key content."""
+    if not value:
+        return False
+    v = value.strip()
+    if not v:
+        return False
+    # URL/path values belong directly in ssl* fields in repo stanzas.
+    if v.startswith('http://') or v.startswith('https://') or v.startswith('file://'):
+        return False
+    if v.startswith('/'):
+        return False
+    # Inline PEM/key content is often multiline and may not start directly with
+    # "-----BEGIN" (e.g. bag attributes or preamble text).
+    if '\n' in v or '\r' in v:
+        return True
+    if '-----BEGIN ' in v:
+        return True
+    return False
 
 
 def _create_mock_config(base_config, build, local_repo_path, allow_internet_access=False, cleanup_on_success=True, cfg_path=None):
@@ -144,6 +162,7 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
     """
     build_id = build.pk
     cfg = f"include('/etc/mock/{base_config}.cfg')\n\n"
+    cfg += f"config_opts['root'] = '{base_config}-fmd{build_id}'\n"
     cfg += f"config_opts['uniqueext'] = 'fmd{build_id}'\n"
     cfg += f"config_opts['rpmbuild_networking'] = {bool(allow_internet_access)}\n"
     cfg += f"config_opts['use_host_resolv'] = {bool(allow_internet_access)}\n"
@@ -179,22 +198,60 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
     # GPG keys go to /etc/pki/fmd/gpgkeys/, SSL material to /etc/pki/fmd/certs/.
     # Ensure config_opts['files'] exists as a dict (not all base configs define it).
     cfg += "\nconfig_opts['files'] = config_opts.get('files', {})\n"
+    cfg += "config_opts['bootstrap_files'] = config_opts.get('bootstrap_files', {})\n"
+    injected_host_root = os.path.join(os.path.dirname(cfg_path), 'injected-pki')
+    injected_host_pki = os.path.join(injected_host_root, 'fmd')
+    os.makedirs(injected_host_pki, exist_ok=True)
+
+    def _write_injected_host_file(chroot_path: str, content: str) -> None:
+        """Write injected file content into a host dir that can be bind-mounted."""
+        prefix = '/etc/pki/fmd/'
+        if not chroot_path.startswith(prefix):
+            return
+        rel_path = chroot_path[len(prefix):]
+        host_path = os.path.join(injected_host_pki, rel_path)
+        os.makedirs(os.path.dirname(host_path), exist_ok=True)
+        with open(host_path, 'w', encoding='utf-8') as fh:
+            fh.write(content)
+
+    injected_files = []
     for repo in selected_repos:
         safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', repo.repo_id)
-        if repo.gpgcheck and repo.gpgkey:
+        # Only inject a key file when we have actual armored key content.
+        # If gpgkey is a URL/path, it should stay as-is in the repo stanza.
+        if repo.gpgcheck and repo.gpgkey and _is_inline_gpg_key_content(repo.gpgkey):
             chroot_gpg = f'/etc/pki/fmd/gpgkeys/{safe_id}.gpg'
             pem_val = repo.gpgkey.rstrip('\n') + '\n'
             cfg += f"\nconfig_opts['files'][{chroot_gpg!r}] = \"\"\"\\\n{pem_val}\"\"\"\n"
+            cfg += f"config_opts['bootstrap_files'][{chroot_gpg!r}] = \"\"\"\\\n{pem_val}\"\"\"\n"
+            _write_injected_host_file(chroot_gpg, pem_val)
+            injected_files.append((repo.repo_id, 'gpgkey', chroot_gpg))
         for ssl_field, suffix in (
             ('sslcacert', 'cacert.pem'),
             ('sslclientcert', 'clientcert.pem'),
             ('sslclientkey', 'clientkey.pem'),
         ):
             val = getattr(repo, ssl_field, '') or ''
-            if val and val.startswith('-----BEGIN'):
+            if val and _is_inline_ssl_pem_content(val):
                 chroot_path = f'/etc/pki/fmd/certs/{safe_id}-{suffix}'
                 pem_val = val.rstrip('\n') + '\n'
                 cfg += f"\nconfig_opts['files'][{chroot_path!r}] = \"\"\"\\\n{pem_val}\"\"\"\n"
+                cfg += f"config_opts['bootstrap_files'][{chroot_path!r}] = \"\"\"\\\n{pem_val}\"\"\"\n"
+                _write_injected_host_file(chroot_path, pem_val)
+                injected_files.append((repo.repo_id, ssl_field, chroot_path))
+
+    if injected_files:
+        # files[] payload is created only during full chroot initialization in Mock.
+        # With root_cache, a reused cached root can skip that step and miss our
+        # injected cert/key files. Disable root_cache for this build config.
+        cfg += "\nconfig_opts['plugin_conf']['root_cache_enable'] = False\n"
+        # Bind-mount injected cert/key files into both main and bootstrap
+        # chroots as a robust fallback to files[] injection.
+        cfg += "config_opts['plugin_conf']['bind_mount_enable'] = True\n"
+        cfg += (
+            "config_opts['plugin_conf']['bind_mount_opts']['dirs'].append(" 
+            f"({injected_host_pki!r}, '/etc/pki/fmd'))\n"
+        )
 
     for repo in selected_repos:
         safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', repo.repo_id)
@@ -209,9 +266,12 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
             cfg += f"mirrorlist={repo.mirrorlist}\n"
         cfg += "enabled=1\n"
         cfg += f"gpgcheck={1 if repo.gpgcheck else 0}\n"
-        if repo.gpgcheck and repo.gpgkey:
+        if repo.gpgcheck and repo.gpgkey and _is_inline_gpg_key_content(repo.gpgkey):
             # Reference the chroot-internal path injected via files[] above
             cfg += f"gpgkey=file:///etc/pki/fmd/gpgkeys/{safe_id}.gpg\n"
+        elif repo.gpgcheck and repo.gpgkey:
+            # Preserve URL/path style gpgkey values from repo discovery.
+            cfg += f"gpgkey={repo.gpgkey}\n"
         elif repo.source == 'epel' and repo.gpgcheck:
             rhel_ver = build.distribution.rhel_version
             cfg += f"gpgkey=https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-{rhel_ver}\n"
@@ -224,7 +284,7 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
             val = getattr(repo, ssl_field, '') or ''
             if not val:
                 continue
-            if val.startswith('-----BEGIN'):
+            if _is_inline_ssl_pem_content(val):
                 # PEM was injected into chroot at this path
                 cfg += f"{ssl_field}=/etc/pki/fmd/certs/{safe_id}-{suffix}\n"
             elif val.startswith('/etc/pki/') or val.startswith('/etc/rhsm/'):
@@ -240,7 +300,7 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
                     "system cert path or PEM content — skipping (re-sync to fix)",
                     repo.repo_id, ssl_field, val,
                 )
-        if getattr(repo, 'sslclientcert', '') or '':
+        if any(getattr(repo, f, '') for f in ('sslcacert', 'sslclientcert', 'sslclientkey')):
             cfg += "sslverify=1\n"
         cfg += "\"\"\"\n"
 
@@ -262,9 +322,23 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
 
     # Log the files[] section of the generated config for diagnostics
     files_lines = [l for l in cfg.splitlines() if "config_opts['files']" in l]
-    files_summary = f"Mock config files[] entries ({len(files_lines)}): " + '; '.join(files_lines)
+    bootstrap_files_lines = [l for l in cfg.splitlines() if "config_opts['bootstrap_files']" in l]
+    files_summary = (
+        f"Mock config files[] entries ({len(files_lines)}), "
+        f"bootstrap_files[] entries ({len(bootstrap_files_lines)}): "
+        + '; '.join(files_lines + bootstrap_files_lines)
+    )
     logger.info("_create_mock_config: build %s — %s", build_id, files_summary)
     log_rpm_build(build, 'info', files_summary)
+    if injected_files:
+        log_rpm_build(build, 'info', "Disabled mock root_cache because files[] injection is used")
+        log_rpm_build(build, 'info', f"Bind-mounting injected PKI directory into chroot: {injected_host_pki} -> /etc/pki/fmd")
+        log_rpm_build(build, 'info', f"Mock config will inject {len(injected_files)} file(s) into chroot:")
+        for repo_id, field, path in injected_files:
+            log_rpm_build(build, 'info', f"[files] {repo_id} {field} -> {path}")
+    else:
+        log_rpm_build(build, 'info', "Mock config has no inline files[] injections for this build")
+    log_rpm_build(build, 'info', f"Using isolated mock root: {base_config}-fmd{build_id}")
 
     return cfg_path
 
@@ -624,7 +698,7 @@ def rpm_build_task(self, build_id):
         _check_paths = []
         for repo in build.selected_repos.all():
             safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', repo.repo_id)
-            if repo.gpgcheck and repo.gpgkey:
+            if repo.gpgcheck and repo.gpgkey and _is_inline_gpg_key_content(repo.gpgkey):
                 _check_paths.append(f'/etc/pki/fmd/gpgkeys/{safe_id}.gpg')
             for ssl_field, suffix in (
                 ('sslcacert', 'cacert.pem'),
@@ -632,31 +706,49 @@ def rpm_build_task(self, build_id):
                 ('sslclientkey', 'clientkey.pem'),
             ):
                 val = getattr(repo, ssl_field, '') or ''
-                if val and val.startswith('-----BEGIN'):
+                if val and _is_inline_ssl_pem_content(val):
                     _check_paths.append(f'/etc/pki/fmd/certs/{safe_id}-{suffix}')
         if _check_paths:
             log_rpm_build(build, 'info', "Verifying GPG/SSL files inside mock chroot…")
             try:
-                check_script = '; '.join(
-                    f'[ -f {p} ] && echo "FMDCK_OK: {p}" || echo "FMDCK_MISSING: {p}"'
-                    for p in _check_paths
+                # mock --shell wraps command text; avoid single-quote based
+                # escaping here because it can interfere with that wrapper.
+                quoted_paths = ' '.join(f'"{p}"' for p in _check_paths)
+                check_script = (
+                    f'for p in {quoted_paths}; do '
+                    'if [ -f "$p" ]; then '
+                    'echo "FMDCK_OK: $p"; '
+                    'else '
+                    'echo "FMDCK_MISSING: $p"; '
+                    'fi; '
+                    'done'
                 )
                 check_result = subprocess.run(
-                    ['mock', '-r', mock_cfg_path, '--shell', check_script],
+                    ['mock', '-r', mock_cfg_path, '--no-bootstrap-chroot', '--shell', check_script],
                     capture_output=True, text=True, timeout=120,
                 )
                 any_missing = False
                 raw_output = check_result.stdout + check_result.stderr
                 logger.debug("cert-check raw output: %r", raw_output[:2000])
-                for line in raw_output.splitlines():
-                    line = line.strip()
-                    if 'FMDCK_MISSING:' in line:
-                        path = line[line.index('FMDCK_MISSING:') + 14:].strip()
+                ok_paths = re.findall(r'(?m)^FMDCK_OK:\s*([^\r\n]+)$', raw_output)
+                missing_paths = re.findall(r'(?m)^FMDCK_MISSING:\s*([^\r\n]+)$', raw_output)
+                if not ok_paths and not missing_paths:
+                    log_rpm_build(build, 'warning',
+                                  "[cert-check] No FMDCK markers found in mock output; "
+                                  "capturing first output chunk for debugging")
+                    for line in raw_output.splitlines()[:20]:
+                        line = line.strip()
+                        if line:
+                            log_rpm_build(build, 'info', f"[cert-check raw] {line}")
+                for path in ok_paths:
+                    path = path.strip()
+                    if path:
+                        log_rpm_build(build, 'info', f"[cert-check] OK: {path}")
+                for path in missing_paths:
+                    path = path.strip()
+                    if path:
                         log_rpm_build(build, 'warning', f"[cert-check] MISSING: {path}")
                         any_missing = True
-                    elif 'FMDCK_OK:' in line:
-                        path = line[line.index('FMDCK_OK:') + 9:].strip()
-                        log_rpm_build(build, 'info', f"[cert-check] OK: {path}")
                 if any_missing:
                     log_rpm_build(build, 'warning',
                                   "Some GPG/SSL files are missing in the chroot — "
@@ -668,7 +760,7 @@ def rpm_build_task(self, build_id):
         log_rpm_build(build, 'info', "Querying enabled repositories inside mock chroot…")
         try:
             repolist_result = subprocess.run(
-                ['mock', '-r', mock_cfg_path, '--shell', 'dnf repolist --enabled -v 2>/dev/null || yum repolist enabled -v 2>/dev/null || echo "(repolist unavailable)"'],
+                ['mock', '-r', mock_cfg_path, '--no-bootstrap-chroot', '--shell', 'dnf repolist --enabled -v 2>/dev/null || yum repolist enabled -v 2>/dev/null || echo "(repolist unavailable)"'],
                 capture_output=True, text=True, timeout=120,
             )
             repolist_output = (repolist_result.stdout + repolist_result.stderr).strip()
@@ -1059,9 +1151,11 @@ def _enrich_repos_with_gpgkey_content(repos: list, image: str, arch: str) -> Non
     """
     keys_to_fetch: list = []
     for repo in repos:
-        for token in repo.get('gpgkey', '').split():
-            if token.startswith('-----BEGIN'):
-                continue  # already armored content, nothing to fetch
+        gpgkey_val = (repo.get('gpgkey') or '').strip()
+        if not gpgkey_val or gpgkey_val.startswith('-----BEGIN'):
+            # Already armored key material (or empty) should be left as-is.
+            continue
+        for token in gpgkey_val.split():
             keys_to_fetch.append(token)
 
     if not keys_to_fetch:
@@ -1080,6 +1174,8 @@ def _enrich_repos_with_gpgkey_content(repos: list, image: str, arch: str) -> Non
     for repo in repos:
         gpgkey_val = repo.get('gpgkey', '')
         if not gpgkey_val:
+            continue
+        if gpgkey_val.lstrip().startswith('-----BEGIN'):
             continue
         key_parts: list = []
         already_armored: list = []
@@ -1336,7 +1432,7 @@ def _discover_repos_from_host(rhel_version: str, arch: str) -> list[dict]:
     return combined
 
 
-def sync_rpm_repositories_for_distribution(dist) -> tuple[int, int]:
+def sync_rpm_repositories_for_distribution(dist) -> tuple[int, int, int]:
     """
     Discover and upsert RpmRepository records for *dist*.
 
@@ -1351,7 +1447,7 @@ def sync_rpm_repositories_for_distribution(dist) -> tuple[int, int]:
     The user's ``enabled`` flag is preserved on existing records;
     only metadata (name, URLs, gpgkey) is updated on re-sync.
 
-    Returns ``(created_count, updated_count)``.
+    Returns ``(created_count, updated_count, removed_count)``.
     """
     from apps.rpm.models import RpmRepository
 
@@ -1359,6 +1455,7 @@ def sync_rpm_repositories_for_distribution(dist) -> tuple[int, int]:
         _discover_repos_via_container(dist.rhel_version, dist.arch)
         or []
     )
+    live_repo_ids = {repo['repo_id'] for repo in repos_data}
 
     # Merge in repos from the host's own yum.repos.d so that RHSM-managed
     # repos (which only appear on a subscribed host, not inside a plain UBI
@@ -1384,6 +1481,7 @@ def sync_rpm_repositories_for_distribution(dist) -> tuple[int, int]:
     now = timezone.now()
     created_count = 0
     updated_count = 0
+    removed_count = 0
 
     for data in repos_data:
         repo, created = RpmRepository.objects.get_or_create(
@@ -1422,9 +1520,27 @@ def sync_rpm_repositories_for_distribution(dist) -> tuple[int, int]:
             if changed:
                 updated_count += 1
 
+    # Remove repos that are no longer discoverable, but only when we were able
+    # to discover at least one live repo source. That avoids deleting the whole
+    # repo set if upstream repo discovery transiently fails.
+    if live_repo_ids:
+        stale_repos = (
+            RpmRepository.objects
+            .filter(distribution=dist)
+            .exclude(repo_id__in={r['repo_id'] for r in repos_data})
+        )
+        for repo in stale_repos:
+            repo.delete()
+            removed_count += 1
+    elif RpmRepository.objects.filter(distribution=dist).exists():
+        logger.warning(
+            "sync_rpm_repositories_for_distribution: skipping stale repo cleanup for %s because no live repos were discovered",
+            dist.name,
+        )
+
     dist.repos_synced_at = now
     dist.save(update_fields=['repos_synced_at'])
-    return created_count, updated_count
+    return created_count, updated_count, removed_count
 
 
 @shared_task(name='rpm.sync_distribution_repos', queue='ops')
@@ -1439,9 +1555,15 @@ def sync_distribution_repos_task(dist_pk: int):
     except RpmDistribution.DoesNotExist:
         logger.warning("sync_distribution_repos_task: dist %s not found", dist_pk)
         return
-    created, updated = sync_rpm_repositories_for_distribution(dist)
-    logger.info("Synced repos for %s: +%d created, %d updated", dist.name, created, updated)
-    return {'created': created, 'updated': updated}
+    created, updated, removed = sync_rpm_repositories_for_distribution(dist)
+    logger.info(
+        "Synced repos for %s: +%d created, %d updated, -%d removed",
+        dist.name,
+        created,
+        updated,
+        removed,
+    )
+    return {'created': created, 'updated': updated, 'removed': removed}
 
 
 @shared_task(name='rpm.sync_rpm_repositories', queue='ops')
@@ -1455,10 +1577,16 @@ def sync_rpm_repositories_task():
     total_created = total_updated = 0
     for dist in RpmDistribution.objects.filter(is_active=True):
         try:
-            created, updated = sync_rpm_repositories_for_distribution(dist)
+            created, updated, removed = sync_rpm_repositories_for_distribution(dist)
             total_created += created
             total_updated += updated
-            logger.info("Synced repos for %s: +%d created, %d updated", dist.name, created, updated)
+            logger.info(
+                "Synced repos for %s: +%d created, %d updated, -%d removed",
+                dist.name,
+                created,
+                updated,
+                removed,
+            )
         except Exception:
             logger.exception("Failed to sync repos for distribution %s", dist.name)
 
