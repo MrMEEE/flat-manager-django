@@ -103,7 +103,7 @@ def post(url, auth, path, payload, verify_ssl=True) -> tuple[dict | None, str]:
 
 def api_list(url, auth, path, verify_ssl=True) -> list[dict]:
     """Fetch a paginated Katello API list. Returns [] on failure."""
-    result, err = get(url, auth, path + "?per_page=200", verify_ssl)
+    result, err = get(url, auth, path + "?enabled=true", verify_ssl)
     if err or result is None:
         return []
     return result.get("results", result) if isinstance(result, dict) else result
