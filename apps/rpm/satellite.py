@@ -288,32 +288,63 @@ def push_rpm(rpm_path: str, url: str, login: str, token: str, repository_id: int
     if not upload_id:
         return f"No upload_id in response: {result}"
 
-    # Step 2: PUT the file as multipart/form-data
-    boundary = "--------fmd_boundary"
-    body = (
-        f"--{boundary}\r\nContent-Disposition: form-data; name=\"size\"\r\n\r\n{file_size}\r\n"
-        f"--{boundary}\r\nContent-Disposition: form-data; name=\"offset\"\r\n\r\n0\r\n"
-        f"--{boundary}\r\nContent-Disposition: form-data; name=\"content\"; filename=\"{filename}\"\r\n"
-        f"Content-Type: application/octet-stream\r\n\r\n"
-    ).encode() + file_data + f"\r\n--{boundary}--\r\n".encode()
-
     put_url = url.rstrip("/") + f"/katello/api/v2/repositories/{repository_id}/content_uploads/{upload_id}"
-    req = urllib.request.Request(put_url, data=body, method="PUT")
-    req.add_header("Authorization", auth)
-    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
-    req.add_header("Accept", "application/json")
-    try:
-        with urllib.request.urlopen(req, timeout=120, context=_ssl_ctx(verify_ssl)) as resp:
-            resp.read()
-    except urllib.error.HTTPError as exc:
-        detail = ""
+
+    def _put_raw_upload() -> str:
+        req = urllib.request.Request(put_url, data=file_data, method="PUT")
+        req.add_header("Authorization", auth)
+        req.add_header("Content-Type", "application/octet-stream")
+        req.add_header("Content-Range", f"bytes 0-{file_size - 1}/{file_size}")
+        req.add_header("Accept", "application/json")
         try:
-            detail = exc.read().decode()
-        except Exception:
-            pass
-        return f"File upload failed: HTTP {exc.code}: {detail}"
-    except Exception as exc:
-        return f"File upload failed: {exc}"
+            with urllib.request.urlopen(req, timeout=120, context=_ssl_ctx(verify_ssl)) as resp:
+                resp.read()
+            return ""
+        except urllib.error.HTTPError as exc:
+            detail = ""
+            try:
+                detail = exc.read().decode()
+            except Exception:
+                pass
+            return f"HTTP {exc.code}: {detail}"
+        except Exception as exc:
+            return str(exc)
+
+    def _put_multipart_upload() -> str:
+        boundary = "--------fmd_boundary"
+        body = (
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"size\"\r\n\r\n{file_size}\r\n"
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"offset\"\r\n\r\n0\r\n"
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"content\"; filename=\"{filename}\"\r\n"
+            f"Content-Type: application/octet-stream\r\n\r\n"
+        ).encode() + file_data + f"\r\n--{boundary}--\r\n".encode()
+        req = urllib.request.Request(put_url, data=body, method="PUT")
+        req.add_header("Authorization", auth)
+        req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+        req.add_header("Accept", "application/json")
+        try:
+            with urllib.request.urlopen(req, timeout=120, context=_ssl_ctx(verify_ssl)) as resp:
+                resp.read()
+            return ""
+        except urllib.error.HTTPError as exc:
+            detail = ""
+            try:
+                detail = exc.read().decode()
+            except Exception:
+                pass
+            return f"HTTP {exc.code}: {detail}"
+        except Exception as exc:
+            return str(exc)
+
+    upload_error = _put_raw_upload()
+    if upload_error:
+        logger.warning(
+            "push_rpm: raw RPM upload failed for repo %s upload %s, trying multipart fallback: %s",
+            repository_id, upload_id, upload_error,
+        )
+        upload_error = _put_multipart_upload()
+        if upload_error:
+            return f"File upload failed: {upload_error}"
 
     # Step 3: Import and publish
     import_payload = {
