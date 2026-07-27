@@ -13,12 +13,16 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
 
 from django.conf import settings
+
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Encryption
