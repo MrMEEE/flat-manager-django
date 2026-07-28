@@ -17,16 +17,19 @@ class PushRpmTests(SimpleTestCase):
     @mock.patch("pathlib.Path.read_bytes", return_value=b"rpm-bytes")
     @mock.patch("pathlib.Path.exists", return_value=True)
     @mock.patch("apps.rpm.satellite.urllib.request.urlopen")
+    @mock.patch("apps.rpm.satellite.get")
     @mock.patch("apps.rpm.satellite._request")
     @mock.patch("apps.rpm.satellite.post")
     def test_import_payload_excludes_size(
         self,
         mock_post,
         mock_request,
+        mock_get,
         mock_urlopen,
         _mock_exists,
         _mock_read_bytes,
     ):
+        mock_get.return_value = ({"version": "4.20.0"}, "")
         mock_post.return_value = ({"upload_id": "u1"}, "")
         mock_request.return_value = ({}, "")
         mock_urlopen.return_value = self._ok_response()
@@ -43,16 +46,19 @@ class PushRpmTests(SimpleTestCase):
     @mock.patch("pathlib.Path.read_bytes", return_value=b"rpm-bytes")
     @mock.patch("pathlib.Path.exists", return_value=True)
     @mock.patch("apps.rpm.satellite.urllib.request.urlopen")
+    @mock.patch("apps.rpm.satellite.get")
     @mock.patch("apps.rpm.satellite._request")
     @mock.patch("apps.rpm.satellite.post")
     def test_checksum_mismatch_retries_with_fresh_raw_upload(
         self,
         mock_post,
         mock_request,
+        mock_get,
         mock_urlopen,
         _mock_exists,
         _mock_read_bytes,
     ):
+        mock_get.return_value = ({"version": "4.20.0"}, "")
         mock_post.side_effect = [({"upload_id": "u1"}, ""), ({"upload_id": "u2"}, "")]
         mock_request.side_effect = [
             (
@@ -73,16 +79,19 @@ class PushRpmTests(SimpleTestCase):
     @mock.patch("pathlib.Path.read_bytes", return_value=b"rpm-bytes")
     @mock.patch("pathlib.Path.exists", return_value=True)
     @mock.patch("apps.rpm.satellite.urllib.request.urlopen")
+    @mock.patch("apps.rpm.satellite.get")
     @mock.patch("apps.rpm.satellite._request")
     @mock.patch("apps.rpm.satellite.post")
     def test_raw_failure_falls_back_to_multipart(
         self,
         mock_post,
         mock_request,
+        mock_get,
         mock_urlopen,
         _mock_exists,
         _mock_read_bytes,
     ):
+        mock_get.return_value = ({"version": "4.20.0"}, "")
         mock_post.return_value = ({"upload_id": "u1"}, "")
         mock_request.return_value = ({}, "")
 
@@ -104,16 +113,19 @@ class PushRpmTests(SimpleTestCase):
     @mock.patch("pathlib.Path.read_bytes", return_value=b"rpm-bytes")
     @mock.patch("pathlib.Path.exists", return_value=True)
     @mock.patch("apps.rpm.satellite.urllib.request.urlopen")
+    @mock.patch("apps.rpm.satellite.get")
     @mock.patch("apps.rpm.satellite._request")
     @mock.patch("apps.rpm.satellite.post")
     def test_checksum_retry_can_fallback_to_multipart(
         self,
         mock_post,
         mock_request,
+        mock_get,
         mock_urlopen,
         _mock_exists,
         _mock_read_bytes,
     ):
+        mock_get.return_value = ({"version": "4.20.0"}, "")
         mock_post.side_effect = [({"upload_id": "u1"}, ""), ({"upload_id": "u2"}, "")]
         mock_request.side_effect = [
             (
@@ -142,3 +154,28 @@ class PushRpmTests(SimpleTestCase):
         self.assertEqual(mock_post.call_count, 2)
         self.assertEqual(mock_urlopen.call_count, 3)
         self.assertEqual(mock_request.call_count, 2)
+
+    @mock.patch("pathlib.Path.read_bytes", return_value=b"rpm-bytes")
+    @mock.patch("pathlib.Path.exists", return_value=True)
+    @mock.patch("apps.rpm.satellite.urllib.request.urlopen")
+    @mock.patch("apps.rpm.satellite.get")
+    @mock.patch("apps.rpm.satellite._request")
+    @mock.patch("apps.rpm.satellite.post")
+    def test_katello_4_14_uses_upload_content_compat_path(
+        self,
+        mock_post,
+        mock_request,
+        mock_get,
+        mock_urlopen,
+        _mock_exists,
+        _mock_read_bytes,
+    ):
+        mock_get.return_value = ({"version": "4.14.0"}, "")
+        mock_urlopen.return_value = self._ok_response()
+
+        err = satellite.push_rpm("/tmp/test.rpm", "https://sat.example", "svc", "token", 7, True)
+
+        self.assertEqual(err, "")
+        self.assertEqual(mock_post.call_count, 0)
+        self.assertEqual(mock_request.call_count, 0)
+        self.assertEqual(mock_urlopen.call_count, 1)
