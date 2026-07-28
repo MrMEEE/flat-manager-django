@@ -46,6 +46,15 @@
         </span>
     </h2>
     <div class="d-flex gap-2" id="action-buttons">
+        {% if build.status == "built" %}
+        <form method="post" action="{% url 'rpm:build_repush' build.pk %}">
+            {% csrf_token %}
+            <button class="btn btn-outline-success">
+                <i class="bi bi-cloud-upload"></i> Re-push
+            </button>
+        </form>
+        {% endif %}
+
         {% if build.status in "failed,cancelled,built" %}
         <form method="post" action="{% url 'rpm:build_retry' build.pk %}">
             {% csrf_token %}

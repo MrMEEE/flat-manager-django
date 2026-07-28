@@ -415,6 +415,26 @@ class RpmBuildRetryView(BuildAdminRequiredMixin, View):
         return redirect('rpm:build_detail', pk=new_build.pk)
 
 
+class RpmBuildRepushView(BuildAdminRequiredMixin, View):
+    """POST — re-push built RPM artifacts to configured Satellite destinations."""
+
+    def post(self, request, pk):
+        build = get_object_or_404(RpmBuild, pk=pk)
+        if build.status != 'built':
+            messages.warning(request, "Only successful builds can be re-pushed.")
+            return redirect('rpm:build_detail', pk=pk)
+
+        if not (build.rpm_files or []):
+            messages.warning(request, "This build has no recorded RPM artifacts to re-push.")
+            return redirect('rpm:build_detail', pk=pk)
+
+        from apps.rpm.tasks import repush_build_artifacts_task
+
+        repush_build_artifacts_task.delay(build.pk)
+        messages.success(request, "Re-push queued.")
+        return redirect('rpm:build_detail', pk=pk)
+
+
 class RpmBuildCancelView(BuildAdminRequiredMixin, View):
     """POST — mark a build as cancelled; the running task will notice and abort."""
 

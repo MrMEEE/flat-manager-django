@@ -1696,6 +1696,30 @@ def _push_to_satellite_destinations(build, dist, copied_filenames):
                               f"Katello: {filename} pushed successfully to {dest.repository}")
 
 
+@shared_task(name='rpm.repush_build_artifacts')
+def repush_build_artifacts_task(build_id: int):
+    """Re-push already-built RPM artifacts for a completed build."""
+    from apps.rpm.models import RpmBuild
+
+    try:
+        build = RpmBuild.objects.select_related('distribution', 'package').get(pk=build_id)
+    except RpmBuild.DoesNotExist:
+        logger.warning("repush_build_artifacts_task: build %s not found", build_id)
+        return
+
+    if build.status != 'built':
+        log_rpm_build(build, 'warning', f"Katello: re-push skipped because build status is '{build.status}'")
+        return
+
+    copied_filenames = build.rpm_files or []
+    if not copied_filenames:
+        log_rpm_build(build, 'warning', "Katello: re-push skipped because no built RPM artifacts were recorded")
+        return
+
+    log_rpm_build(build, 'info', f"Katello: re-push requested for {len(copied_filenames)} artifact(s)")
+    _push_to_satellite_destinations(build, build.distribution, copied_filenames)
+
+
 # ---------------------------------------------------------------------------
 # Periodic version-check tasks (mirroring apps/flatpak/tasks.py pattern)
 # ---------------------------------------------------------------------------
