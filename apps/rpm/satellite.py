@@ -282,7 +282,7 @@ def push_rpm(rpm_path: str, url: str, login: str, token: str, repository_id: int
         result, err = post(
             url, auth,
             f"/katello/api/v2/repositories/{repository_id}/content_uploads",
-            {"size": file_size, "content_type": "rpm"},
+            {"size": file_size, "checksum": checksum, "content_type": "rpm"},
             verify_ssl,
         )
         if err or not result:
@@ -401,13 +401,19 @@ def push_rpm(rpm_path: str, url: str, login: str, token: str, repository_id: int
         if retry_create_err or not retry_upload_id:
             return f"Failed to import upload: {err} (retry setup failed: {retry_create_err})"
 
-        retry_upload_err = _put_raw_upload(retry_upload_id)
+        retry_method, retry_upload_err = _upload_with_fallback(retry_upload_id)
         if retry_upload_err:
-            return f"Failed to import upload: {err} (retry raw upload failed: {retry_upload_err})"
+            return (
+                f"Failed to import upload: {err} "
+                f"(retry {retry_method} upload failed: {retry_upload_err})"
+            )
 
         retry_import_err = _import_upload(retry_upload_id)
         if retry_import_err:
-            return f"Failed to import upload: {err} (retry failed: {retry_import_err})"
+            return (
+                f"Failed to import upload: {err} "
+                f"(retry via {retry_method} failed: {retry_import_err})"
+            )
 
         logger.info(
             "push_rpm: checksum mismatch recovered for repo %s using raw retry upload %s",
