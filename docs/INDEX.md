@@ -67,6 +67,11 @@ Welcome to the Flat Manager Django documentation! This file helps you find what 
    - Security considerations
    - Troubleshooting
 
+10. **[KATELLO_UPLOAD_COMPATIBILITY.md](KATELLO_UPLOAD_COMPATIBILITY.md)** - Satellite/Katello upload checksum compatibility
+   - Root-cause difference between Katello 4.14 and 4.20
+   - Affected and fixed version ranges
+   - Compatibility strategy for mixed Satellite environments
+
 ## �📄 Configuration Files
 
 ### Environment Configuration
