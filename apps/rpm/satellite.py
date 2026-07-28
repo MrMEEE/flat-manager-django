@@ -266,7 +266,6 @@ def push_rpm(rpm_path: str, url: str, login: str, token: str, repository_id: int
     Upload an RPM file to a Katello repository.
     Returns '' on success or an error string.
     """
-    import os
     from pathlib import Path
 
     path = Path(rpm_path)
@@ -279,25 +278,29 @@ def push_rpm(rpm_path: str, url: str, login: str, token: str, repository_id: int
     checksum = hashlib.sha256(file_data).hexdigest()
     filename = path.name
 
-    # Step 1: Create upload request
-    result, err = post(
-        url, auth,
-        f"/katello/api/v2/repositories/{repository_id}/content_uploads",
-        {"size": file_size, "content_type": "rpm"},
-        verify_ssl,
-    )
-    if err or not result:
-        return f"Could not create upload request: {err}"
-    upload_id = result.get("upload_id")
-    if not upload_id:
-        return f"No upload_id in response: {result}"
+    def _create_upload_request() -> tuple[str | None, str]:
+        result, err = post(
+            url, auth,
+            f"/katello/api/v2/repositories/{repository_id}/content_uploads",
+            {"size": file_size, "content_type": "rpm"},
+            verify_ssl,
+        )
+        if err or not result:
+            return None, f"Could not create upload request: {err}"
+        upload_id = result.get("upload_id")
+        if not upload_id:
+            return None, f"No upload_id in response: {result}"
+        return str(upload_id), ""
 
-    put_url = url.rstrip("/") + f"/katello/api/v2/repositories/{repository_id}/content_uploads/{upload_id}"
+    def _put_url(upload_id: str) -> str:
+        return url.rstrip("/") + f"/katello/api/v2/repositories/{repository_id}/content_uploads/{upload_id}"
 
-    def _put_raw_upload() -> str:
+    def _put_raw_upload(upload_id: str) -> str:
+        put_url = _put_url(upload_id)
         req = urllib.request.Request(put_url, data=file_data, method="PUT")
         req.add_header("Authorization", auth)
         req.add_header("Content-Type", "application/octet-stream")
+        req.add_header("Content-Length", str(file_size))
         req.add_header("Content-Range", f"bytes 0-{file_size - 1}/{file_size}")
         req.add_header("Accept", "application/json")
         try:
@@ -314,7 +317,8 @@ def push_rpm(rpm_path: str, url: str, login: str, token: str, repository_id: int
         except Exception as exc:
             return str(exc)
 
-    def _put_multipart_upload() -> str:
+    def _put_multipart_upload(upload_id: str) -> str:
+        put_url = _put_url(upload_id)
         boundary = "--------fmd_boundary"
         body = (
             f"--{boundary}\r\nContent-Disposition: form-data; name=\"size\"\r\n\r\n{file_size}\r\n"
@@ -325,6 +329,7 @@ def push_rpm(rpm_path: str, url: str, login: str, token: str, repository_id: int
         req = urllib.request.Request(put_url, data=body, method="PUT")
         req.add_header("Authorization", auth)
         req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+        req.add_header("Content-Length", str(len(body)))
         req.add_header("Accept", "application/json")
         try:
             with urllib.request.urlopen(req, timeout=120, context=_ssl_ctx(verify_ssl)) as resp:
@@ -340,28 +345,75 @@ def push_rpm(rpm_path: str, url: str, login: str, token: str, repository_id: int
         except Exception as exc:
             return str(exc)
 
-    upload_error = _put_raw_upload()
-    if upload_error:
+    def _upload_with_fallback(upload_id: str) -> tuple[str, str]:
+        upload_error = _put_raw_upload(upload_id)
+        if not upload_error:
+            return "raw", ""
         logger.warning(
             "push_rpm: raw RPM upload failed for repo %s upload %s, trying multipart fallback: %s",
             repository_id, upload_id, upload_error,
         )
-        upload_error = _put_multipart_upload()
+        upload_error = _put_multipart_upload(upload_id)
         if upload_error:
-            return f"File upload failed: {upload_error}"
+            return "multipart", f"File upload failed: {upload_error}"
+        return "multipart", ""
+
+    def _import_upload(upload_id: str) -> str:
+        import_payload = {
+            "uploads": [{"id": upload_id, "name": filename, "checksum": checksum}],
+            "publish_repository": True,
+            "content_type": "rpm",
+        }
+        _, err = _request(
+            url, auth, "PUT",
+            f"/katello/api/v2/repositories/{repository_id}/import_uploads",
+            import_payload, verify_ssl,
+        )
+        return err
+
+    def _is_checksum_mismatch_error(err: str) -> bool:
+        text = (err or "").lower()
+        return "sha256 checksum did not match" in text or "checksum did not match" in text
+
+    # Step 1: Create upload request
+    upload_id, create_err = _create_upload_request()
+    if create_err or not upload_id:
+        return create_err
+
+    # Step 2: Upload file (raw first, multipart fallback)
+    upload_method, upload_err = _upload_with_fallback(upload_id)
+    if upload_err:
+        return upload_err
 
     # Step 3: Import and publish
-    import_payload = {
-        "uploads": [{"id": upload_id, "name": filename, "checksum": checksum, "size": str(file_size)}],
-        "publish_repository": True,
-        "content_type": "rpm",
-    }
-    _, err = _request(
-        url, auth, "PUT",
-        f"/katello/api/v2/repositories/{repository_id}/import_uploads",
-        import_payload, verify_ssl,
-    )
-    if err:
-        return f"Failed to import upload: {err}"
+    err = _import_upload(upload_id)
+    if not err:
+        return ""
 
-    return ""
+    if _is_checksum_mismatch_error(err):
+        logger.warning(
+            "push_rpm: checksum mismatch after %s upload for repo %s upload %s; retrying with fresh raw upload",
+            upload_method,
+            repository_id,
+            upload_id,
+        )
+        retry_upload_id, retry_create_err = _create_upload_request()
+        if retry_create_err or not retry_upload_id:
+            return f"Failed to import upload: {err} (retry setup failed: {retry_create_err})"
+
+        retry_upload_err = _put_raw_upload(retry_upload_id)
+        if retry_upload_err:
+            return f"Failed to import upload: {err} (retry raw upload failed: {retry_upload_err})"
+
+        retry_import_err = _import_upload(retry_upload_id)
+        if retry_import_err:
+            return f"Failed to import upload: {err} (retry failed: {retry_import_err})"
+
+        logger.info(
+            "push_rpm: checksum mismatch recovered for repo %s using raw retry upload %s",
+            repository_id,
+            retry_upload_id,
+        )
+        return ""
+
+    return f"Failed to import upload: {err}"
