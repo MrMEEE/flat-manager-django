@@ -2916,17 +2916,29 @@ def _extract_version_from_manifest(package_id, manifest_file):
                             branch = source.get('branch', '')
                             if branch and branch[0].isdigit():
                                 candidates['git'] = branch
-                    elif source_type == 'archive' and 'archive' not in candidates:
+                    elif source_type == 'archive':
                         url = source.get('url', '')
-                        for pattern in [
-                            r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)',
-                            r'/(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/',
-                            r'/(\d{4}-\d{2})(?:/|$)',  # YYYY-MM style (e.g. Eclipse)
-                        ]:
-                            m = re.search(pattern, url)
-                            if m:
-                                candidates['archive'] = m.group(1)
-                                break
+                        # Prefer archives whose URL contains the module/app name
+                        # over unrelated tool downloads (e.g. pnpm, node binaries).
+                        # Falls back to 'archive_fallback' so the real app archive
+                        # wins even when listed after build-tool sources.
+                        url_lower = url.lower()
+                        _name_frags = [c for c in app_name_candidates if len(c) >= 4]
+                        if len(module_name) >= 4:
+                            _name_frags.extend([module_name, module_name.replace('-', '')])
+                        tier = ('archive'
+                                if any(frag in url_lower for frag in _name_frags)
+                                else 'archive_fallback')
+                        if tier not in candidates:
+                            for pattern in [
+                                r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)',
+                                r'/(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/',
+                                r'/(\d{4}-\d{2})(?:/|$)',  # YYYY-MM style (e.g. Eclipse)
+                            ]:
+                                m = re.search(pattern, url)
+                                if m:
+                                    candidates[tier] = m.group(1)
+                                    break
                     elif source_type == 'extra-data' and 'extra-data' not in candidates:
                         if source.get('version'):
                             candidates['extra-data'] = str(source['version'])
@@ -2950,7 +2962,7 @@ def _extract_version_from_manifest(package_id, manifest_file):
                                 break
                 # Pick highest-priority candidate for this module
                 module_version = None
-                for ptype in ('git', 'archive', 'extra-data', 'file'):
+                for ptype in ('git', 'archive', 'archive_fallback', 'extra-data', 'file'):
                     if ptype in candidates:
                         module_version = candidates[ptype]
                         break
@@ -3135,18 +3147,28 @@ def parse_manifest_dependencies(package, manifest_file, build=None):
                                 if branch and branch[0].isdigit():
                                     candidates['git'] = branch
                                     log_build(build, 'info', f"Found version in git branch: {branch}")
-                        elif source_type == 'archive' and 'archive' not in candidates:
+                        elif source_type == 'archive':
                             url = source.get('url', '')
-                            for pattern in [
-                                r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)',
-                                r'/(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/',
-                                r'/(\d{4}-\d{2})(?:/|$)',  # YYYY-MM style (e.g. Eclipse)
-                            ]:
-                                match = re.search(pattern, url)
-                                if match:
-                                    candidates['archive'] = match.group(1)
-                                    log_build(build, 'info', f"Extracted version from archive URL: {match.group(1)}")
-                                    break
+                            # Prefer archives whose URL contains the module/app name
+                            # over unrelated tool downloads (e.g. pnpm, node binaries).
+                            url_lower = url.lower()
+                            _name_frags = [c for c in app_name_candidates if len(c) >= 4]
+                            if len(module_name) >= 4:
+                                _name_frags.extend([module_name, module_name.replace('-', '')])
+                            tier = ('archive'
+                                    if any(frag in url_lower for frag in _name_frags)
+                                    else 'archive_fallback')
+                            if tier not in candidates:
+                                for pattern in [
+                                    r'[-_/]v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)',
+                                    r'/(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/',
+                                    r'/(\d{4}-\d{2})(?:/|$)',  # YYYY-MM style (e.g. Eclipse)
+                                ]:
+                                    match = re.search(pattern, url)
+                                    if match:
+                                        candidates[tier] = match.group(1)
+                                        log_build(build, 'info', f"Extracted version from archive URL: {match.group(1)} (tier={tier})")
+                                        break
                         elif source_type == 'extra-data' and 'extra-data' not in candidates:
                             if source.get('version'):
                                 candidates['extra-data'] = str(source['version'])
@@ -3172,7 +3194,7 @@ def parse_manifest_dependencies(package, manifest_file, build=None):
                                     log_build(build, 'info', f"Extracted version from file source: {match.group(1)}")
                                     break
                     module_version = None
-                    for ptype in ('git', 'archive', 'extra-data', 'file'):
+                    for ptype in ('git', 'archive', 'archive_fallback', 'extra-data', 'file'):
                         if ptype in candidates:
                             module_version = candidates[ptype]
                             break
