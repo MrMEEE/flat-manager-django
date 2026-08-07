@@ -38,6 +38,7 @@
                         <th>Status</th>
                         <th>Hostname</th>
                         <th>Serial Number</th>
+                        <th>BIOS</th>
                         {% if any_tuxmigrate %}<th class="text-center">Config</th>{% endif %}
                         <th>Users</th>
                         <th>Organisations</th>
@@ -76,6 +77,13 @@
                         <td>
                             {% if client.serial_number %}
                                 <code>{{ client.serial_number }}</code>
+                            {% else %}
+                                <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                        <td id="bios-version-{{ client.pk }}">
+                            {% if client.bios_version %}
+                                <code>{{ client.bios_version }}</code>
                             {% else %}
                                 <span class="text-muted">—</span>
                             {% endif %}
@@ -404,9 +412,8 @@ function onWebSocketMessage(data) {
 
     // Update count badges.
     function _updateCount(kind, count, btnClass) {
-        // In the visible row, count cells are at fixed positions:
-        // col 9 = installed, col 10 = foreign, col 11 = outdated (0-indexed 8,9,10)
-        const colIdx = {installed: 8, foreign: 9, outdated: 10}[kind];
+        // col 10 = installed, col 11 = foreign, col 12 = outdated (0-indexed 9,10,11)
+        const colIdx = {installed: 9, foreign: 10, outdated: 11}[kind];
         const td = visibleRow.cells[colIdx];
         if (!td) return;
         if (count > 0) {
@@ -437,6 +444,14 @@ function onWebSocketMessage(data) {
             : '<span class="text-muted">—</span>';
     }
 
+    // Update BIOS version cell (identified by id).
+    const biosCell = document.getElementById('bios-version-' + pk);
+    if (biosCell !== null) {
+        biosCell.innerHTML = data.bios_version
+            ? `<code>${esc(data.bios_version)}</code>`
+            : '<span class="text-muted">—</span>';
+    }
+
     // Update status badge (col 1).
     let badgeHtml;
     if (!data.last_checkin) {
@@ -448,9 +463,9 @@ function onWebSocketMessage(data) {
     }
     if (visibleRow.cells[1]) visibleRow.cells[1].innerHTML = badgeHtml;
 
-    // Update last check-in cell (col 8 / index 7).
-    if (visibleRow.cells[7] && data.last_checkin) {
-        visibleRow.cells[7].innerHTML =
+    // Update last check-in cell (col 9 / index 8).
+    if (visibleRow.cells[8] && data.last_checkin) {
+        visibleRow.cells[8].innerHTML =
             `<span title="${esc(data.last_checkin)} UTC">${esc(data.last_checkin)} (just now)</span>`;
     }
 

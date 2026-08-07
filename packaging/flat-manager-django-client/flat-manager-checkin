@@ -409,12 +409,85 @@ def get_machine_type():
     return ''
 
 
-def checkin(server_url, hostname, serial_number, machine_type, remotes, managed_remotes, installed, user_flatpaks, tuxmigrate_facts):
+def _format_firmware_version(version):
+    """Convert a firmware version string to a human-readable dotted form.
+
+    Handles hex integers from fwupdmgr (e.g. '0x01040300' → '01.04.03').
+    Plain strings (e.g. 'X72 Ver. 01.04.03') are returned unchanged.
+    """
+    v = version.strip()
+    if v.startswith(('0x', '0X')):
+        try:
+            val = int(v, 16)
+            b = [(val >> 24) & 0xFF, (val >> 16) & 0xFF,
+                 (val >> 8) & 0xFF, val & 0xFF]
+            while b and b[-1] == 0:
+                b.pop()
+            if b:
+                return '.'.join(f'{x:02d}' for x in b)
+        except ValueError:
+            pass
+    return v
+
+
+def get_bios_version():
+    """Best-effort BIOS/firmware version detection.
+
+    Primary:  fwupdmgr get-devices --json  (System Firmware entry).
+    Fallback: dmidecode -s bios-version.
+    Last:     /sys/class/dmi/id/bios_version.
+
+    Returns a human-readable string such as '01.04.03', or '' if unknown.
+    """
+    invalid_values = {'', 'not specified', 'n/a', 'na', 'unknown', 'none'}
+
+    # 1. fwupdmgr
+    try:
+        result = subprocess.run(
+            ['fwupdmgr', 'get-devices', '--json', '--no-unreported-check'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=15,
+        )
+        if result.returncode == 0 and result.stdout:
+            import json as _json
+            fwupd_data = _json.loads(result.stdout)
+            for device in fwupd_data.get('Devices', []):
+                if 'System Firmware' in device.get('Name', ''):
+                    ver = device.get('Version', '').strip()
+                    if ver and ver.lower() not in invalid_values:
+                        return _format_firmware_version(ver)
+    except Exception:
+        pass
+
+    # 2. dmidecode
+    try:
+        ver = run(['dmidecode', '-s', 'bios-version']).strip()
+        if ver and ver.lower() not in invalid_values:
+            return ver
+    except Exception:
+        pass
+
+    # 3. sysfs
+    try:
+        with open('/sys/class/dmi/id/bios_version', 'r', encoding='utf-8', errors='ignore') as f:
+            ver = f.read().strip()
+        if ver and ver.lower() not in invalid_values:
+            return ver
+    except Exception:
+        pass
+
+    return ''
+
+
+def checkin(server_url, hostname, serial_number, machine_type, bios_version, remotes, managed_remotes, installed, user_flatpaks, tuxmigrate_facts):
     """POST the check-in payload to the server."""
     payload = {
         'hostname':          hostname,
         'serial_number':     serial_number,
         'machine_type':      machine_type,
+        'bios_version':      bios_version,
         'server_url':        server_url,
         'remotes':           remotes,
         'managed_remotes':   managed_remotes,
@@ -490,6 +563,7 @@ def main():
     managed_remotes = identify_managed_remotes(remotes, server_url)
     serial_number = get_serial_number()
     machine_type = get_machine_type()
+    bios_version = get_bios_version()
     refresh_appstream(users=users)
 
     # System-wide data
@@ -512,8 +586,8 @@ def main():
                 installed.append(tagged)
                 seen_ids.add(pkg['app_id'])
 
-    status, body = checkin(server_url, hostname, serial_number, machine_type, remotes, managed_remotes,
-                           installed, user_flatpaks, tuxmigrate_facts)
+    status, body = checkin(server_url, hostname, serial_number, machine_type, bios_version,
+                           remotes, managed_remotes, installed, user_flatpaks, tuxmigrate_facts)
 
     if status == 200:
         print(f'Check-in successful: {hostname} → {server_url}')

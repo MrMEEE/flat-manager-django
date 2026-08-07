@@ -3661,6 +3661,7 @@ class ClientCheckinView(View):
 
         serial_number = data.get('serial_number', '').strip()
         machine_type = data.get('machine_type', '').strip()
+        bios_version = data.get('bios_version', '').strip()
 
         client, _ = Client.objects.get_or_create(hostname=hostname)
         client.last_checkin = timezone.now()
@@ -3698,6 +3699,8 @@ class ClientCheckinView(View):
             client.serial_number = serial_number
         if machine_type:
             client.machine_type = machine_type
+        if bios_version:
+            client.bios_version = bios_version
         client.save()
 
         # Notify the clients page in real-time so it can update without reload.
@@ -3721,6 +3724,7 @@ class ClientCheckinView(View):
                         'foreign_flatpaks': foreign_flatpaks,
                         'outdated_flatpaks': outdated_flatpaks,
                         'managed_remotes': client.managed_remotes or [],
+                        'bios_version': client.bios_version,
                         'last_checkin': client.last_checkin.strftime('%b %d, %H:%M') if client.last_checkin else '',
                     }
                 )

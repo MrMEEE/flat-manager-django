@@ -904,6 +904,12 @@ class Client(models.Model):
         default='',
         help_text="Hardware model/type reported by the client machine."
     )
+    bios_version = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        help_text="BIOS/firmware version reported by the client machine (e.g. '01.04.03')."
+    )
     last_checkin = models.DateTimeField(
         null=True, blank=True,
         help_text="Timestamp of the most recent check-in from this client."
