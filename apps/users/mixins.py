@@ -15,30 +15,47 @@ All write mixins redirect unauthenticated users to the login page and return
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 
 
+class ResourceActionRequiredMixin(LoginRequiredMixin, UserPassesTestMixin):
+    """Require an explicit resource/action permission for a protected view."""
+    resource = None
+    action = None
+
+    def test_func(self):
+        if not self.request.user.is_authenticated:
+            return False
+        if not self.resource or not self.action:
+            return False
+        return self.request.user.has_permission(self.resource, self.action)
+
+
 class AdminRequiredMixin(LoginRequiredMixin, UserPassesTestMixin):
-    """Requires the 'admin' role, Django is_staff, or Django is_superuser."""
+    """Requires admin access for the user-management surface."""
 
     def test_func(self):
         u = self.request.user
-        return u.is_staff or u.is_superuser or u.roles.filter(role='admin').exists()
+        return u.is_authenticated and (u.is_staff or u.is_superuser or u.has_permission('users', 'admin'))
 
 
 class RepoAdminRequiredMixin(LoginRequiredMixin, UserPassesTestMixin):
-    """Requires repo_admin (or higher) role."""
+    """Requires repo administration capabilities."""
 
     def test_func(self):
-        return self.request.user.is_authenticated and self.request.user.can_repo_admin()
+        return self.request.user.is_authenticated and self.request.user.has_permission('repositories', 'admin')
 
 
 class BuildAdminRequiredMixin(LoginRequiredMixin, UserPassesTestMixin):
-    """Requires build_admin (or higher) role."""
+    """Requires build capabilities for the build flow."""
 
     def test_func(self):
-        return self.request.user.is_authenticated and self.request.user.can_build()
+        return self.request.user.is_authenticated and self.request.user.has_permission('builds', 'build')
 
 
 class WriteRequiredMixin(LoginRequiredMixin, UserPassesTestMixin):
-    """Requires any write role (build_admin, repo_admin, admin, superuser)."""
+    """Requires any write-level permission for general edit actions."""
 
     def test_func(self):
-        return self.request.user.is_authenticated and self.request.user.can_write()
+        return self.request.user.is_authenticated and (
+            self.request.user.has_permission('repositories', 'update')
+            or self.request.user.has_permission('flatpaks', 'build')
+            or self.request.user.has_permission('config', 'admin')
+        )

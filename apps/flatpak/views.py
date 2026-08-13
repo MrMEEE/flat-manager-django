@@ -13,7 +13,7 @@ from django.urls import reverse_lazy, reverse
 from django.contrib import messages
 from django.shortcuts import render, redirect, get_object_or_404
 from django.conf import settings
-from apps.users.mixins import BuildAdminRequiredMixin
+from apps.users.mixins import BuildAdminRequiredMixin, ResourceActionRequiredMixin
 from .models import GPGKey, Repository, RepositorySubset, Package, Build, Promotion, BuildStreamSource, Client, ExternalRef, ExternalRefVersion, ExternalRefPromotion, Organisation, FlatpakRemote
 from .forms import GPGKeyGenerateForm, GPGKeyImportForm, GPGKeyRenewForm
 from .utils.gpg import generate_gpg_key, import_gpg_key, renew_gpg_key
@@ -148,8 +148,10 @@ def gpgkey_renew(request, pk):
     return render(request, 'flatpak/gpgkey_renew.html', {'form': form, 'gpg_key': gpg_key})
 
 
-class GPGKeyCreateView(LoginRequiredMixin, CreateView):
+class GPGKeyCreateView(ResourceActionRequiredMixin, CreateView):
     """Create new GPG key (legacy)."""
+    resource = 'gpg_keys'
+    action = 'create'
     model = GPGKey
     template_name = 'flatpak/gpgkey_form.html'
     fields = ['name', 'email', 'key_id', 'fingerprint', 'public_key', 'private_key', 'passphrase_hint']
@@ -161,8 +163,10 @@ class GPGKeyCreateView(LoginRequiredMixin, CreateView):
         return super().form_valid(form)
 
 
-class GPGKeyDeleteView(LoginRequiredMixin, DeleteView):
+class GPGKeyDeleteView(ResourceActionRequiredMixin, DeleteView):
     """Delete GPG key."""
+    resource = 'gpg_keys'
+    action = 'delete'
     model = GPGKey
     template_name = 'flatpak/gpgkey_confirm_delete.html'
     success_url = reverse_lazy('flatpak:gpgkey_list')
@@ -195,8 +199,10 @@ class RepositoryDetailView(LoginRequiredMixin, DetailView):
     context_object_name = 'repository'
 
 
-class RepositoryCreateView(LoginRequiredMixin, CreateView):
+class RepositoryCreateView(ResourceActionRequiredMixin, CreateView):
     """Create new repository."""
+    resource = 'repositories'
+    action = 'create'
     model = Repository
     template_name = 'flatpak/repository_form.html'
     fields = ['name', 'collection_id', 'description', 'gpg_key', 'parent_repos']
@@ -252,8 +258,10 @@ class RepositoryCreateView(LoginRequiredMixin, CreateView):
         return response
 
 
-class RepositoryUpdateView(LoginRequiredMixin, UpdateView):
+class RepositoryUpdateView(ResourceActionRequiredMixin, UpdateView):
     """Update existing repository."""
+    resource = 'repositories'
+    action = 'update'
     model = Repository
     template_name = 'flatpak/repository_form.html'
     fields = ['name', 'collection_id', 'description', 'gpg_key', 'parent_repos']
@@ -356,8 +364,10 @@ class RepositoryUpdateView(LoginRequiredMixin, UpdateView):
         return response
 
 
-class RepositoryDeleteView(LoginRequiredMixin, DeleteView):
+class RepositoryDeleteView(ResourceActionRequiredMixin, DeleteView):
     """Delete repository and its OSTree data."""
+    resource = 'repositories'
+    action = 'delete'
     model = Repository
     template_name = 'flatpak/repository_confirm_delete.html'
     success_url = reverse_lazy('flatpak:repo_list')
@@ -491,8 +501,10 @@ class RepositoryUpdateMetadataView(LoginRequiredMixin, View):
         return JsonResponse({'status': 'ok', 'message': msg})
 
 
-class RepositorySubsetCreateView(LoginRequiredMixin, CreateView):
+class RepositorySubsetCreateView(ResourceActionRequiredMixin, CreateView):
     """Create new subset for a repository."""
+    resource = 'repositories'
+    action = 'create'
     model = RepositorySubset
     template_name = 'flatpak/subset_form.html'
     fields = ['name', 'collection_id', 'base_url']
@@ -515,8 +527,10 @@ class RepositorySubsetCreateView(LoginRequiredMixin, CreateView):
         return reverse('flatpak:repo_detail', kwargs={'pk': self.repository.pk})
 
 
-class RepositorySubsetUpdateView(LoginRequiredMixin, UpdateView):
+class RepositorySubsetUpdateView(ResourceActionRequiredMixin, UpdateView):
     """Update existing subset."""
+    resource = 'repositories'
+    action = 'update'
     model = RepositorySubset
     template_name = 'flatpak/subset_form.html'
     fields = ['name', 'collection_id', 'base_url']
@@ -535,8 +549,10 @@ class RepositorySubsetUpdateView(LoginRequiredMixin, UpdateView):
         return reverse('flatpak:repo_detail', kwargs={'pk': self.object.repository.pk})
 
 
-class RepositorySubsetDeleteView(LoginRequiredMixin, DeleteView):
+class RepositorySubsetDeleteView(ResourceActionRequiredMixin, DeleteView):
     """Delete subset."""
+    resource = 'repositories'
+    action = 'delete'
     model = RepositorySubset
     template_name = 'flatpak/subset_confirm_delete.html'
     
@@ -1743,8 +1759,10 @@ class PromotionListView(LoginRequiredMixin, ListView):
         return context
 
 
-class PackageCreateView(LoginRequiredMixin, CreateView):
+class PackageCreateView(ResourceActionRequiredMixin, CreateView):
     """Create new package."""
+    resource = 'flatpaks'
+    action = 'create'
     model = Package
     template_name = 'flatpak/package_form.html'
     fields = ['repository', 'package_id', 'package_name', 'version', 'git_repo_url', 'git_branch', 'manifest_file', 'upstream_url', 'upstream_version_script', 'branch', 'arch', 'installation_type', 'organisations']
@@ -1801,8 +1819,10 @@ class PackageCreateView(LoginRequiredMixin, CreateView):
         return reverse('flatpak:package_detail', kwargs={'pk': self.object.pk})
 
 
-class PackageUpdateView(LoginRequiredMixin, UpdateView):
+class PackageUpdateView(ResourceActionRequiredMixin, UpdateView):
     """Edit package details."""
+    resource = 'flatpaks'
+    action = 'update'
     model = Package
     template_name = 'flatpak/package_form.html'
     fields = ['repository', 'package_id', 'package_name', 'version', 'branch', 'arch', 'git_repo_url', 'git_branch', 'manifest_file', 'upstream_url', 'upstream_version_script', 'installation_type', 'organisations']
@@ -1835,8 +1855,10 @@ class PackageUpdateView(LoginRequiredMixin, UpdateView):
         return reverse('flatpak:package_detail', kwargs={'pk': self.object.pk})
 
 
-class PackageDeleteView(LoginRequiredMixin, DeleteView):
+class PackageDeleteView(ResourceActionRequiredMixin, DeleteView):
     """Cancel/delete package."""
+    resource = 'flatpaks'
+    action = 'delete'
     model = Package
     template_name = 'flatpak/package_confirm_delete.html'
     success_url = reverse_lazy('flatpak:package_list')
@@ -1901,6 +1923,8 @@ class PackageRetryAllFailedView(LoginRequiredMixin, View):
     """Retry all packages currently in failed or cancelled status."""
 
     def post(self, request):
+        if not request.user.has_permission('flatpaks', 'build'):
+            raise PermissionDenied()
         from django.http import JsonResponse
         packages = Package.objects.filter(status__in=['failed', 'cancelled'])
         retried = []
@@ -1922,6 +1946,7 @@ class PackageBulkActionView(LoginRequiredMixin, View):
 
     def post(self, request):
         import json
+        from django.core.exceptions import PermissionDenied
         from django.http import JsonResponse
 
         try:
@@ -1937,6 +1962,11 @@ class PackageBulkActionView(LoginRequiredMixin, View):
 
         if action not in ('rebuild', 'delete', 'assign_orgs'):
             return JsonResponse({'error': f'Unknown action: {action}'}, status=400)
+
+        if action == 'rebuild' and not request.user.has_permission('flatpaks', 'build'):
+            raise PermissionDenied()
+        if action == 'delete' and not request.user.has_permission('flatpaks', 'delete'):
+            raise PermissionDenied()
 
         packages = Package.objects.filter(pk__in=ids)
 
@@ -1972,8 +2002,10 @@ class PackageBulkActionView(LoginRequiredMixin, View):
 
 class PackageRetryView(LoginRequiredMixin, View):
     """Retry a failed or cancelled build."""
-    
+
     def post(self, request, pk):
+        if not request.user.has_permission('flatpaks', 'build'):
+            raise PermissionDenied()
         from django.http import JsonResponse
         package = get_object_or_404(Package, pk=pk)
         
@@ -1999,8 +2031,10 @@ class PackageRetryView(LoginRequiredMixin, View):
 
 class PackageCommitView(LoginRequiredMixin, View):
     """Commit a built flatpak."""
-    
+
     def post(self, request, pk):
+        if not request.user.has_permission('flatpaks', 'build'):
+            raise PermissionDenied()
         from apps.flatpak.tasks import commit_package_task
         from django.http import JsonResponse
         
@@ -2032,8 +2066,10 @@ class PackageStatusView(LoginRequiredMixin, View):
 
 class PackagePublishView(LoginRequiredMixin, View):
     """Publish a committed build to the repository."""
-    
+
     def post(self, request, pk):
+        if not request.user.has_permission('flatpaks', 'publish'):
+            raise PermissionDenied()
         from apps.flatpak.tasks import publish_package_task
         from django.http import JsonResponse
         
@@ -2071,6 +2107,8 @@ class PackageRepublishView(LoginRequiredMixin, View):
     """
 
     def post(self, request, pk):
+        if not request.user.has_permission('flatpaks', 'publish'):
+            raise PermissionDenied()
         from apps.flatpak.tasks import publish_package_task
 
         package = get_object_or_404(Package, pk=pk)
@@ -2121,6 +2159,8 @@ class ConfigView(LoginRequiredMixin, View):
         return render(request, 'flatpak/config.html', self._context(form))
 
     def post(self, request):
+        if not request.user.has_permission('config', 'update'):
+            raise PermissionDenied()
         from .forms import SiteConfigForm
         from .models import SiteConfig
         form = SiteConfigForm(request.POST, instance=SiteConfig.get_solo())
@@ -2134,6 +2174,8 @@ class FlatpakRemoteCreateView(LoginRequiredMixin, View):
     """Add a new Flatpak remote."""
 
     def post(self, request):
+        if not request.user.has_permission('config', 'update'):
+            raise PermissionDenied()
         from .forms import FlatpakRemoteForm
         form = FlatpakRemoteForm(request.POST)
         if form.is_valid():
@@ -2150,6 +2192,8 @@ class FlatpakRemoteDeleteView(LoginRequiredMixin, View):
     """Remove a Flatpak remote."""
 
     def post(self, request, pk):
+        if not request.user.has_permission('config', 'update'):
+            raise PermissionDenied()
         from .models import FlatpakRemote
         remote = get_object_or_404(FlatpakRemote, pk=pk)
         name = remote.name
@@ -2162,6 +2206,8 @@ class FlatpakRemoteToggleView(LoginRequiredMixin, View):
     """Toggle active status of a Flatpak remote."""
 
     def post(self, request, pk):
+        if not request.user.has_permission('config', 'update'):
+            raise PermissionDenied()
         from .models import FlatpakRemote
         remote = get_object_or_404(FlatpakRemote, pk=pk)
         remote.is_active = not remote.is_active
@@ -3056,7 +3102,9 @@ class ExternalRefDetailView(LoginRequiredMixin, DetailView):
         return ctx
 
 
-class ExternalRefCreateView(LoginRequiredMixin, CreateView):
+class ExternalRefCreateView(ResourceActionRequiredMixin, CreateView):
+    resource = 'externals'
+    action = 'create'
     template_name = 'flatpak/external_form.html'
 
     def get_form_class(self):
@@ -3110,7 +3158,9 @@ class ExternalRefCreateView(LoginRequiredMixin, CreateView):
         return reverse('flatpak:external_detail', kwargs={'pk': self.object.pk})
 
 
-class ExternalRefDeleteView(LoginRequiredMixin, DeleteView):
+class ExternalRefDeleteView(ResourceActionRequiredMixin, DeleteView):
+    resource = 'externals'
+    action = 'delete'
     template_name = 'flatpak/external_confirm_delete.html'
     success_url = reverse_lazy('flatpak:external_list')
 
@@ -3126,7 +3176,9 @@ class ExternalRefDeleteView(LoginRequiredMixin, DeleteView):
         return super().form_valid(form)
 
 
-class ExternalRefUpdateView(LoginRequiredMixin, UpdateView):
+class ExternalRefUpdateView(ResourceActionRequiredMixin, UpdateView):
+    resource = 'externals'
+    action = 'update'
     model = ExternalRef
     template_name = 'flatpak/external_form.html'
     fields = ['organisations']
@@ -3153,6 +3205,8 @@ class ExternalRefPullView(LoginRequiredMixin, View):
     """Queue a pull (and subsequent publish) task for an ExternalRef."""
 
     def post(self, request, pk):
+        if not request.user.has_permission('externals', 'sync'):
+            raise PermissionDenied()
         from .models import ExternalRef
         from apps.flatpak.tasks import pull_external_ref_task
 
@@ -3174,6 +3228,8 @@ class ExternalRefPublishView(LoginRequiredMixin, View):
     """Re-publish an already-pulled ExternalRef (e.g. to a different repository after editing)."""
 
     def post(self, request, pk):
+        if not request.user.has_permission('externals', 'publish'):
+            raise PermissionDenied()
         from .models import ExternalRef
         from apps.flatpak.tasks import publish_external_ref_task
 
@@ -3189,6 +3245,8 @@ class ExternalRefUnpublishView(LoginRequiredMixin, View):
     """Remove a published ExternalRefVersion from its source repository."""
 
     def post(self, request, pk):
+        if not request.user.has_permission('externals', 'publish'):
+            raise PermissionDenied()
         import json
 
         ext = get_object_or_404(ExternalRef.objects.select_related('repository'), pk=pk)
@@ -3791,7 +3849,9 @@ class BuildStreamBulkActionView(LoginRequiredMixin, View):
         return JsonResponse({'error': f'Unknown action: {action}'}, status=400)
 
 
-class BuildStreamSourceCreateView(LoginRequiredMixin, CreateView):
+class BuildStreamSourceCreateView(ResourceActionRequiredMixin, CreateView):
+    resource = 'buildstreams'
+    action = 'create'
     model = BuildStreamSource
     template_name = 'flatpak/buildstreamsource_form.html'
     fields = ['repository', 'name', 'git_repo_url', 'git_branch', 'bst_element', 'bst_version', 'organisations']
@@ -3881,7 +3941,9 @@ class BuildStreamSourceDetailView(LoginRequiredMixin, DetailView):
         return context
 
 
-class BuildStreamSourceUpdateView(LoginRequiredMixin, UpdateView):
+class BuildStreamSourceUpdateView(ResourceActionRequiredMixin, UpdateView):
+    resource = 'buildstreams'
+    action = 'update'
     model = BuildStreamSource
     template_name = 'flatpak/buildstreamsource_form.html'
     fields = ['repository', 'name', 'git_repo_url', 'git_branch', 'bst_element', 'bst_version', 'organisations']
@@ -3904,7 +3966,9 @@ class BuildStreamSourceUpdateView(LoginRequiredMixin, UpdateView):
         return reverse('flatpak:bst_source_detail', kwargs={'pk': self.object.pk})
 
 
-class BuildStreamSourceDeleteView(LoginRequiredMixin, DeleteView):
+class BuildStreamSourceDeleteView(ResourceActionRequiredMixin, DeleteView):
+    resource = 'buildstreams'
+    action = 'delete'
     model = BuildStreamSource
     template_name = 'flatpak/buildstreamsource_confirm_delete.html'
     context_object_name = 'source'
@@ -3915,6 +3979,8 @@ class BuildStreamSourceRetryView(LoginRequiredMixin, View):
     """Reset a failed/built BST source to pending so it is picked up again."""
 
     def post(self, request, pk):
+        if not request.user.has_permission('buildstreams', 'build'):
+            raise PermissionDenied()
         source = get_object_or_404(BuildStreamSource, pk=pk)
         if source.status in ('failed', 'built', 'published', 'cancelled'):
             source.status = 'pending'
@@ -3933,6 +3999,8 @@ class BuildStreamSourceForceRebuildView(LoginRequiredMixin, View):
     ALLOWED_STATUSES = {'failed', 'built', 'published', 'cancelled'}
 
     def post(self, request, pk):
+        if not request.user.has_permission('buildstreams', 'build'):
+            raise PermissionDenied()
         source = get_object_or_404(BuildStreamSource, pk=pk)
         if source.status not in self.ALLOWED_STATUSES:
             return JsonResponse(
