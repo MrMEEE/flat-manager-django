@@ -6,17 +6,28 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2><i class="bi bi-cloud-download"></i> {{ ext.display_name|default:ext.ref }}</h2>
     <div class="d-flex gap-2" id="action-buttons">
+        {% if user.can_sync_externals %}
         <button type="button" class="btn btn-primary" id="btn-pull"
                 {% if ext.status == 'pulling' or ext.status == 'publishing' %}disabled{% endif %}
                 onclick="doPull()">
             <i class="bi bi-arrow-clockwise"></i> Pull &amp; Publish
         </button>
-        {% if ext.status == 'pulled' %}
+        {% else %}
+        <button type="button" class="btn btn-primary" disabled title="You do not have permission to sync externals">
+            <i class="bi bi-arrow-clockwise"></i> Pull &amp; Publish
+        </button>
+        {% endif %}
+        {% if ext.status == 'pulled' and user.can_publish_externals %}
         <button type="button" class="btn btn-outline-success" id="btn-publish"
                 onclick="doPublish()">
             <i class="bi bi-cloud-upload"></i> Publish Only
         </button>
+        {% elif ext.status == 'pulled' %}
+        <button type="button" class="btn btn-outline-success" disabled title="You do not have permission to publish externals">
+            <i class="bi bi-cloud-upload"></i> Publish Only
+        </button>
         {% endif %}
+        {% if user.can_delete_externals %}
         <button type="button" class="btn btn-outline-danger"
                 onclick="showDeleteConfirm(
                     'Delete External Ref',
@@ -26,6 +37,11 @@
                 )">
             <i class="bi bi-trash"></i> Delete
         </button>
+        {% else %}
+        <button type="button" class="btn btn-outline-danger" disabled title="You do not have permission to delete externals">
+            <i class="bi bi-trash"></i> Delete
+        </button>
+        {% endif %}
         <form id="form-delete" method="post" action="{% url 'flatpak:external_delete' ext.pk %}" class="d-none">
             {% csrf_token %}
         </form>

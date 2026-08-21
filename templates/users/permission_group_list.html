@@ -1,0 +1,71 @@
+{% extends 'base.html' %}
+
+{% block title %}Predefined Permission Groups{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'users:user_list' %}">Users</a></li>
+        <li class="breadcrumb-item active">Predefined Permission Groups</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-shield-lock"></i> Predefined Permission Groups</h2>
+    <a href="{% url 'users:permission_group_create' %}" class="btn btn-primary">
+        <i class="bi bi-plus-lg"></i> Create Group
+    </a>
+</div>
+
+<div class="card">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Name</th>
+                        <th>Type</th>
+                        <th>Organisation</th>
+                        <th>Members</th>
+                        <th>Permissions</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for group in groups %}
+                    <tr>
+                        <td><a href="{% url 'users:permission_group_detail' group.pk %}">{{ group.name }}</a></td>
+                        <td>
+                            {% if group.is_predefined %}
+                            <span class="badge bg-primary-subtle text-primary-emphasis border border-primary-subtle">Predefined</span>
+                            {% else %}
+                            <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle">Custom</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ group.organisation|default:"Global" }}</td>
+                        <td>{{ group.users.count }}</td>
+                        <td>{{ group.permissions.count }}</td>
+                        <td>
+                            <div class="btn-group btn-group-sm" role="group">
+                                <a href="{% url 'users:permission_group_detail' group.pk %}" class="btn btn-outline-secondary">View</a>
+                                {% if group.is_editable %}
+                                <a href="{% url 'users:permission_group_edit' group.pk %}" class="btn btn-outline-primary">Edit</a>
+                                <form method="post" action="{% url 'users:permission_group_delete' group.pk %}" class="d-inline">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-outline-danger" onclick="return confirm('Delete this permission group?');">Delete</button>
+                                </form>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="6" class="text-center text-muted py-4">No permission groups yet.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

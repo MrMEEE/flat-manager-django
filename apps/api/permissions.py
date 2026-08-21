@@ -6,34 +6,36 @@ from rest_framework.permissions import BasePermission, IsAuthenticated
 
 
 class IsAdmin(BasePermission):
-    """Requires the 'admin' role, Django is_staff, or is_superuser."""
+    """Requires admin access for the user-management surface."""
 
     def has_permission(self, request, view):
         u = request.user
-        return u and u.is_authenticated and (
-            u.is_staff or u.is_superuser or u.roles.filter(role='admin').exists()
-        )
+        return bool(u and u.is_authenticated and (u.is_staff or u.is_superuser or u.has_permission('users', 'admin')))
 
 
 class CanBuild(BasePermission):
-    """Requires build_admin (or higher) role."""
+    """Requires build capabilities on the build workflow."""
 
     def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated and request.user.can_build())
+        return bool(request.user and request.user.is_authenticated and request.user.has_permission('builds', 'build'))
 
 
 class CanRepoAdmin(BasePermission):
-    """Requires repo_admin (or higher) role."""
+    """Requires repo administration capabilities."""
 
     def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated and request.user.can_repo_admin())
+        return bool(request.user and request.user.is_authenticated and request.user.has_permission('repositories', 'admin'))
 
 
 class CanWrite(BasePermission):
-    """Requires any write role (build_admin, repo_admin, admin, superuser)."""
+    """Requires any general write-level permission."""
 
     def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated and request.user.can_write())
+        return bool(request.user and request.user.is_authenticated and (
+            request.user.has_permission('repositories', 'update')
+            or request.user.has_permission('flatpaks', 'build')
+            or request.user.has_permission('config', 'admin')
+        ))
 
 
 class IsAuthenticatedOrReadOnly(BasePermission):

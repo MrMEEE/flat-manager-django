@@ -333,8 +333,12 @@ sudo ./setup-bst1-venv.sh /opt/flat-manager/bst1-venv</pre>
                             <td>
                                 <form method="post" action="{% url 'flatpak:remote_delete' remote.pk %}" class="d-inline remote-delete-form">
                                     {% csrf_token %}
+                                    {% if user.can_update_config %}
                                     <button type="button" class="btn btn-sm btn-outline-danger"
                                             onclick="confirmRemoteDelete(this, '{{ remote.name|escapejs }}')"><i class="bi bi-trash3"></i></button>
+                                    {% else %}
+                                    <button type="button" class="btn btn-sm btn-outline-danger" disabled title="You do not have permission to update config"><i class="bi bi-trash3"></i></button>
+                                    {% endif %}
                                 </form>
                             </td>
                         </tr>
@@ -363,7 +367,11 @@ sudo ./setup-bst1-venv.sh /opt/flat-manager/bst1-venv</pre>
                         {{ remote_form.priority }}
                     </div>
                     <div class="col-auto">
+                        {% if user.can_update_config %}
                         <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> Add</button>
+                        {% else %}
+                        <button type="button" class="btn btn-primary btn-sm" disabled title="You do not have permission to update config"><i class="bi bi-plus-lg"></i> Add</button>
+                        {% endif %}
                     </div>
                 </form>
             </div>
@@ -372,9 +380,15 @@ sudo ./setup-bst1-venv.sh /opt/flat-manager/bst1-venv</pre>
 </div>
 <div class="row mb-4">
     <div class="col">
+        {% if user.can_update_config %}
         <button type="submit" class="btn btn-primary">
             <i class="bi bi-floppy"></i> Save Configuration
         </button>
+        {% else %}
+        <button type="button" class="btn btn-primary" disabled title="You do not have permission to update config">
+            <i class="bi bi-floppy"></i> Save Configuration
+        </button>
+        {% endif %}
     </div>
 </div>
 </form>

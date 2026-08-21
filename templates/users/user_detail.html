@@ -62,22 +62,6 @@
             <div class="card-body">
                 <ul class="list-unstyled mb-0">
                     <li>
-                        {% if user_obj.is_superuser %}
-                        <i class="bi bi-check-circle text-success"></i>
-                        {% else %}
-                        <i class="bi bi-dash-circle text-muted"></i>
-                        {% endif %}
-                        Superuser
-                    </li>
-                    <li>
-                        {% if user_obj.is_staff %}
-                        <i class="bi bi-check-circle text-success"></i>
-                        {% else %}
-                        <i class="bi bi-dash-circle text-muted"></i>
-                        {% endif %}
-                        Staff
-                    </li>
-                    <li>
                         {% if user_obj.is_local %}
                         <i class="bi bi-person-lock text-secondary"></i> Local account (password auth)
                         {% else %}
@@ -92,29 +76,23 @@
 
 <div class="card mb-4">
     <div class="card-header d-flex justify-content-between align-items-center">
-        <h5 class="mb-0">Roles</h5>
+        <h5 class="mb-0">Predefined Permission Groups</h5>
         <a href="{% url 'users:user_roles' user_obj.pk %}" class="btn btn-sm btn-outline-primary">
-            <i class="bi bi-shield-check"></i> Manage Roles
+            <i class="bi bi-shield-lock"></i> Manage Groups
         </a>
     </div>
     <div class="card-body">
-        {% with roles=user_obj.roles.all %}
-        {% if roles %}
+        {% with groups=user_obj.permission_groups.all %}
+        {% if groups %}
         <div class="d-flex flex-wrap gap-2">
-            {% for role in roles %}
-            <span class="badge fs-6
-                {% if role.role == 'admin' %}bg-danger
-                {% elif role.role == 'superuser' %}bg-dark
-                {% elif role.role == 'build_admin' %}bg-primary
-                {% elif role.role == 'repo_admin' %}bg-info text-dark
-                {% elif role.role == 'view' %}bg-secondary
-                {% else %}bg-secondary{% endif %}">
-                {{ role.get_role_display }}{% if role.organisation %} — {{ role.organisation }}{% endif %}
-            </span>
+            {% for group in groups %}
+            <a href="{% url 'users:permission_group_detail' group.pk %}" class="badge fs-6 bg-primary-subtle text-primary-emphasis border border-primary-subtle text-decoration-none">
+                {{ group.name }}{% if group.organisation %} — {{ group.organisation }}{% endif %}
+            </a>
             {% endfor %}
         </div>
         {% else %}
-        <p class="text-muted mb-0">No roles assigned. <a href="{% url 'users:user_roles' user_obj.pk %}">Add roles.</a></p>
+        <p class="text-muted mb-0">No predefined permission groups assigned. <a href="{% url 'users:user_roles' user_obj.pk %}">Add groups.</a></p>
         {% endif %}
         {% endwith %}
     </div>

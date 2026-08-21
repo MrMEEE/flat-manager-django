@@ -1,0 +1,204 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ group.name }} - Permission Group{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'users:user_list' %}">Users</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'users:permission_group_list' %}">Permission Groups</a></li>
+        <li class="breadcrumb-item active">{{ group.name }}</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-shield-lock"></i> {{ group.name }}</h2>
+    <div class="btn-group">
+        {% if group.is_predefined %}
+        <span class="badge bg-primary-subtle text-primary-emphasis border border-primary-subtle align-self-center">Predefined</span>
+        {% else %}
+        <a href="{% url 'users:permission_group_edit' group.pk %}" class="btn btn-outline-primary">Edit</a>
+        <form method="post" action="{% url 'users:permission_group_delete' group.pk %}" class="d-inline">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-outline-danger" onclick="return confirm('Delete this permission group?');">Delete</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-4">
+        <div class="card h-100">
+            <div class="card-header"><h5 class="mb-0">Group Details</h5></div>
+            <div class="card-body">
+                <p class="mb-2"><strong>Organisation:</strong> {{ group.organisation|default:"Global" }}</p>
+                <p class="mb-0"><strong>Description:</strong> {{ group.description|default:"No description" }}</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-8">
+        <div class="card mb-4">
+            <div class="card-header"><h5 class="mb-0">Members</h5></div>
+            <div class="card-body">
+                {% if users %}
+                <ul class="list-group list-group-flush">
+                    {% for user in users %}
+                    <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                        <a href="{% url 'users:user_detail' user.pk %}">{{ user.username }}</a>
+                        <form method="post">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="remove_user">
+                            <input type="hidden" name="user_pk" value="{{ user.pk }}">
+                            <button type="submit" class="btn btn-sm btn-outline-danger">Remove</button>
+                        </form>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="text-muted mb-0">No users assigned.</p>
+                {% endif %}
+
+                {% if all_users %}
+                <form method="post" class="mt-3">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="add_user">
+                    <div class="input-group">
+                        <select name="user_pk" class="form-select">
+                            {% for user in all_users %}
+                            {% if user not in users %}
+                            <option value="{{ user.pk }}">{{ user.username }}</option>
+                            {% endif %}
+                            {% endfor %}
+                        </select>
+                        <button type="submit" class="btn btn-primary">Add User</button>
+                    </div>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mt-4">
+    <div class="card-header"><h5 class="mb-0">Permissions</h5></div>
+    <div class="card-body">
+        {% if permissions %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Resource</th>
+                        <th>Action</th>
+                        <th>Organisation</th>
+                        <th>Granted</th>
+                        {% if not group.is_predefined %}<th>Actions</th>{% endif %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for permission in permissions %}
+                    <tr>
+                        <td>{{ permission.get_resource_display }}</td>
+                        <td>{{ permission.get_action_display }}</td>
+                        <td>{{ permission.organisation|default:"Global" }}</td>
+                        <td>{% if permission.granted %}<span class="badge bg-success">Yes</span>{% else %}<span class="badge bg-secondary">No</span>{% endif %}</td>
+                        {% if not group.is_predefined %}
+                        <td>
+                            <form method="post">
+                                {% csrf_token %}
+                                <input type="hidden" name="submit_action" value="remove_permission">
+                                <input type="hidden" name="permission_pk" value="{{ permission.pk }}">
+                                <button type="submit" class="btn btn-sm btn-outline-danger">Remove</button>
+                            </form>
+                        </td>
+                        {% endif %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted mb-0">No permissions assigned.</p>
+        {% endif %}
+
+        {% if not group.is_predefined %}
+        <form method="post" class="mt-4">
+            {% csrf_token %}
+            <input type="hidden" name="submit_action" value="add_permission">
+            {% for field in permission_form %}
+            <div class="mb-3">
+                <label for="{{ field.id_for_label }}" class="form-label">{{ field.label }}</label>
+                {{ field }}
+                {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+                {% if field.errors %}<div class="invalid-feedback d-block">{{ field.errors }}</div>{% endif %}
+            </div>
+            {% endfor %}
+            <button type="submit" class="btn btn-primary">Add Permission</button>
+        </form>
+        {% else %}
+        <div class="alert alert-info mt-4 mb-0">
+            This is a predefined permission group. Its permissions are system-managed and cannot be edited here.
+        </div>
+        {% endif %}
+    </div>
+</div>
+<script>
+(function() {
+    const resourceToActions = {
+        repositories: ['read', 'create', 'update', 'delete', 'sync', 'all'],
+        gpg_keys: ['read', 'create', 'update', 'delete', 'all'],
+        flatpaks: ['read', 'create', 'update', 'delete', 'publish', 'all'],
+        rpms: ['read', 'create', 'update', 'delete', 'build', 'all'],
+        builds: ['read', 'build', 'publish', 'all'],
+        buildstreams: ['read', 'create', 'update', 'delete', 'build', 'publish', 'all'],
+        externals: ['read', 'create', 'update', 'delete', 'publish', 'sync', 'all'],
+        dependencies: ['read', 'create', 'update', 'delete', 'sync', 'all'],
+        clients: ['read', 'update', 'delete', 'all'],
+        users: ['read', 'create', 'update', 'delete', 'manage_users', 'all'],
+        config: ['read', 'update', 'all'],
+        api: ['read', 'admin', 'all'],
+    };
+
+    const actionLabels = {
+        read: 'Read',
+        create: 'Create',
+        update: 'Update',
+        delete: 'Delete',
+        build: 'Build',
+        publish: 'Publish',
+        sync: 'Sync',
+        manage_users: 'Manage Users',
+        admin: 'Admin',
+        all: 'All',
+    };
+
+    const resourceSelect = document.getElementById('id_resource');
+    const actionSelect = document.getElementById('id_action');
+    if (!resourceSelect || !actionSelect) {
+        return;
+    }
+
+    function updateActionOptions() {
+        const allowed = resourceToActions[resourceSelect.value] || ['read'];
+        const currentValue = actionSelect.value;
+        actionSelect.innerHTML = '';
+
+        allowed.forEach(function(value) {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = actionLabels[value] || value.replace('_', ' ');
+            actionSelect.appendChild(option);
+        });
+
+        if (allowed.includes(currentValue)) {
+            actionSelect.value = currentValue;
+        } else {
+            actionSelect.value = allowed[0];
+        }
+    }
+
+    resourceSelect.addEventListener('change', updateActionOptions);
+    updateActionOptions();
+})();
+</script>
+{% endblock %}

@@ -200,36 +200,43 @@ class LDAPBackend:
     def _sync_roles(self, source, server, bind_password: str, user, user_dn: str,
                     user_attrs: dict, ldap3):
         """
-        Replace the user's roles that originate from this source's group
-        mappings.  Other (manually assigned) roles are left untouched.
+        Replace the user's permission-group assignments that originate from
+        this source's group mappings. Other manual group assignments are left alone.
         """
-        from .models import LDAPGroupMapping, UserRole
+        from .models import LDAPGroupMapping, PermissionGroup
 
         mappings = list(source.group_mappings.select_related('organisation').all())
         if not mappings:
             return
 
-        # Collect the user's group memberships
         user_groups = self._get_user_groups(source, server, bind_password, user_dn, user_attrs, ldap3)
 
-        # Determine which roles should be granted
         granted = []
         for mapping in mappings:
             if mapping.ldap_group_dn.lower() in user_groups:
-                granted.append((mapping.role, mapping.organisation))
+                group = PermissionGroup.objects.filter(name=mapping.role, organisation=mapping.organisation).first()
+                if group is None:
+                    group = PermissionGroup.objects.filter(name=mapping.role, organisation__isnull=True).first()
+                if group is not None:
+                    granted.append((group, mapping.organisation))
 
-        # The set of (role, org) combinations this source manages
-        managed_combos = {(m.role, m.organisation_id) for m in mappings}
+        managed_groups = {(
+            PermissionGroup.objects.filter(name=m.role, organisation=m.organisation).first()
+            or PermissionGroup.objects.filter(name=m.role, organisation__isnull=True).first(),
+            m.organisation,
+        ) for m in mappings if (
+            PermissionGroup.objects.filter(name=m.role, organisation=m.organisation).first()
+            or PermissionGroup.objects.filter(name=m.role, organisation__isnull=True).first()
+        )}
 
-        # Remove roles from this source that are no longer in granted
-        for role in UserRole.objects.filter(user=user):
-            if (role.role, role.organisation_id) in managed_combos:
-                if (role.role, role.organisation) not in [(r, o) for r, o in granted]:
-                    role.delete()
+        for group, org in list(managed_groups):
+            if group is None:
+                continue
+            if (group, org) not in granted:
+                user.permission_groups.filter(pk=group.pk).delete()
 
-        # Add newly granted roles
-        for role_name, org in granted:
-            UserRole.objects.get_or_create(user=user, role=role_name, organisation=org)
+        for group, org in granted:
+            user.permission_groups.add(group)
 
     def _get_user_groups(self, source, server, bind_password: str, user_dn: str,
                          user_attrs: dict, ldap3) -> set:

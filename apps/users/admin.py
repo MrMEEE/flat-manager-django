@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
-from .models import User, UserProfile, APIToken, UserRole, LDAPSource, LDAPGroupMapping
+from .models import User, UserProfile, APIToken, LDAPSource, LDAPGroupMapping
 
 
 @admin.register(User)
@@ -26,14 +26,6 @@ class APITokenAdmin(admin.ModelAdmin):
     list_filter = ['is_active', 'created_at']
     search_fields = ['user__username', 'name']
     readonly_fields = ['token', 'created_at', 'last_used']
-
-
-@admin.register(UserRole)
-class UserRoleAdmin(admin.ModelAdmin):
-    list_display = ['user', 'role', 'organisation']
-    list_filter = ['role']
-    search_fields = ['user__username']
-    autocomplete_fields = ['user']
 
 
 class LDAPGroupMappingInline(admin.TabularInline):

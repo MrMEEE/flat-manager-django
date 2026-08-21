@@ -8,10 +8,14 @@ from django.views.generic import ListView, DetailView, CreateView, UpdateView, D
 from django.urls import reverse_lazy, reverse
 from django.contrib import messages
 from django.db import models
-from .models import User, UserProfile, UserRole, LDAPSource, LDAPGroupMapping, ROLE_CHOICES
+from .models import (
+    User, UserProfile, PermissionGrant, PermissionGroup, PermissionGroupPermission,
+    LDAPSource, LDAPGroupMapping,
+)
 from .forms import (
     UserCreateForm, UserUpdateForm, SetPasswordForm, ChangePasswordForm,
-    LDAPSourceForm, LDAPGroupMappingForm, UserRoleForm,
+    LDAPSourceForm, LDAPGroupMappingForm, PermissionGrantForm,
+    PermissionGroupForm, PermissionGroupPermissionForm,
 )
 
 
@@ -267,7 +271,7 @@ class ProfileView(LoginRequiredMixin, View):
 # ---------------------------------------------------------------------------
 
 class UserRoleView(AdminRequiredMixin, View):
-    """Manage roles for a single user."""
+    """Manage roles and permission grants for a single user."""
     template_name = 'users/user_roles.html'
 
     def get_user(self, pk):
@@ -275,40 +279,181 @@ class UserRoleView(AdminRequiredMixin, View):
 
     def get(self, request, pk):
         user_obj = self.get_user(pk)
-        roles = user_obj.roles.select_related('organisation').order_by('role', 'organisation__name')
-        form = UserRoleForm()
+        PermissionGroup.ensure_predefined_groups()
+        grants = user_obj.permission_grants.select_related('organisation').order_by('resource', 'action', 'organisation__name')
+        user_groups = user_obj.permission_groups.select_related('organisation').order_by('organisation__name', 'name')
+        all_groups = PermissionGroup.objects.select_related('organisation').filter(is_predefined=False).order_by('organisation__name', 'name')
+        user_group_ids = set(user_obj.permission_groups.values_list('id', flat=True))
+        predefined_groups = [
+            group for group in PermissionGroup.objects.select_related('organisation').filter(is_predefined=True).order_by('organisation__name', 'name')
+            if group.pk not in user_group_ids
+        ]
+        grant_form = PermissionGrantForm()
         return render(request, self.template_name, {
             'user_obj': user_obj,
-            'roles': roles,
-            'form': form,
-            'role_choices': ROLE_CHOICES,
+            'grants': grants,
+            'user_groups': user_groups,
+            'all_groups': all_groups,
+            'predefined_groups': predefined_groups,
+            'grant_form': grant_form,
         })
 
     def post(self, request, pk):
         user_obj = self.get_user(pk)
         action = request.POST.get('action', 'add')
 
-        if action == 'delete':
-            role_pk = request.POST.get('role_pk')
-            UserRole.objects.filter(pk=role_pk, user=user_obj).delete()
-            messages.success(request, 'Role removed.')
+        if action == 'delete_grant':
+            grant_pk = request.POST.get('grant_pk')
+            PermissionGrant.objects.filter(pk=grant_pk, user=user_obj).delete()
+            messages.success(request, 'Permission grant removed.')
+        elif action == 'remove_group':
+            group_pk = request.POST.get('group_pk')
+            user_obj.permission_groups.filter(pk=group_pk).delete()
+            messages.success(request, 'Permission group removed from user.')
+        elif action == 'add_group':
+            group_pk = request.POST.get('group_pk')
+            group = get_object_or_404(PermissionGroup, pk=group_pk)
+            user_obj.permission_groups.add(group)
+            messages.success(request, f'Permission group "{group.name}" added to user.')
         else:
-            form = UserRoleForm(request.POST)
+            form = PermissionGrantForm(request.POST)
             if form.is_valid():
-                role = form.save(commit=False)
-                role.user = user_obj
-                role.save()
-                messages.success(request, 'Role added.')
+                grant = form.save(commit=False)
+                grant.user = user_obj
+                grant.save()
+                messages.success(request, 'Permission grant added.')
             else:
-                roles = user_obj.roles.select_related('organisation').order_by('role', 'organisation__name')
+                grants = user_obj.permission_grants.select_related('organisation').order_by('resource', 'action', 'organisation__name')
                 return render(request, self.template_name, {
                     'user_obj': user_obj,
-                    'roles': roles,
-                    'form': form,
-                    'role_choices': ROLE_CHOICES,
+                    'grants': grants,
+                    'grant_form': form,
                 })
-
         return redirect('users:user_roles', pk=pk)
+
+
+class PermissionGroupListView(AdminRequiredMixin, ListView):
+    model = PermissionGroup
+    template_name = 'users/permission_group_list.html'
+    context_object_name = 'groups'
+
+    def get_queryset(self):
+        PermissionGroup.ensure_predefined_groups()
+        return PermissionGroup.objects.select_related('organisation').order_by('organisation__name', 'name')
+
+
+class PermissionGroupCreateView(AdminRequiredMixin, View):
+    template_name = 'users/permission_group_form.html'
+
+    def get(self, request):
+        PermissionGroup.ensure_predefined_groups()
+        return render(request, self.template_name, {'form': PermissionGroupForm(), 'action': 'Create'})
+
+    def post(self, request):
+        form = PermissionGroupForm(request.POST)
+        if form.is_valid():
+            group = form.save()
+            messages.success(request, f'Permission group "{group.name}" created.')
+            return redirect('users:permission_group_detail', pk=group.pk)
+        return render(request, self.template_name, {'form': form, 'action': 'Create'})
+
+
+class PermissionGroupDetailView(AdminRequiredMixin, View):
+    template_name = 'users/permission_group_detail.html'
+
+    def get_group(self, pk):
+        return get_object_or_404(PermissionGroup, pk=pk)
+
+    def get(self, request, pk):
+        PermissionGroup.ensure_predefined_groups()
+        group = self.get_group(pk)
+        return render(request, self.template_name, {
+            'group': group,
+            'users': group.users.select_related('profile').order_by('username'),
+            'permissions': group.permissions.select_related('organisation').order_by('resource', 'action', 'organisation__name'),
+            'permission_form': PermissionGroupPermissionForm(),
+            'user_form': None,
+            'all_users': User.objects.order_by('username'),
+        })
+
+    def post(self, request, pk):
+        group = self.get_group(pk)
+        submit_action = request.POST.get('submit_action')
+        if submit_action:
+            action = submit_action
+        else:
+            raw_actions = request.POST.getlist('action')
+            if raw_actions:
+                candidates = {value for value in raw_actions if value in {'add_permission', 'remove_permission', 'add_user', 'remove_user'}}
+                action = next(iter(candidates), raw_actions[-1])
+            else:
+                action = None
+
+        if action == 'add_permission':
+            form = PermissionGroupPermissionForm(request.POST)
+            if form.is_valid():
+                perm = form.save(commit=False)
+                perm.group = group
+                perm.save()
+                messages.success(request, 'Permission added to group.')
+            else:
+                messages.error(request, 'Invalid permission data.')
+            return redirect('users:permission_group_detail', pk=group.pk)
+
+        if action == 'remove_permission':
+            perm_pk = request.POST.get('permission_pk')
+            PermissionGroupPermission.objects.filter(pk=perm_pk, group=group).delete()
+            messages.success(request, 'Permission removed from group.')
+            return redirect('users:permission_group_detail', pk=group.pk)
+
+        if action == 'add_user':
+            user_pk = request.POST.get('user_pk')
+            user = get_object_or_404(User, pk=user_pk)
+            group.users.add(user)
+            messages.success(request, f'User "{user.username}" added to group.')
+            return redirect('users:permission_group_detail', pk=group.pk)
+
+        if action == 'remove_user':
+            user_pk = request.POST.get('user_pk')
+            user = get_object_or_404(User, pk=user_pk)
+            group.users.remove(user)
+            messages.success(request, f'User "{user.username}" removed from group.')
+            return redirect('users:permission_group_detail', pk=group.pk)
+
+        messages.error(request, 'Unsupported action.')
+        return redirect('users:permission_group_detail', pk=group.pk)
+
+
+class PermissionGroupUpdateView(AdminRequiredMixin, View):
+    template_name = 'users/permission_group_form.html'
+
+    def get(self, request, pk):
+        group = get_object_or_404(PermissionGroup, pk=pk)
+        return render(request, self.template_name, {'form': PermissionGroupForm(instance=group), 'group': group, 'action': 'Edit'})
+
+    def post(self, request, pk):
+        group = get_object_or_404(PermissionGroup, pk=pk)
+        if not group.is_editable():
+            messages.error(request, f'Permission group "{group.name}" is predefined and cannot be edited.')
+            return redirect('users:permission_group_detail', pk=group.pk)
+        form = PermissionGroupForm(request.POST, instance=group)
+        if form.is_valid():
+            group = form.save()
+            messages.success(request, f'Permission group "{group.name}" updated.')
+            return redirect('users:permission_group_detail', pk=group.pk)
+        return render(request, self.template_name, {'form': form, 'group': group, 'action': 'Edit'})
+
+
+class PermissionGroupDeleteView(AdminRequiredMixin, View):
+    def post(self, request, pk):
+        group = get_object_or_404(PermissionGroup, pk=pk)
+        if not group.is_editable():
+            messages.error(request, f'Permission group "{group.name}" is predefined and cannot be deleted.')
+            return redirect('users:permission_group_detail', pk=group.pk)
+        name = group.name
+        group.delete()
+        messages.success(request, f'Permission group "{name}" deleted.')
+        return redirect('users:permission_group_list')
 
 
 # ---------------------------------------------------------------------------

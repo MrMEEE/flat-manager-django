@@ -109,13 +109,21 @@
             <a class="nav-link" href="{% url 'users:dashboard' %}">
                 <i class="bi bi-speedometer2"></i> Dashboard
             </a>
+
+            {% if user.can_view_repositories %}
             <hr class="my-2" style="border-color: rgba(255,255,255,0.15);">
             <a class="nav-link" href="{% url 'flatpak:repo_list' %}">
                 <i class="bi bi-archive"></i> Repositories
             </a>
+            {% endif %}
+
+            {% if user.can_view_gpg_keys %}
             <a class="nav-link" href="{% url 'flatpak:gpgkey_list' %}">
                 <i class="bi bi-key"></i> GPG Keys
             </a>
+            {% endif %}
+
+            {% if user.can_view_flatpaks %}
             <hr class="my-2" style="border-color: rgba(255,255,255,0.15);">
             <a class="nav-link" href="{% url 'flatpak:package_list' %}">
                 <i class="bi bi-box-seam"></i> Flatpaks
@@ -126,9 +134,15 @@
             <a class="nav-link" href="{% url 'flatpak:external_list' %}">
                 <i class="bi bi-cloud-download"></i> Externals
             </a>
+            {% endif %}
+
+            {% if user.can_view_rpms %}
             <a class="nav-link" href="{% url 'rpm:package_list' %}">
                 <i class="bi bi-box"></i> RPMs
             </a>
+            {% endif %}
+
+            {% if user.can_view_builds %}
             <hr class="my-2" style="border-color: rgba(255,255,255,0.15);">
             <a class="nav-link" href="{% url 'flatpak:build_list' %}">
                 <i class="bi bi-hammer"></i> Builds
@@ -139,13 +153,19 @@
             <a class="nav-link" href="{% url 'flatpak:dependencies_list' %}">
                 <i class="bi bi-puzzle"></i> Dependencies
             </a>
+            {% endif %}
+
+            {% if user.can_view_clients %}
             <hr class="my-2" style="border-color: rgba(255,255,255,0.15);">
             <a class="nav-link" href="{% url 'flatpak:client_list' %}">
                 <i class="bi bi-pc-display"></i> Clients
             </a>
-            
+            {% endif %}
+
+            {% if user.can_manage_users or user.can_view_config or user.can_view_api %}
             <hr class="my-3" style="border-color: rgba(255,255,255,0.2);">
-            
+            {% endif %}
+
             {% if user.can_manage_users %}
             <a class="nav-link" href="{% url 'users:user_list' %}">
                 <i class="bi bi-people"></i> Users
@@ -154,14 +174,18 @@
                 <i class="bi bi-building"></i> Organisations
             </a>
             {% endif %}
-            
+
+            {% if user.can_view_config %}
             <a class="nav-link" href="{% url 'flatpak:config' %}">
                 <i class="bi bi-gear"></i> Config
             </a>
-            
+            {% endif %}
+
+            {% if user.can_view_api %}
             <a class="nav-link" href="/api/">
                 <i class="bi bi-code-slash"></i> API
             </a>
+            {% endif %}
         </nav>
         
         <div class="mt-auto pt-4">

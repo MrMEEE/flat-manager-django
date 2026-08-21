@@ -18,6 +18,13 @@ urlpatterns = [
     path('users/<int:pk>/password/', views.UserSetPasswordView.as_view(), name='user_set_password'),
     path('users/<int:pk>/roles/', views.UserRoleView.as_view(), name='user_roles'),
 
+    # Permission groups
+    path('groups/', views.PermissionGroupListView.as_view(), name='permission_group_list'),
+    path('groups/create/', views.PermissionGroupCreateView.as_view(), name='permission_group_create'),
+    path('groups/<int:pk>/', views.PermissionGroupDetailView.as_view(), name='permission_group_detail'),
+    path('groups/<int:pk>/edit/', views.PermissionGroupUpdateView.as_view(), name='permission_group_edit'),
+    path('groups/<int:pk>/delete/', views.PermissionGroupDeleteView.as_view(), name='permission_group_delete'),
+
     # LDAP sources
     path('ldap/', views.LDAPSourceListView.as_view(), name='ldap_list'),
     path('ldap/create/', views.LDAPSourceCreateView.as_view(), name='ldap_create'),

@@ -218,14 +218,65 @@ class User(AbstractUser):
     def can_view_resource(self, resource, organisation=None):
         return self.has_permission(resource, ACTION_READ, organisation=organisation)
 
+    def can_create_resource(self, resource, organisation=None):
+        return self.has_permission(resource, ACTION_CREATE, organisation=organisation)
+
+    def can_update_resource(self, resource, organisation=None):
+        return self.has_permission(resource, ACTION_UPDATE, organisation=organisation)
+
+    def can_delete_resource(self, resource, organisation=None):
+        return self.has_permission(resource, ACTION_DELETE, organisation=organisation)
+
+    def can_build_resource(self, resource, organisation=None):
+        return self.has_permission(resource, ACTION_BUILD, organisation=organisation)
+
+    def can_publish_resource(self, resource, organisation=None):
+        return self.has_permission(resource, ACTION_PUBLISH, organisation=organisation)
+
+    def can_sync_resource(self, resource, organisation=None):
+        return self.has_permission(resource, ACTION_SYNC, organisation=organisation)
+
     def can_view_repositories(self, organisation=None):
         return self.can_view_resource(RESOURCE_REPOSITORIES, organisation=organisation)
+
+    def can_create_repositories(self, organisation=None):
+        return self.can_create_resource(RESOURCE_REPOSITORIES, organisation=organisation)
+
+    def can_update_repositories(self, organisation=None):
+        return self.can_update_resource(RESOURCE_REPOSITORIES, organisation=organisation)
+
+    def can_delete_repositories(self, organisation=None):
+        return self.can_delete_resource(RESOURCE_REPOSITORIES, organisation=organisation)
 
     def can_view_gpg_keys(self, organisation=None):
         return self.can_view_resource(RESOURCE_GPG_KEYS, organisation=organisation)
 
+    def can_create_gpg_keys(self, organisation=None):
+        return self.can_create_resource(RESOURCE_GPG_KEYS, organisation=organisation)
+
+    def can_update_gpg_keys(self, organisation=None):
+        return self.can_update_resource(RESOURCE_GPG_KEYS, organisation=organisation)
+
+    def can_delete_gpg_keys(self, organisation=None):
+        return self.can_delete_resource(RESOURCE_GPG_KEYS, organisation=organisation)
+
     def can_view_flatpaks(self, organisation=None):
         return self.can_view_resource(RESOURCE_FLATPAKS, organisation=organisation)
+
+    def can_create_flatpaks(self, organisation=None):
+        return self.can_create_resource(RESOURCE_FLATPAKS, organisation=organisation)
+
+    def can_update_flatpaks(self, organisation=None):
+        return self.can_update_resource(RESOURCE_FLATPAKS, organisation=organisation)
+
+    def can_delete_flatpaks(self, organisation=None):
+        return self.can_delete_resource(RESOURCE_FLATPAKS, organisation=organisation)
+
+    def can_build_flatpaks(self, organisation=None):
+        return self.can_build_resource(RESOURCE_FLATPAKS, organisation=organisation)
+
+    def can_publish_flatpaks(self, organisation=None):
+        return self.can_publish_resource(RESOURCE_FLATPAKS, organisation=organisation)
 
     def can_view_rpms(self, organisation=None):
         return self.can_view_resource(RESOURCE_RPMS, organisation=organisation)
@@ -233,11 +284,62 @@ class User(AbstractUser):
     def can_view_builds(self, organisation=None):
         return self.can_view_resource(RESOURCE_BUILDS, organisation=organisation)
 
+    def can_build_builds(self, organisation=None):
+        return self.can_build_resource(RESOURCE_BUILDS, organisation=organisation)
+
+    def can_publish_builds(self, organisation=None):
+        return self.can_publish_resource(RESOURCE_BUILDS, organisation=organisation)
+
+    def can_view_buildstreams(self, organisation=None):
+        return self.can_view_resource(RESOURCE_BUILDSTREAMS, organisation=organisation)
+
+    def can_create_buildstreams(self, organisation=None):
+        return self.can_create_resource(RESOURCE_BUILDSTREAMS, organisation=organisation)
+
+    def can_update_buildstreams(self, organisation=None):
+        return self.can_update_resource(RESOURCE_BUILDSTREAMS, organisation=organisation)
+
+    def can_delete_buildstreams(self, organisation=None):
+        return self.can_delete_resource(RESOURCE_BUILDSTREAMS, organisation=organisation)
+
+    def can_build_buildstreams(self, organisation=None):
+        return self.can_build_resource(RESOURCE_BUILDSTREAMS, organisation=organisation)
+
+    def can_publish_buildstreams(self, organisation=None):
+        return self.can_publish_resource(RESOURCE_BUILDSTREAMS, organisation=organisation)
+
+    def can_view_externals(self, organisation=None):
+        return self.can_view_resource(RESOURCE_EXTERNALS, organisation=organisation)
+
+    def can_create_externals(self, organisation=None):
+        return self.can_create_resource(RESOURCE_EXTERNALS, organisation=organisation)
+
+    def can_update_externals(self, organisation=None):
+        return self.can_update_resource(RESOURCE_EXTERNALS, organisation=organisation)
+
+    def can_delete_externals(self, organisation=None):
+        return self.can_delete_resource(RESOURCE_EXTERNALS, organisation=organisation)
+
+    def can_publish_externals(self, organisation=None):
+        return self.can_publish_resource(RESOURCE_EXTERNALS, organisation=organisation)
+
+    def can_sync_externals(self, organisation=None):
+        return self.can_sync_resource(RESOURCE_EXTERNALS, organisation=organisation)
+
     def can_view_clients(self, organisation=None):
         return self.can_view_resource(RESOURCE_CLIENTS, organisation=organisation)
 
+    def can_update_clients(self, organisation=None):
+        return self.can_update_resource(RESOURCE_CLIENTS, organisation=organisation)
+
+    def can_delete_clients(self, organisation=None):
+        return self.can_delete_resource(RESOURCE_CLIENTS, organisation=organisation)
+
     def can_view_config(self, organisation=None):
         return self.can_view_resource(RESOURCE_CONFIG, organisation=organisation)
+
+    def can_update_config(self, organisation=None):
+        return self.can_update_resource(RESOURCE_CONFIG, organisation=organisation)
 
     def can_view_api(self, organisation=None):
         return self.can_view_resource(RESOURCE_API, organisation=organisation)

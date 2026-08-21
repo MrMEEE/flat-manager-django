@@ -13,16 +13,34 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2><i class="bi bi-archive"></i> {{ repository.name }}</h2>
     <div class="d-flex gap-2 align-items-center">
+        {% if user.can_update_repositories %}
         <button type="button" class="btn btn-outline-secondary" id="btn-update-metadata"
                 onclick="regenerateMetadata({{ repository.pk }})">
             <i class="bi bi-arrow-repeat"></i> Regenerate Metadata
         </button>
+        {% else %}
+        <button type="button" class="btn btn-outline-secondary" disabled title="You do not have permission to manage repositories">
+            <i class="bi bi-arrow-repeat"></i> Regenerate Metadata
+        </button>
+        {% endif %}
+        {% if user.can_update_repositories %}
         <a href="{% url 'flatpak:repo_edit' repository.pk %}" class="btn btn-primary">
             <i class="bi bi-pencil"></i> Edit
         </a>
+        {% else %}
+        <button type="button" class="btn btn-primary" disabled title="You do not have permission to edit repositories">
+            <i class="bi bi-pencil"></i> Edit
+        </button>
+        {% endif %}
+        {% if user.can_delete_repositories %}
         <a href="{% url 'flatpak:repo_delete' repository.pk %}" class="btn btn-danger">
             <i class="bi bi-trash"></i> Delete
         </a>
+        {% else %}
+        <button type="button" class="btn btn-danger" disabled title="You do not have permission to delete repositories">
+            <i class="bi bi-trash"></i> Delete
+        </button>
+        {% endif %}
         {% if repository.is_active %}
         <span class="badge bg-success">Active</span>
         {% else %}

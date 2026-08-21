@@ -31,30 +31,50 @@
         <span class="badge bg-warning">{{ package.status }}</span>
         {% endif %}
         
-        {% if package.status not in 'building,committing,publishing' %}
+        {% if package.status not in 'building,committing,publishing' and user.can_update_flatpaks %}
         <a href="{% url 'flatpak:package_edit' package.pk %}" class="btn btn-outline-secondary">
             <i class="bi bi-pencil"></i> Edit
         </a>
+        {% elif package.status not in 'building,committing,publishing' %}
+        <button type="button" class="btn btn-outline-secondary" disabled title="You do not have permission to edit flatpaks">
+            <i class="bi bi-pencil"></i> Edit
+        </button>
         {% endif %}
         
-        {% if package.status not in 'pending,building,committing,publishing' %}
+        {% if package.status not in 'pending,building,committing,publishing' and user.can_build_flatpaks %}
         <button type="button" class="btn btn-outline-info" onclick="retryBuild({{ package.pk }})">
+            <i class="bi bi-arrow-clockwise"></i> Rebuild
+        </button>
+        {% elif package.status not in 'pending,building,committing,publishing' %}
+        <button type="button" class="btn btn-outline-info" disabled title="You do not have permission to rebuild flatpaks">
             <i class="bi bi-arrow-clockwise"></i> Rebuild
         </button>
         {% endif %}
 
-        {% if package.status == 'failed' and package.produced_refs %}
+        {% if package.status == 'failed' and package.produced_refs and user.can_publish_flatpaks %}
         <button type="button" class="btn btn-success" onclick="republishBuild({{ package.pk }})">
+            <i class="bi bi-cloud-upload"></i> Re-publish
+        </button>
+        {% elif package.status == 'failed' and package.produced_refs %}
+        <button type="button" class="btn btn-success" disabled title="You do not have permission to publish flatpaks">
             <i class="bi bi-cloud-upload"></i> Re-publish
         </button>
         {% endif %}
         
-        {% if package.status in 'pending,building,committing,publishing' %}
+        {% if package.status in 'pending,building,committing,publishing' and user.can_build_flatpaks %}
         <button type="button" class="btn btn-outline-warning" onclick="cancelBuild({{ package.pk }})">
             <i class="bi bi-x-circle"></i> Cancel
         </button>
-        {% else %}
+        {% elif package.status in 'pending,building,committing,publishing' %}
+        <button type="button" class="btn btn-outline-warning" disabled title="You do not have permission to cancel builds">
+            <i class="bi bi-x-circle"></i> Cancel
+        </button>
+        {% elif user.can_delete_flatpaks %}
         <button type="button" class="btn btn-outline-danger" onclick="deletePackage({{ package.pk }})">
+            <i class="bi bi-trash"></i> Delete
+        </button>
+        {% else %}
+        <button type="button" class="btn btn-outline-danger" disabled title="You do not have permission to delete flatpaks">
             <i class="bi bi-trash"></i> Delete
         </button>
         {% endif %}

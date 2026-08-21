@@ -120,16 +120,12 @@
                     <span class="badge bg-secondary">Inactive</span>
                     {% endif %}
                 </p>
-                <p><strong>Permissions:</strong></p>
+                <p><strong>Permission Groups:</strong></p>
                 <ul class="list-unstyled">
-                    {% if user.is_superuser %}
-                    <li><i class="bi bi-check-circle text-success"></i> Superuser</li>
-                    {% endif %}
-                    {% if user.is_staff %}
-                    <li><i class="bi bi-check-circle text-success"></i> Staff</li>
-                    {% endif %}
-                    {% for role in user.roles.all %}
-                    <li><i class="bi bi-shield-check text-success"></i> {{ role.get_role_display }}{% if role.organisation %} ({{ role.organisation }}){% endif %}</li>
+                    {% for group in user.permission_groups.all %}
+                    <li><i class="bi bi-shield-lock text-success"></i> {{ group.name }}{% if group.organisation %} ({{ group.organisation }}){% endif %}</li>
+                    {% empty %}
+                    <li class="text-muted">No predefined permission groups assigned.</li>
                     {% endfor %}
                 </ul>
             </div>

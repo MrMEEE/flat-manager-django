@@ -1,6 +1,14 @@
 from django import forms
 from django.contrib.auth.password_validation import validate_password
-from .models import User, LDAPSource, LDAPGroupMapping, UserRole, ROLE_CHOICES
+from .models import (
+    User,
+    LDAPSource,
+    LDAPGroupMapping,
+    PermissionGrant,
+    PermissionGroup,
+    PermissionGroupPermission,
+    get_action_choices_for_resource,
+)
 
 
 class UserCreateForm(forms.ModelForm):
@@ -164,11 +172,66 @@ class LDAPGroupMappingForm(forms.ModelForm):
 
 
 # ---------------------------------------------------------------------------
-# UserRole form
+# PermissionGrant form
 # ---------------------------------------------------------------------------
 
-class UserRoleForm(forms.ModelForm):
+class PermissionGrantForm(forms.ModelForm):
     class Meta:
-        model = UserRole
-        fields = ['role', 'organisation']
+        model = PermissionGrant
+        fields = ['resource', 'action', 'organisation', 'granted']
+        widgets = {
+            'resource': forms.Select(attrs={'class': 'form-select'}),
+            'action': forms.Select(attrs={'class': 'form-select'}),
+            'organisation': forms.Select(attrs={'class': 'form-select'}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['organisation'].required = False
+        self.fields['granted'].initial = True
+        self._update_action_choices_for_current_resource()
+
+    def _update_action_choices_for_current_resource(self):
+        resource = self.data.get('resource') if self.data else None
+        if not resource and self.initial.get('resource'):
+            resource = self.initial['resource']
+        self.fields['action'].choices = get_action_choices_for_resource(resource)
+
+
+class PermissionGroupForm(forms.ModelForm):
+    class Meta:
+        model = PermissionGroup
+        fields = ['name', 'description', 'organisation']
+        widgets = {
+            'name': forms.TextInput(attrs={'class': 'form-control'}),
+            'description': forms.Textarea(attrs={'class': 'form-control', 'rows': 3}),
+            'organisation': forms.Select(attrs={'class': 'form-select'}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['organisation'].required = False
+
+
+class PermissionGroupPermissionForm(forms.ModelForm):
+    class Meta:
+        model = PermissionGroupPermission
+        fields = ['resource', 'action', 'organisation', 'granted']
+        widgets = {
+            'resource': forms.Select(attrs={'class': 'form-select'}),
+            'action': forms.Select(attrs={'class': 'form-select'}),
+            'organisation': forms.Select(attrs={'class': 'form-select'}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['organisation'].required = False
+        self.fields['granted'].initial = True
+        self._update_action_choices_for_current_resource()
+
+    def _update_action_choices_for_current_resource(self):
+        resource = self.data.get('resource') if self.data else None
+        if not resource and self.initial.get('resource'):
+            resource = self.initial['resource']
+        self.fields['action'].choices = get_action_choices_for_resource(resource)
 
