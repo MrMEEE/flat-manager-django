@@ -14,7 +14,7 @@ from django.contrib import messages
 from django.shortcuts import render, redirect, get_object_or_404
 from django.conf import settings
 from apps.users.mixins import BuildAdminRequiredMixin, ResourceActionRequiredMixin
-from .models import GPGKey, Repository, RepositorySubset, Package, Build, Promotion, BuildStreamSource, Client, ExternalRef, ExternalRefVersion, ExternalRefPromotion, Organisation, FlatpakRemote
+from .models import GPGKey, Repository, RepositorySubset, Package, Build, Promotion, BuildStreamSource, Client, AppUsageObservation, ExternalRef, ExternalRefVersion, ExternalRefPromotion, Organisation, FlatpakRemote
 from .forms import GPGKeyGenerateForm, GPGKeyImportForm, GPGKeyRenewForm
 from .utils.gpg import generate_gpg_key, import_gpg_key, renew_gpg_key
 from .utils.ostree import init_ostree_repo, sign_repo_summary, delete_ostree_repo, temp_gpg_homedir, update_repo_metadata
@@ -3760,6 +3760,26 @@ class ClientCheckinView(View):
         if bios_version:
             client.bios_version = bios_version
         client.save()
+
+        # Keep a historical, client-level installation signal for popularity
+        # reporting. This records presence in a snapshot, not a download event.
+        observed_app_ids = set()
+        observations = []
+        for item in installed:
+            app_id = item.get('app_id')
+            if not app_id or app_id in observed_app_ids:
+                continue
+            observed_app_ids.add(app_id)
+            observations.append(AppUsageObservation(
+                client=client,
+                app_id=app_id,
+                version=item.get('version', ''),
+                branch=item.get('branch', ''),
+                origin=item.get('origin', ''),
+                commit=item.get('commit', ''),
+                observed_at=client.last_checkin,
+            ))
+        AppUsageObservation.objects.bulk_create(observations)
 
         # Notify the clients page in real-time so it can update without reload.
         try:

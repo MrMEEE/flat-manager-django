@@ -258,6 +258,118 @@ class Package(models.Model):
             )
 
 
+class AppMetadata(models.Model):
+    """Cached public metadata used by the Flathub-compatible API."""
+
+    package = models.OneToOneField(Package, on_delete=models.CASCADE, related_name='app_metadata')
+    summary = models.CharField(max_length=500, blank=True)
+    description = models.TextField(blank=True)
+    homepage = models.URLField(blank=True)
+    icon_url = models.URLField(blank=True)
+    screenshots = models.JSONField(default=list, blank=True)
+    developer_name = models.CharField(max_length=255, blank=True)
+    categories = models.JSONField(default=list, blank=True)
+    keywords = models.JSONField(default=list, blank=True)
+    is_verified = models.BooleanField(default=False)
+    is_mobile = models.BooleanField(default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Metadata for {self.package.package_id}"
+
+
+class AppPickTheme(models.Model):
+    """Editorial theme used to group curated app selections."""
+
+    name = models.CharField(max_length=255, unique=True)
+    description = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+
+
+class AppPickSelection(models.Model):
+    """A dated editorial app selection exposed by the Flathub API."""
+
+    KIND_CHOICES = [
+        ('day', 'App of the Day'),
+        ('week', 'App of the Week'),
+        ('curated', 'Curated Selection'),
+    ]
+
+    package = models.ForeignKey(Package, on_delete=models.CASCADE, related_name='app_picks')
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES)
+    date = models.DateField()
+    title = models.CharField(max_length=255, blank=True)
+    description = models.TextField(blank=True)
+    theme = models.ForeignKey(
+        AppPickTheme, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='selections',
+    )
+    rank = models.PositiveIntegerField(default=0)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+        related_name='created_app_picks',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['date', 'rank', 'id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['package', 'kind', 'date'],
+                name='unique_app_pick_package_kind_date',
+            ),
+        ]
+
+
+class ModerationRequest(models.Model):
+    """Auditable moderation request for a package."""
+
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+    ]
+
+    package = models.ForeignKey(Package, on_delete=models.CASCADE, related_name='moderation_requests')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    submitted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+        related_name='submitted_moderation_requests',
+    )
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='reviewed_moderation_requests',
+    )
+    reason = models.TextField(blank=True)
+    review_comment = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+
+class QualityModerationResult(models.Model):
+    """Latest persisted quality moderation result for an application."""
+
+    package = models.OneToOneField(Package, on_delete=models.CASCADE, related_name='quality_moderation')
+    status = models.CharField(max_length=20, default='pending')
+    fullscreen = models.BooleanField(default=False)
+    guidelines = models.JSONField(default=list, blank=True)
+    review_comment = models.TextField(blank=True)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='quality_reviews',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
 class BuildStreamSource(models.Model):
     """
     A BuildStream project that produces one or more Flatpak refs (runtimes, SDKs, …).
@@ -981,3 +1093,22 @@ class Client(models.Model):
 
     def __str__(self):
         return self.hostname
+
+
+class AppUsageObservation(models.Model):
+    """A client's observed installed Flatpak during a check-in."""
+
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='app_usage_observations')
+    app_id = models.CharField(max_length=255, db_index=True)
+    version = models.CharField(max_length=255, blank=True)
+    branch = models.CharField(max_length=100, blank=True)
+    origin = models.CharField(max_length=500, blank=True)
+    commit = models.CharField(max_length=255, blank=True)
+    observed_at = models.DateTimeField(db_index=True)
+
+    class Meta:
+        ordering = ['-observed_at']
+        indexes = [
+            models.Index(fields=['app_id', '-observed_at']),
+            models.Index(fields=['client', '-observed_at']),
+        ]
