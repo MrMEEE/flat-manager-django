@@ -102,8 +102,13 @@ jobs:
 
       # actions/checkout runs as the runner UID; the container runs as root.
       # Git refuses to operate on the repo unless we mark it safe explicitly.
+      # The container may not include git until the build toolchain is installed.
       - name: Mark workspace as git safe directory
-        run: docker exec rpmbuild-${{ matrix.artifact_name }} git config --global --add safe.directory /workspace
+        run: |
+          docker exec rpmbuild-${{ matrix.artifact_name }} bash -lc "
+            dnf install -y git >/dev/null 2>&1 || true
+            git config --global --add safe.directory /workspace
+          "
 
       # ── Determine version from tag or manual input ──────────────────────────
       - name: Determine version
