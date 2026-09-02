@@ -65,8 +65,8 @@ jobs:
             ${{ matrix.container }} \
             -lc 'sleep infinity'
 
-      # ── Install build toolchain ─────────────────────────────────────────────
-      - name: Install build dependencies
+      # ── Install EPEL and the narrow CentOS Stream bubblewrap repo ──────────
+      - name: Install repo prerequisites
         run: |
           docker exec rpmbuild-${{ matrix.artifact_name }} bash -lc "
             dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-${{ matrix.rhel_ver }}.noarch.rpm
@@ -75,11 +75,11 @@ jobs:
 
             # CentOS Stream hosts bubblewrap in BaseOS for both 9 and 10.
             # AppStream does not contain the package on RHEL 9; using the wrong
-            # repo causes the "No match for argument: bubblewrap" failure.
+            # repo causes the \"No match for argument: bubblewrap\" failure.
             printf '%s\n' \
               '[centos-stream-bubblewrap]' \
               'name=CentOS Stream ${{ matrix.rhel_ver }} bubblewrap' \
-              "baseurl=${{ matrix.bubblewrap_repo_url }}" \
+              \"baseurl=${{ matrix.bubblewrap_repo_url }}\" \
               'enabled=1' \
               'gpgcheck=0' \
               'repo_gpgcheck=0' \
@@ -87,8 +87,22 @@ jobs:
               'includepkgs=bubblewrap' \
               > /etc/yum.repos.d/centos-stream-bubblewrap.repo
 
-            dnf install -y --disablerepo='*' --enablerepo='centos-stream-bubblewrap' bubblewrap
+            dnf makecache --repoid=centos-stream-bubblewrap
+            dnf --disablerepo='*' --enablerepo='centos-stream-bubblewrap' list available bubblewrap
+          "
 
+      - name: Install bubblewrap
+        run: |
+          docker exec rpmbuild-${{ matrix.artifact_name }} bash -lc "
+            dnf install -y --disablerepo='*' --enablerepo='centos-stream-bubblewrap' bubblewrap
+            command -v bwrap
+            bwrap --version
+          "
+
+      # ── Install the actual RPM build toolchain ──────────────────────────────
+      - name: Install RPM build dependencies
+        run: |
+          docker exec rpmbuild-${{ matrix.artifact_name }} bash -lc "
             dnf install -y \
               rpm-build \
               rpmdevtools \
@@ -102,6 +116,8 @@ jobs:
               policycoreutils \
               ${{ matrix.python_pkg }}
 
+            command -v rpmbuild
+            rpmbuild --version
             rpmdev-setuptree
           "
 
@@ -146,10 +162,13 @@ jobs:
       - name: Build RPMs
         run: |
           VERSION="${{ steps.ver.outputs.version }}"
-          docker exec rpmbuild-${{ matrix.artifact_name }} rpmbuild -ba /workspace/packaging/flat-manager-django.spec \
-            --define "version_string ${VERSION}" \
-            --define "_topdir /root/rpmbuild" \
-            --define "rhel ${{ matrix.rhel_ver }}"
+          docker exec rpmbuild-${{ matrix.artifact_name }} bash -lc '
+            command -v rpmbuild
+            rpmbuild -ba /workspace/packaging/flat-manager-django.spec \
+              --define "version_string ${VERSION}" \
+              --define "_topdir /root/rpmbuild" \
+              --define "rhel ${{ matrix.rhel_ver }}"
+          '
 
       # ── Copy built RPMs out ─────────────────────────────────────────────────
       - name: Collect built RPMs
