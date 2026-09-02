@@ -73,8 +73,8 @@ jobs:
 
             printf '%s\\n' \
               '[centos-stream-bubblewrap]' \
-              "name=CentOS Stream ${{ matrix.rhel_ver }} bubblewrap" \
-              "baseurl=https://mirror.stream.centos.org/${{ matrix.rhel_ver }}-stream/AppStream/x86_64/os/" \
+              'name=CentOS Stream ${{ matrix.rhel_ver }} bubblewrap' \
+              'baseurl=https://mirror.stream.centos.org/${{ matrix.rhel_ver }}-stream/AppStream/x86_64/os/' \
               'enabled=1' \
               'gpgcheck=0' \
               'repo_gpgcheck=0' \
