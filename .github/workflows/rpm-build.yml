@@ -137,12 +137,28 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             VERSION="${{ github.event.inputs.version }}"
-            VERSION="${VERSION#v}"
           else
-            VERSION="${GITHUB_REF_NAME#v}"
+            VERSION="${GITHUB_REF_NAME}"
           fi
+          while [[ "$VERSION" == v* ]]; do
+            VERSION="${VERSION#v}"
+          done
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Building version: ${VERSION}"
+
+      - name: Determine release tag
+        id: tag
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ github.event.inputs.version }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          while [[ "$TAG" == v* ]]; do
+            TAG="${TAG#v}"
+          done
+          echo "tag=v${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Release tag: v${TAG}"
 
       # ── Create source tarball ───────────────────────────────────────────────
       - name: Create source tarball
@@ -206,11 +222,11 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name }}
+          tag_name: ${{ steps.tag.outputs.tag }}
           files: release-rpms/**/*.rpm
           generate_release_notes: true
           draft: false
-          prerelease: ${{ contains(github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name, '-') }}
+          prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
           fail_on_unmatched_files: true
           body: |
             ## Installation

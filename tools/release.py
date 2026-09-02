@@ -91,7 +91,8 @@ class ReleaseManager:
 
     @staticmethod
     def parse_version(s: str) -> tuple[int, int, int]:
-        m = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", s.strip())
+        normalized = s.strip().lstrip("v")
+        m = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", normalized)
         if not m:
             raise ReleaseError(f"Invalid version format: {s!r}  (expected X.Y.Z)")
         return int(m.group(1)), int(m.group(2)), int(m.group(3))
@@ -105,7 +106,7 @@ class ReleaseManager:
         m = re.search(r'^VERSION\s*=\s*["\']([^"\']+)["\']', text, re.MULTILINE)
         if not m:
             raise ReleaseError(f"Could not find VERSION in {VERSION_FILE}")
-        return m.group(1)
+        return m.group(1).lstrip("v")
 
     def bump(self, current: str, mode: str) -> str:
         maj, min_, pat = self.parse_version(current)
@@ -167,7 +168,8 @@ class ReleaseManager:
 
     def check_tag_doesnt_exist(self, version: str) -> None:
         # GitHub Actions only triggers on tags named vX.Y.Z
-        tag = version if version.startswith("v") else f"v{version}"
+        normalized = version.lstrip("v")
+        tag = f"v{normalized}"
         existing = self._run(
             ["git", "tag", "-l", tag], read_only=True
         ).stdout.strip()
@@ -235,7 +237,8 @@ class ReleaseManager:
     # ── Git operations ────────────────────────────────────────────────────────
 
     def git_commit_tag_push(self, new_version: str) -> None:
-        tag = new_version if new_version.startswith("v") else f"v{new_version}"
+        normalized = new_version.lstrip("v")
+        tag = f"v{normalized}"
         self._run(["git", "add"] + self._changes)
         self._run(["git", "commit", "-m", f"chore: release {new_version}"])
         self._run(["git", "tag", "-a", tag, "-m", f"Release {new_version}"])
