@@ -59,14 +59,14 @@ jobs:
             --name rpmbuild-${{ matrix.artifact_name }} \
             --workdir /workspace \
             -v "${GITHUB_WORKSPACE}:/workspace" \
-            --entrypoint /bin/bash \
+            --entrypoint /bin/sh \
             ${{ matrix.container }} \
             -lc 'sleep infinity'
 
       # ── Install build toolchain ─────────────────────────────────────────────
       - name: Install build dependencies
         run: |
-          docker exec rpmbuild-${{ matrix.artifact_name }} bash -lc '
+          docker exec rpmbuild-${{ matrix.artifact_name }} sh -lc '
             dnf install -y epel-release 2>/dev/null || true
             dnf install -y "dnf-command(config-manager)" 2>/dev/null || true
             dnf config-manager --set-enabled crb 2>/dev/null || \
@@ -111,7 +111,7 @@ jobs:
       - name: Create source tarball
         run: |
           VERSION="${{ steps.ver.outputs.version }}"
-          docker exec rpmbuild-${{ matrix.artifact_name }} bash -lc "
+          docker exec rpmbuild-${{ matrix.artifact_name }} sh -lc "
             cd /workspace
             TARBALL=\"\$HOME/rpmbuild/SOURCES/flat-manager-django-${VERSION}.tar.gz\"
             git archive \
@@ -126,7 +126,7 @@ jobs:
       - name: Build RPMs
         run: |
           VERSION="${{ steps.ver.outputs.version }}"
-          docker exec rpmbuild-${{ matrix.artifact_name }} bash -lc "
+          docker exec rpmbuild-${{ matrix.artifact_name }} sh -lc "
             cd /workspace
             rpmbuild -ba packaging/flat-manager-django.spec \
               --define \"version_string ${VERSION}\" \
