@@ -106,7 +106,8 @@ class FlatpakRemoteAdmin(admin.ModelAdmin):
 
 @admin.register(Client)
 class ClientAdmin(admin.ModelAdmin):
-    list_display = ['hostname', 'serial_number', 'last_checkin', 'installed_count', 'foreign_count', 'outdated_count', 'updated_at']
+    list_display = ['hostname', 'serial_number', 'last_checkin', 'lockdown', 'installed_count', 'foreign_count', 'outdated_count', 'updated_at']
+    list_editable = ['lockdown']
     readonly_fields = ['created_at', 'updated_at', 'last_checkin',
                        'serial_number',
                        'remotes', 'managed_remotes', 'installed_flatpaks',

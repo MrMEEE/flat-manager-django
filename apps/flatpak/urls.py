@@ -81,6 +81,7 @@ urlpatterns = [
     path('clients/', views.ClientListView.as_view(), name='client_list'),
     path('clients/<int:pk>/', views.ClientDetailView.as_view(), name='client_detail'),
     path('clients/<int:pk>/assign-orgs/', views.ClientAssignOrgsView.as_view(), name='client_assign_orgs'),
+    path('clients/<int:pk>/lockdown/', views.ClientLockdownToggleView.as_view(), name='client_lockdown_toggle'),
     path('clients/<int:pk>/delete/', views.ClientDeleteView.as_view(), name='client_delete'),
     path('clients/bulk-action/', views.ClientBulkActionView.as_view(), name='client_bulk_action'),
     path('api/client-checkin/', views.ClientCheckinView.as_view(), name='client_checkin'),

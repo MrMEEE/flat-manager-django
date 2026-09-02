@@ -3566,6 +3566,30 @@ class ClientDeleteView(LoginRequiredMixin, View):
         return JsonResponse({'status': 'ok'})
 
 
+class ClientLockdownToggleView(LoginRequiredMixin, View):
+    """POST /flatpak/clients/<pk>/lockdown/ — set desired client lockdown state."""
+
+    def post(self, request, pk):
+        if not request.user.can_update_clients():
+            return JsonResponse({'error': 'Permission denied'}, status=403)
+        try:
+            data = json.loads(request.body.decode('utf-8') or '{}')
+        except (ValueError, json.JSONDecodeError):
+            data = {}
+        client = get_object_or_404(Client, pk=pk)
+        requested = data.get('lockdown')
+        if not isinstance(requested, bool):
+            return JsonResponse({'error': 'lockdown must be true or false'}, status=400)
+        client.lockdown = requested
+        client.save(update_fields=['lockdown', 'updated_at'])
+        return JsonResponse({
+            'status': 'ok',
+            'client_pk': client.pk,
+            'hostname': client.hostname,
+            'lockdown': client.lockdown,
+        })
+
+
 import json
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
@@ -3802,6 +3826,7 @@ class ClientCheckinView(View):
                         'foreign_flatpaks': foreign_flatpaks,
                         'outdated_flatpaks': outdated_flatpaks,
                         'managed_remotes': client.managed_remotes or [],
+                        'lockdown': client.lockdown,
                         'bios_version': client.bios_version,
                         'last_checkin': client.last_checkin.strftime('%b %d, %H:%M') if client.last_checkin else '',
                     }
@@ -3809,7 +3834,7 @@ class ClientCheckinView(View):
         except Exception:
             pass  # WS push is best-effort; checkin must still succeed
 
-        return JsonResponse({'status': 'ok', 'hostname': hostname})
+        return JsonResponse({'status': 'ok', 'hostname': hostname, 'lockdown': client.lockdown})
 
 
 # ─── BuildStream Source views ─────────────────────────────────────────────────

@@ -15,10 +15,12 @@ exec python3 "$0" "$@"
 
 import argparse
 import configparser
+import datetime
 import grp
 import json
 import os
 import pwd
+import shutil
 import socket
 import subprocess
 import sys
@@ -27,6 +29,9 @@ import urllib.error
 
 
 CONFIG_PATH = '/etc/flat-manager-django-client/config'
+STATE_DIR = '/etc/flat-manager-django-client'
+LOCKDOWN_STATE_PATH = os.path.join(STATE_DIR, 'lockdown-state.json')
+IGNORED_USERNAMES = {'nobody'}
 
 
 def read_config():
@@ -44,6 +49,491 @@ def run(cmd):
         text=True,
     )
     return result.stdout.strip()
+
+
+def command_exists(name):
+    return shutil.which(name) is not None
+
+
+def run_checked(cmd, input_text=None):
+    result = subprocess.run(
+        cmd,
+        input=input_text,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"{' '.join(cmd)} failed: {result.stderr.strip() or result.stdout.strip()}")
+    return result.stdout
+
+
+def ensure_state_dir():
+    os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
+
+
+def write_file(path, content, mode=0o600):
+    with open(path, 'w', encoding='utf-8') as handle:
+        handle.write(content)
+    os.chmod(path, mode)
+
+
+def list_backup_files():
+    try:
+        return sorted(
+            name for name in os.listdir(STATE_DIR)
+            if name != os.path.basename(LOCKDOWN_STATE_PATH)
+        )
+    except OSError:
+        return []
+
+
+def print_lockdown_result(result):
+    print(f"Firewall backend: {result.get('backend', 'unknown')}")
+    print(f"State file: {LOCKDOWN_STATE_PATH}")
+    if result.get('already_locked'):
+        print('Status: already locked down; no firewall changes were applied')
+    else:
+        print('Status: lockdown applied')
+    backups = result.get('backups') or []
+    if backups:
+        print('Backup files:')
+        for backup in backups:
+            print(f'  - {os.path.join(STATE_DIR, backup)}')
+    else:
+        print('Backup files: none recorded')
+    for action in result.get('actions', []):
+        print(f'Action: {action}')
+
+
+def print_unlock_result(result):
+    print(f"Firewall backend: {result.get('backend', 'unknown')}")
+    print(f"State file removed: {LOCKDOWN_STATE_PATH}")
+    for action in result.get('actions', []):
+        print(f'Action: {action}')
+
+
+def print_lock_status():
+    print('Network lockdown status')
+    print(f'State directory: {STATE_DIR}')
+    print(f'State file: {LOCKDOWN_STATE_PATH}')
+    detected = detect_firewall_backends()
+    selected = detect_firewall_backend()
+    print('Firewall detection priority: firewalld, ufw, nftables, iptables')
+    print('Detected firewalls: ' + (', '.join(detected) if detected else 'none'))
+    print(f"Selected backend if locking now: {selected or 'none'}")
+    firewalld = firewalld_status()
+    if firewalld['installed']:
+        print('Firewalld config:')
+        print(f"  active: {firewalld['active'] if firewalld['active'] is not None else 'unknown'}")
+        print(f"  enabled: {firewalld['enabled'] if firewalld['enabled'] is not None else 'unknown'}")
+    if 'ufw' in detected:
+        ufw_status = ufw_config_status()
+        print('UFW config:')
+        print(f"  enabled: {ufw_status['enabled_raw']}")
+        print(f"  default input: {ufw_status['default_input_policy']}")
+        print(f"  default output: {ufw_status['default_output_policy']}")
+        print(f"  default forward: {ufw_status['default_forward_policy']}")
+
+    try:
+        state = read_lockdown_state()
+    except PermissionError:
+        print('Saved lockdown state: unreadable; run as root to inspect it')
+        return
+    except json.JSONDecodeError as exc:
+        print(f'Saved lockdown state: invalid JSON ({exc})')
+        return
+
+    if not state:
+        print('Saved lockdown state: not locked by flat-manager-checkin')
+        return
+
+    print('Saved lockdown state: locked')
+    print(f"Saved backend: {state.get('backend', 'unknown')}")
+    print(f"Saved at: {state.get('created_at', 'unknown')}")
+    backups = list_backup_files()
+    if backups:
+        print('Backup files:')
+        for backup in backups:
+            print(f'  - {os.path.join(STATE_DIR, backup)}')
+    else:
+        print('Backup files: none found')
+
+
+def read_lockdown_state():
+    try:
+        with open(LOCKDOWN_STATE_PATH, 'r', encoding='utf-8') as handle:
+            return json.load(handle)
+    except FileNotFoundError:
+        return None
+
+
+def write_lockdown_state(backend, metadata=None):
+    ensure_state_dir()
+    state = {
+        'backend': backend,
+        'created_at': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+    }
+    if metadata:
+        state.update(metadata)
+    write_file(LOCKDOWN_STATE_PATH, json.dumps(state, indent=2) + '\n')
+
+
+def read_key_value_file(path):
+    values = {}
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as handle:
+            for line in handle:
+                line = line.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                key, value = line.split('=', 1)
+                values[key.strip()] = value.strip().strip('"')
+    except OSError:
+        pass
+    return values
+
+
+def ufw_config_status():
+    ufw_conf = read_key_value_file('/etc/ufw/ufw.conf')
+    default_ufw = read_key_value_file('/etc/default/ufw')
+    return {
+        'enabled': ufw_conf.get('ENABLED', '').lower() == 'yes',
+        'enabled_raw': ufw_conf.get('ENABLED', 'unknown'),
+        'default_input_policy': default_ufw.get('DEFAULT_INPUT_POLICY', 'unknown'),
+        'default_output_policy': default_ufw.get('DEFAULT_OUTPUT_POLICY', 'unknown'),
+        'default_forward_policy': default_ufw.get('DEFAULT_FORWARD_POLICY', 'unknown'),
+    }
+
+
+def systemctl_is_active(unit):
+    if not command_exists('systemctl'):
+        return None
+    result = subprocess.run(['systemctl', 'is-active', '--quiet', unit])
+    return result.returncode == 0
+
+
+def systemctl_is_enabled(unit):
+    if not command_exists('systemctl'):
+        return None
+    result = subprocess.run(['systemctl', 'is-enabled', '--quiet', unit])
+    return result.returncode == 0
+
+
+def firewalld_status():
+    return {
+        'installed': command_exists('firewall-cmd'),
+        'active': systemctl_is_active('firewalld'),
+        'enabled': systemctl_is_enabled('firewalld'),
+    }
+
+
+def detect_firewall_backend():
+    if command_exists('firewall-cmd'):
+        state = subprocess.run(['firewall-cmd', '--state'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if state.returncode == 0:
+            return 'firewalld'
+    if command_exists('ufw'):
+        return 'ufw'
+    if command_exists('nft'):
+        return 'nftables'
+    if command_exists('iptables'):
+        return 'iptables'
+    return None
+
+
+def detect_firewall_backends():
+    detected = []
+    if command_exists('firewall-cmd'):
+        state = subprocess.run(['firewall-cmd', '--state'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if state.returncode == 0:
+            detected.append('firewalld')
+        else:
+            detected.append('firewalld-installed-inactive')
+    if command_exists('ufw'):
+        detected.append('ufw')
+    if command_exists('nft'):
+        detected.append('nftables')
+    if command_exists('iptables'):
+        detected.append('iptables')
+    return detected
+
+
+def backup_firewalld():
+    status = firewalld_status()
+    if os.path.isdir('/etc/firewalld'):
+        dest = os.path.join(STATE_DIR, 'firewalld')
+        if os.path.exists(dest):
+            shutil.rmtree(dest)
+        shutil.copytree('/etc/firewalld', dest, symlinks=True)
+    write_file(os.path.join(STATE_DIR, 'firewalld-zones.txt'), run_checked(['firewall-cmd', '--list-all-zones']))
+    return {
+        'firewalld_active_before_lockdown': status['active'],
+        'firewalld_enabled_before_lockdown': status['enabled'],
+    }
+
+
+def backup_ufw():
+    status = ufw_config_status()
+    if os.path.isdir('/etc/ufw'):
+        dest = os.path.join(STATE_DIR, 'ufw')
+        if os.path.exists(dest):
+            shutil.rmtree(dest)
+        shutil.copytree('/etc/ufw', dest, symlinks=True)
+    if os.path.exists('/etc/default/ufw'):
+        shutil.copy2('/etc/default/ufw', os.path.join(STATE_DIR, 'default-ufw'))
+    write_file(os.path.join(STATE_DIR, 'ufw-status.txt'), run(['ufw', 'status', 'verbose']) + '\n')
+    return {'ufw_enabled_before_lockdown': status['enabled']}
+
+
+def backup_nftables():
+    write_file(os.path.join(STATE_DIR, 'nftables.rules'), run_checked(['nft', 'list', 'ruleset']))
+    if os.path.exists('/etc/nftables.conf'):
+        shutil.copy2('/etc/nftables.conf', os.path.join(STATE_DIR, 'nftables.conf'))
+    if command_exists('iptables-save'):
+        write_file(os.path.join(STATE_DIR, 'nftables-iptables.rules'), run_checked(['iptables-save']))
+    if command_exists('ip6tables-save'):
+        write_file(os.path.join(STATE_DIR, 'nftables-ip6tables.rules'), run_checked(['ip6tables-save']))
+
+
+def backup_iptables():
+    write_file(os.path.join(STATE_DIR, 'iptables.rules'), run_checked(['iptables-save']))
+    if command_exists('ip6tables-save'):
+        write_file(os.path.join(STATE_DIR, 'ip6tables.rules'), run_checked(['ip6tables-save']))
+
+
+def backup_firewall(backend):
+    ensure_state_dir()
+    metadata = {}
+    if backend == 'firewalld':
+        metadata.update(backup_firewalld())
+    elif backend == 'ufw':
+        metadata.update(backup_ufw())
+    elif backend == 'nftables':
+        backup_nftables()
+    elif backend == 'iptables':
+        backup_iptables()
+    else:
+        raise RuntimeError('No supported firewall backend found')
+    write_lockdown_state(backend, metadata=metadata)
+
+
+def apply_firewalld_lockdown():
+    run_checked(['firewall-cmd', '--panic-on'])
+    for family in ('ipv4', 'ipv6'):
+        for chain in ('INPUT', 'OUTPUT', 'FORWARD'):
+            subprocess.run(['firewall-cmd', '--permanent', '--direct', '--remove-rules', family, 'filter', chain], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            run_checked(['firewall-cmd', '--permanent', '--direct', '--add-rule', family, 'filter', chain, '0', '-j', 'DROP'])
+    run_checked(['firewall-cmd', '--reload'])
+    run_checked(['firewall-cmd', '--panic-on'])
+
+
+def apply_ufw_lockdown():
+    run_checked(['ufw', '--force', 'reset'])
+    run_checked(['ufw', 'default', 'deny', 'incoming'])
+    run_checked(['ufw', 'default', 'deny', 'outgoing'])
+    run_checked(['ufw', 'default', 'deny', 'routed'])
+    run_checked(['ufw', '--force', 'enable'])
+
+
+def apply_nftables_lockdown():
+    rules = '''flush ruleset
+table inet flat_manager_lockdown {
+    chain input {
+        type filter hook input priority 0; policy drop;
+    }
+    chain forward {
+        type filter hook forward priority 0; policy drop;
+    }
+    chain output {
+        type filter hook output priority 0; policy drop;
+    }
+}
+'''
+    run_checked(['nft', '-f', '-'], input_text=rules)
+    write_file('/etc/nftables.conf', rules, mode=0o644)
+
+
+def restore_nftables_compat_backup(result):
+    ipv4_rules_path = os.path.join(STATE_DIR, 'nftables-iptables.rules')
+    ipv6_rules_path = os.path.join(STATE_DIR, 'nftables-ip6tables.rules')
+    if os.path.exists(ipv4_rules_path):
+        restore_cmd = 'iptables-nft-restore' if command_exists('iptables-nft-restore') else 'iptables-restore'
+        if not command_exists(restore_cmd):
+            raise RuntimeError('Missing iptables restore tool for nftables compatibility backup')
+        with open(ipv4_rules_path, 'r', encoding='utf-8') as handle:
+            run_checked([restore_cmd], input_text=handle.read())
+        result['actions'].append(f'restored nftables-compatible IPv4 rules using {restore_cmd}')
+    if os.path.exists(ipv6_rules_path):
+        restore_cmd = 'ip6tables-nft-restore' if command_exists('ip6tables-nft-restore') else 'ip6tables-restore'
+        if command_exists(restore_cmd):
+            with open(ipv6_rules_path, 'r', encoding='utf-8') as handle:
+                run_checked([restore_cmd], input_text=handle.read())
+            result['actions'].append(f'restored nftables-compatible IPv6 rules using {restore_cmd}')
+
+
+def restore_nftables_backup(result):
+    rules_path = os.path.join(STATE_DIR, 'nftables.rules')
+    if not os.path.exists(rules_path):
+        raise RuntimeError('Missing nftables backup')
+    conf_backup = os.path.join(STATE_DIR, 'nftables.conf')
+    run_checked(['nft', 'flush', 'ruleset'])
+    try:
+        run_checked(['nft', '-f', rules_path])
+        result['actions'].append('restored saved nftables ruleset')
+    except RuntimeError as exc:
+        restored = False
+        if os.path.exists(conf_backup):
+            try:
+                run_checked(['nft', '-f', conf_backup])
+                result['actions'].append(f'nft ruleset restore failed; restored saved {conf_backup} instead: {exc}')
+                restored = True
+            except RuntimeError:
+                restore_nftables_compat_backup(result)
+        else:
+            restore_nftables_compat_backup(result)
+        if not restored and not os.path.exists(os.path.join(STATE_DIR, 'nftables-iptables.rules')) and not os.path.exists(conf_backup):
+            result['actions'].append(
+                'nft ruleset restore failed and no compatibility backup existed; left ruleset flushed to remove lockdown rules'
+            )
+        elif not restored:
+            result['actions'].append(f'nft ruleset restore failed; compatibility restore was used instead: {exc}')
+    if os.path.exists(conf_backup):
+        shutil.copy2(conf_backup, '/etc/nftables.conf')
+    else:
+        write_file('/etc/nftables.conf', 'flush ruleset\n', mode=0o644)
+
+
+def apply_iptables_lockdown():
+    commands = [
+        ['iptables', '-F'], ['iptables', '-X'], ['iptables', '-t', 'nat', '-F'], ['iptables', '-t', 'mangle', '-F'],
+        ['iptables', '-P', 'INPUT', 'DROP'], ['iptables', '-P', 'OUTPUT', 'DROP'], ['iptables', '-P', 'FORWARD', 'DROP'],
+    ]
+    if command_exists('ip6tables'):
+        commands += [
+            ['ip6tables', '-F'], ['ip6tables', '-X'], ['ip6tables', '-t', 'nat', '-F'], ['ip6tables', '-t', 'mangle', '-F'],
+            ['ip6tables', '-P', 'INPUT', 'DROP'], ['ip6tables', '-P', 'OUTPUT', 'DROP'], ['ip6tables', '-P', 'FORWARD', 'DROP'],
+        ]
+    for cmd in commands:
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    ipv4_rules = run_checked(['iptables-save'])
+    write_file(os.path.join(STATE_DIR, 'iptables-lockdown.rules'), ipv4_rules)
+    if os.path.isdir('/etc/iptables'):
+        write_file('/etc/iptables/rules.v4', ipv4_rules, mode=0o644)
+    if command_exists('ip6tables-save'):
+        ipv6_rules = run_checked(['ip6tables-save'])
+        write_file(os.path.join(STATE_DIR, 'ip6tables-lockdown.rules'), ipv6_rules)
+        if os.path.isdir('/etc/iptables'):
+            write_file('/etc/iptables/rules.v6', ipv6_rules, mode=0o644)
+
+
+def lockdown_network():
+    if os.geteuid() != 0:
+        raise RuntimeError('lockdown requires root')
+    existing_state = read_lockdown_state()
+    if existing_state:
+        return {
+            'backend': existing_state.get('backend'),
+            'already_locked': True,
+            'backups': list_backup_files(),
+            'actions': ['existing lockdown state found; skipped firewall changes'],
+        }
+    backend = detect_firewall_backend()
+    if not backend:
+        raise RuntimeError('No supported firewall backend found')
+    backup_firewall(backend)
+    result = {
+        'backend': backend,
+        'already_locked': False,
+        'backups': list_backup_files(),
+        'actions': [
+            'detected firewalls: ' + (', '.join(detect_firewall_backends()) or 'none'),
+            f'selected highest-priority backend: {backend}',
+            f'backed up current firewall configuration under {STATE_DIR}',
+        ],
+    }
+    try:
+        if backend == 'firewalld':
+            apply_firewalld_lockdown()
+            result['actions'].append('enabled firewalld panic mode and installed permanent DROP direct rules')
+        elif backend == 'ufw':
+            apply_ufw_lockdown()
+            result['actions'].append('reset ufw, set default deny incoming/outgoing/routed, and enabled ufw')
+        elif backend == 'nftables':
+            apply_nftables_lockdown()
+            result['actions'].append('flushed nftables and installed persistent inet drop policies')
+        elif backend == 'iptables':
+            apply_iptables_lockdown()
+            result['actions'].append('flushed iptables/ip6tables and set INPUT/OUTPUT/FORWARD default DROP')
+    except Exception:
+        try:
+            os.remove(LOCKDOWN_STATE_PATH)
+        except FileNotFoundError:
+            pass
+        raise
+    return result
+
+
+def unlock_network():
+    if os.geteuid() != 0:
+        raise RuntimeError('unlock requires root')
+    state = read_lockdown_state()
+    if not state:
+        raise RuntimeError(f'No lockdown state found at {LOCKDOWN_STATE_PATH}')
+    backend = state.get('backend')
+    result = {'backend': backend, 'actions': []}
+    if backend == 'firewalld':
+        backup_dir = os.path.join(STATE_DIR, 'firewalld')
+        if os.path.isdir(backup_dir):
+            if os.path.exists('/etc/firewalld'):
+                shutil.rmtree('/etc/firewalld')
+            shutil.copytree(backup_dir, '/etc/firewalld', symlinks=True)
+        if command_exists('firewall-cmd'):
+            if command_exists('systemctl'):
+                subprocess.run(['systemctl', 'start', 'firewalld'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(['firewall-cmd', '--panic-off'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(['firewall-cmd', '--reload'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if command_exists('systemctl'):
+            if state.get('firewalld_enabled_before_lockdown') is True:
+                subprocess.run(['systemctl', 'enable', 'firewalld'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            elif state.get('firewalld_enabled_before_lockdown') is False:
+                subprocess.run(['systemctl', 'disable', 'firewalld'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if state.get('firewalld_active_before_lockdown') is False:
+                subprocess.run(['systemctl', 'stop', 'firewalld'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        result['actions'].append('restored /etc/firewalld backup, disabled panic mode, and restored prior firewalld active/enabled state')
+    elif backend == 'ufw':
+        backup_dir = os.path.join(STATE_DIR, 'ufw')
+        if not os.path.isdir(backup_dir):
+            raise RuntimeError('Missing ufw backup directory')
+        if os.path.exists('/etc/ufw'):
+            shutil.rmtree('/etc/ufw')
+        shutil.copytree(backup_dir, '/etc/ufw', symlinks=True)
+        default_backup = os.path.join(STATE_DIR, 'default-ufw')
+        if os.path.exists(default_backup):
+            shutil.copy2(default_backup, '/etc/default/ufw')
+        if state.get('ufw_enabled_before_lockdown'):
+            subprocess.run(['ufw', '--force', 'reload'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            result['actions'].append('restored /etc/ufw and /etc/default/ufw backups and reloaded ufw')
+        else:
+            subprocess.run(['ufw', '--force', 'disable'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            result['actions'].append('restored /etc/ufw and /etc/default/ufw backups and disabled ufw because it was disabled before lockdown')
+    elif backend == 'nftables':
+        restore_nftables_backup(result)
+    elif backend == 'iptables':
+        rules_path = os.path.join(STATE_DIR, 'iptables.rules')
+        if not os.path.exists(rules_path):
+            raise RuntimeError('Missing iptables backup')
+        with open(rules_path, 'r', encoding='utf-8') as handle:
+            run_checked(['iptables-restore'], input_text=handle.read())
+        ip6_rules_path = os.path.join(STATE_DIR, 'ip6tables.rules')
+        if os.path.exists(ip6_rules_path) and command_exists('ip6tables-restore'):
+            with open(ip6_rules_path, 'r', encoding='utf-8') as handle:
+                run_checked(['ip6tables-restore'], input_text=handle.read())
+        result['actions'].append('restored saved iptables/ip6tables rules')
+    else:
+        raise RuntimeError(f'Unsupported saved firewall backend: {backend}')
+    os.remove(LOCKDOWN_STATE_PATH)
+    return result
 
 
 def run_as_user(username, cmd):
@@ -168,6 +658,8 @@ def get_local_users(ad_groups=None):
     seen = set()
     users = []
     for entry in pwd.getpwall():
+        if entry.pw_name in IGNORED_USERNAMES:
+            continue
         if entry.pw_uid >= 1000 and os.path.isdir(entry.pw_dir):
             users.append((entry.pw_name, entry.pw_dir))
             seen.add(entry.pw_name)
@@ -198,6 +690,8 @@ def get_ad_group_users(group_names):
                   file=sys.stderr)
             continue
         for username in grp_entry.gr_mem:
+            if username in IGNORED_USERNAMES:
+                continue
             if username in seen:
                 continue
             seen.add(username)
@@ -536,7 +1030,49 @@ def main():
         '--hostname', metavar='NAME',
         help='hostname to report (overrides config file and system hostname)',
     )
+    parser.add_argument(
+        '--lock', action='store_true',
+        help='back up the current firewall configuration, apply local network lockdown, and exit',
+    )
+    parser.add_argument(
+        '--lock-status', action='store_true',
+        help='print current local lockdown state, detected firewall backend, and backup information, then exit',
+    )
+    parser.add_argument(
+        '--unlock', action='store_true',
+        help='restore the firewall configuration backed up before local lockdown and exit',
+    )
     args = parser.parse_args()
+
+    selected_lock_commands = [args.lock, args.lock_status, args.unlock]
+    if sum(1 for selected in selected_lock_commands if selected) > 1:
+        parser.error('--lock, --lock-status, and --unlock cannot be used together')
+
+    if args.lock_status:
+        print_lock_status()
+        return
+
+    if args.lock:
+        try:
+            print('Starting local network lockdown test')
+            print('Firewall detection priority: firewalld, ufw, nftables, iptables')
+            result = lockdown_network()
+            print_lockdown_result(result)
+            return
+        except Exception as exc:
+            print(f'Lock failed: {exc}', file=sys.stderr)
+            sys.exit(1)
+
+    if args.unlock:
+        try:
+            print('Starting local network lockdown restore')
+            result = unlock_network()
+            print_unlock_result(result)
+            print('Network lockdown restored from backup')
+            return
+        except Exception as exc:
+            print(f'Unlock failed: {exc}', file=sys.stderr)
+            sys.exit(1)
 
     cfg = read_config()
 
@@ -591,6 +1127,18 @@ def main():
 
     if status == 200:
         print(f'Check-in successful: {hostname} → {server_url}')
+        try:
+            response_data = json.loads(body)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            response_data = {}
+        if response_data.get('lockdown') is True:
+            try:
+                print('Server requested network lockdown')
+                result = lockdown_network()
+                print_lockdown_result(result)
+            except Exception as exc:
+                print(f'Network lockdown failed: {exc}', file=sys.stderr)
+                sys.exit(1)
     else:
         print(f'Check-in failed (HTTP {status}): {body}', file=sys.stderr)
         sys.exit(1)

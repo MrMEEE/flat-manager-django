@@ -48,6 +48,7 @@
                         <th class="text-center">Foreign</th>
                         <th class="text-center">Outdated</th>
                         <th class="text-center">Outdated (commit)</th>
+                        <th class="text-center">Lockdown</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -74,7 +75,7 @@
                         <td><strong>
                             <a href="{% url 'flatpak:client_detail' client.pk %}">{{ client.hostname }}</a>
                         </strong></td>
-                        <td>
+                        <td id="serial-number-{{ client.pk }}">
                             {% if client.serial_number %}
                                 <code>{{ client.serial_number }}</code>
                             {% else %}
@@ -120,7 +121,7 @@
                                 <span class="text-muted">—</span>
                             {% endif %}
                         </td>
-                        <td>
+                        <td id="last-checkin-{{ client.pk }}">
                             {% if client.last_checkin %}
                                 <span title="{{ client.last_checkin|date:'Y-m-d H:i:s' }} UTC">
                                     {{ client.last_checkin|timesince }} ago
@@ -129,7 +130,7 @@
                                 <span class="text-muted">Never</span>
                             {% endif %}
                         </td>
-                        <td class="text-center">
+                        <td class="text-center" id="installed-count-{{ client.pk }}">
                             {% if client.installed_count > 0 %}
                             <button class="btn btn-sm btn-outline-secondary"
                                     onclick="showFlatpakList('{{ client.hostname|escapejs }}', 'installed', {{ client.pk }})">
@@ -139,7 +140,7 @@
                             <span class="text-muted">0</span>
                             {% endif %}
                         </td>
-                        <td class="text-center">
+                        <td class="text-center" id="foreign-count-{{ client.pk }}">
                             {% if client.foreign_count > 0 %}
                             <button class="btn btn-sm btn-outline-warning text-warning"
                                     onclick="showFlatpakList('{{ client.hostname|escapejs }}', 'foreign', {{ client.pk }})">
@@ -149,7 +150,7 @@
                             <span class="text-muted">0</span>
                             {% endif %}
                         </td>
-                        <td class="text-center">
+                        <td class="text-center" id="outdated-count-{{ client.pk }}">
                             {% if client.outdated_count > 0 %}
                             <button class="btn btn-sm btn-outline-danger text-danger"
                                     onclick="showFlatpakList('{{ client.hostname|escapejs }}', 'outdated', {{ client.pk }})">
@@ -168,20 +169,47 @@
                             <span class="text-muted">0</span>
                             {% endif %}
                         </td>
+                        <td class="text-center" id="lockdown-cell-{{ client.pk }}">
+                            {% if client.lockdown and user.can_update_clients %}
+                            <button type="button" class="btn btn-sm btn-outline-success lockdown-toggle"
+                                    data-client-pk="{{ client.pk }}"
+                                    data-hostname="{{ client.hostname|escapejs }}"
+                                    data-lockdown="false"
+                                    data-url="{% url 'flatpak:client_lockdown_toggle' client.pk %}">
+                                <i class="bi bi-unlock"></i> Unlock
+                            </button>
+                            {% elif client.lockdown %}
+                            <button type="button" class="btn btn-sm btn-outline-success" disabled title="You do not have permission to unlock clients">
+                                <i class="bi bi-unlock"></i> Unlock
+                            </button>
+                            {% elif user.can_update_clients %}
+                            <button type="button" class="btn btn-sm btn-outline-danger lockdown-toggle"
+                                    data-client-pk="{{ client.pk }}"
+                                    data-hostname="{{ client.hostname|escapejs }}"
+                                    data-lockdown="true"
+                                    data-url="{% url 'flatpak:client_lockdown_toggle' client.pk %}">
+                                <i class="bi bi-lock"></i> Lockdown
+                            </button>
+                            {% else %}
+                            <button type="button" class="btn btn-sm btn-outline-danger" disabled title="You do not have permission to lock down clients">
+                                <i class="bi bi-lock"></i> Lockdown
+                            </button>
+                            {% endif %}
+                        </td>
                     </tr>
                     <!-- Hidden data rows for JS to read (pre-serialised JSON from view) -->
                     <tr id="data-installed-{{ client.pk }}" style="display:none;">
-                        <td colspan="11">
+                        <td colspan="15">
                             <script type="application/json">{{ client.installed_json|safe }}</script>
                         </td>
                     </tr>
                     <tr id="data-foreign-{{ client.pk }}" style="display:none;">
-                        <td colspan="11">
+                        <td colspan="15">
                             <script type="application/json">{{ client.foreign_json|safe }}</script>
                         </td>
                     </tr>
                     <tr id="data-outdated-{{ client.pk }}" style="display:none;">
-                        <td colspan="11">
+                        <td colspan="15">
                             <script type="application/json">{{ client.outdated_json|safe }}</script>
                         </td>
                     </tr>
@@ -270,9 +298,95 @@
     </div>
 </div>
 
+<!-- Lockdown confirm modal -->
+<div class="modal fade" id="lockdownModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="lockdownModalTitle">Confirm Client Lockdown</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p id="lockdownModalBody" class="mb-0"></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn" id="btnLockdownConfirm">
+                    <i class="bi bi-lock"></i> Confirm
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
 const BULK_ACTION_URL = "{% url 'flatpak:client_bulk_action' %}";
 const CSRF_TOKEN = "{{ csrf_token }}";
+let pendingLockdown = null;
+
+function lockdownButtonHtml(clientPk, hostname, lockdown, url) {
+    if (lockdown) {
+        return `<button type="button" class="btn btn-sm btn-outline-success lockdown-toggle"
+                data-client-pk="${clientPk}" data-hostname="${esc(hostname)}"
+                data-lockdown="false" data-url="${esc(url)}">
+            <i class="bi bi-unlock"></i> Unlock
+        </button>`;
+    }
+    return `<button type="button" class="btn btn-sm btn-outline-danger lockdown-toggle"
+            data-client-pk="${clientPk}" data-hostname="${esc(hostname)}"
+            data-lockdown="true" data-url="${esc(url)}">
+        <i class="bi bi-lock"></i> Lockdown
+    </button>`;
+}
+
+function bindLockdownButtons() {
+    document.querySelectorAll('.lockdown-toggle').forEach(button => {
+        if (button.dataset.bound === 'true') return;
+        button.dataset.bound = 'true';
+        button.addEventListener('click', function() {
+            const lockdown = this.dataset.lockdown === 'true';
+            pendingLockdown = {
+                clientPk: parseInt(this.dataset.clientPk),
+                hostname: this.dataset.hostname,
+                lockdown: lockdown,
+                url: this.dataset.url,
+            };
+            const action = lockdown ? 'lock down' : 'unlock';
+            document.getElementById('lockdownModalTitle').textContent = lockdown ? 'Lockdown Client' : 'Unlock Client';
+            document.getElementById('lockdownModalBody').innerHTML =
+                `Are you sure you want to ${action} <strong>${esc(pendingLockdown.hostname)}</strong>?`;
+            const ok = document.getElementById('btnLockdownConfirm');
+            ok.className = lockdown ? 'btn btn-danger' : 'btn btn-success';
+            ok.innerHTML = lockdown
+                ? '<i class="bi bi-lock"></i> Lockdown'
+                : '<i class="bi bi-unlock"></i> Unlock';
+            new bootstrap.Modal(document.getElementById('lockdownModal')).show();
+        });
+    });
+}
+
+document.addEventListener('DOMContentLoaded', bindLockdownButtons);
+
+document.getElementById('btnLockdownConfirm').addEventListener('click', function() {
+    if (!pendingLockdown) return;
+    fetch(pendingLockdown.url, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN},
+        body: JSON.stringify({lockdown: pendingLockdown.lockdown}),
+    }).then(r => r.json()).then(data => {
+        if (data.status !== 'ok') {
+            showErrorModal('Error', data.error || 'Unknown error');
+            return;
+        }
+        const cell = document.getElementById('lockdown-cell-' + data.client_pk);
+        if (cell) {
+            cell.innerHTML = lockdownButtonHtml(data.client_pk, data.hostname, data.lockdown, pendingLockdown.url);
+            bindLockdownButtons();
+        }
+        bootstrap.Modal.getInstance(document.getElementById('lockdownModal')).hide();
+        pendingLockdown = null;
+    }).catch(() => showErrorModal('Error', 'Could not update client lockdown state'));
+});
 
 // ── Checkbox selection ────────────────────────────────────────────────────────
 function getSelected() {
@@ -412,9 +526,7 @@ function onWebSocketMessage(data) {
 
     // Update count badges.
     function _updateCount(kind, count, btnClass) {
-        // col 10 = installed, col 11 = foreign, col 12 = outdated (0-indexed 9,10,11)
-        const colIdx = {installed: 9, foreign: 10, outdated: 11}[kind];
-        const td = visibleRow.cells[colIdx];
+        const td = document.getElementById(kind + '-count-' + pk);
         if (!td) return;
         if (count > 0) {
             td.innerHTML = `<button class="btn btn-sm ${btnClass}"
@@ -437,9 +549,9 @@ function onWebSocketMessage(data) {
         }
     }
 
-    // Update serial number cell (col 3).
-    if (visibleRow.cells[3]) {
-        visibleRow.cells[3].innerHTML = data.serial_number
+    const serialCell = document.getElementById('serial-number-' + pk);
+    if (serialCell) {
+        serialCell.innerHTML = data.serial_number
             ? `<code>${esc(data.serial_number)}</code>`
             : '<span class="text-muted">—</span>';
     }
@@ -463,10 +575,19 @@ function onWebSocketMessage(data) {
     }
     if (visibleRow.cells[1]) visibleRow.cells[1].innerHTML = badgeHtml;
 
-    // Update last check-in cell (col 9 / index 8).
-    if (visibleRow.cells[8] && data.last_checkin) {
-        visibleRow.cells[8].innerHTML =
+    const lastCheckinCell = document.getElementById('last-checkin-' + pk);
+    if (lastCheckinCell && data.last_checkin) {
+        lastCheckinCell.innerHTML =
             `<span title="${esc(data.last_checkin)} UTC">${esc(data.last_checkin)} (just now)</span>`;
+    }
+
+    if (data.lockdown !== undefined) {
+        const lockdownCell = document.getElementById('lockdown-cell-' + pk);
+        const current = lockdownCell ? lockdownCell.querySelector('.lockdown-toggle') : null;
+        if (lockdownCell && current) {
+            lockdownCell.innerHTML = lockdownButtonHtml(pk, data.hostname, Boolean(data.lockdown), current.dataset.url);
+            bindLockdownButtons();
+        }
     }
 
     // Update managed remotes cell (identified by id, not column index, because

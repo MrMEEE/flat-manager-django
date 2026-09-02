@@ -1047,6 +1047,10 @@ class Client(models.Model):
         default=0,
         help_text="Managed flatpaks whose deployed commit differs from the server's published commit."
     )
+    lockdown = models.BooleanField(
+        default=False,
+        help_text="When enabled, the client is instructed to disable network access on next check-in."
+    )
     installed_flatpaks = models.JSONField(
         default=list,
         help_text="All installed flatpaks: [{app_id, version, origin}, ...]."

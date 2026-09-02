@@ -1,8 +1,8 @@
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from apps.flatpak.models import AppMetadata, AppUsageObservation, Package, Repository
-from apps.users.models import User
+from apps.flatpak.models import AppMetadata, AppUsageObservation, Client, Package, Repository
+from apps.users.models import PermissionGroup, PermissionGroupPermission, User
 
 
 class FlathubPublicAPITests(TestCase):
@@ -97,12 +97,55 @@ class FlathubPublicAPITests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['lockdown'], False)
         self.assertEqual(
             AppUsageObservation.objects.filter(app_id=self.published.package_id).count(),
             1,
         )
         usage = self.client.get('/api/v2/usage/popular')
         self.assertEqual(usage.json()['apps'][0]['app_id'], self.published.package_id)
+
+    def test_client_checkin_returns_lockdown_directive(self):
+        Client.objects.create(hostname='locked-client', lockdown=True)
+
+        response = self.client.post(
+            '/api/client-checkin/',
+            {'hostname': 'locked-client', 'installed': []},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['lockdown'], True)
+
+    def test_logged_in_user_can_toggle_client_lockdown(self):
+        user = User.objects.create_user(username='operator', password='password')
+        group = PermissionGroup.objects.create(name='Client Operators')
+        PermissionGroupPermission.objects.create(group=group, resource='clients', action='update')
+        group.users.add(user)
+        client = Client.objects.create(hostname='toggle-client')
+        self.client.force_login(user)
+
+        locked = self.client.post(
+            f'/clients/{client.pk}/lockdown/',
+            {'lockdown': True},
+            format='json',
+        )
+        client.refresh_from_db()
+
+        self.assertEqual(locked.status_code, 200)
+        self.assertEqual(locked.json()['lockdown'], True)
+        self.assertEqual(client.lockdown, True)
+
+        unlocked = self.client.post(
+            f'/clients/{client.pk}/lockdown/',
+            {'lockdown': False},
+            format='json',
+        )
+        client.refresh_from_db()
+
+        self.assertEqual(unlocked.status_code, 200)
+        self.assertEqual(unlocked.json()['lockdown'], False)
+        self.assertEqual(client.lockdown, False)
 
     def test_missing_app_returns_not_found(self):
         response = self.client.get('/api/v2/appstream/org.example.Missing')
