@@ -35,12 +35,14 @@ jobs:
             artifact_name: rhel-9
             python_pkg:    "python3.11 python3.11-devel"
             rhel_ver:      9
+            bubblewrap_repo_url: "https://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/"
 
           - distro_label:  RHEL 10 / UBI 10
             container:     registry.access.redhat.com/ubi10/ubi:latest
             artifact_name: rhel-10
             python_pkg:    "python3 python3-devel"
             rhel_ver:      10
+            bubblewrap_repo_url: "https://mirror.stream.centos.org/10-stream/BaseOS/x86_64/os/"
 
     steps:
       # ── Checkout source ─────────────────────────────────────────────────────
@@ -71,12 +73,13 @@ jobs:
             dnf install -y \"dnf-command(config-manager)\" 2>/dev/null || true
             dnf config-manager --set-enabled crb 2>/dev/null || dnf config-manager --set-enabled powertools 2>/dev/null || true
 
-            # CentOS Stream hosts bubblewrap in AppStream for both 9 and 10.
-            # CRB is not the correct source for this package on RHEL 9.
+            # CentOS Stream hosts bubblewrap in BaseOS for both 9 and 10.
+            # AppStream does not contain the package on RHEL 9; using the wrong
+            # repo causes the "No match for argument: bubblewrap" failure.
             printf '%s\n' \
               '[centos-stream-bubblewrap]' \
               'name=CentOS Stream ${{ matrix.rhel_ver }} bubblewrap' \
-              'baseurl=https://mirror.stream.centos.org/${{ matrix.rhel_ver }}-stream/AppStream/x86_64/os/' \
+              "baseurl=${{ matrix.bubblewrap_repo_url }}" \
               'enabled=1' \
               'gpgcheck=0' \
               'repo_gpgcheck=0' \
