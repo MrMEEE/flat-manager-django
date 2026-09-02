@@ -166,7 +166,8 @@ class ReleaseManager:
             self.warn(f"{ahead} commit(s) ahead of origin/{branch} — they will be pushed with the tag.")
 
     def check_tag_doesnt_exist(self, version: str) -> None:
-        tag = version.lstrip('v')
+        # GitHub Actions only triggers on tags named vX.Y.Z
+        tag = version if version.startswith("v") else f"v{version}"
         existing = self._run(
             ["git", "tag", "-l", tag], read_only=True
         ).stdout.strip()
@@ -234,7 +235,7 @@ class ReleaseManager:
     # ── Git operations ────────────────────────────────────────────────────────
 
     def git_commit_tag_push(self, new_version: str) -> None:
-        tag = new_version.lstrip('v')
+        tag = new_version if new_version.startswith("v") else f"v{new_version}"
         self._run(["git", "add"] + self._changes)
         self._run(["git", "commit", "-m", f"chore: release {new_version}"])
         self._run(["git", "tag", "-a", tag, "-m", f"Release {new_version}"])
@@ -251,6 +252,8 @@ class ReleaseManager:
         # 1. Determine new version
         current = self.current_version()
         if explicit_version:
+            explicit_version = explicit_version.strip()
+            explicit_version = explicit_version.lstrip("v")
             self.parse_version(explicit_version)   # validates format
             new_version = explicit_version
         else:
