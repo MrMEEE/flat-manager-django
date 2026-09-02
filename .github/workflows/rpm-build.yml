@@ -72,22 +72,17 @@ jobs:
             dnf config-manager --set-enabled crb 2>/dev/null || dnf config-manager --set-enabled powertools 2>/dev/null || true
 
             printf '%s\\n' \
-              '[centos-stream-baseos]' \
-              \"name=CentOS Stream ${{ matrix.rhel_ver }} BaseOS\" \
-              \"baseurl=https://mirror.stream.centos.org/${{ matrix.rhel_ver }}-stream/BaseOS/x86_64/os/\" \
+              '[centos-stream-bubblewrap]' \
+              "name=CentOS Stream ${{ matrix.rhel_ver }} bubblewrap" \
+              "baseurl=https://mirror.stream.centos.org/${{ matrix.rhel_ver }}-stream/AppStream/x86_64/os/" \
               'enabled=1' \
               'gpgcheck=0' \
               'repo_gpgcheck=0' \
               'priority=20' \
-              '' \
-              '[centos-stream-appstream]' \
-              \"name=CentOS Stream ${{ matrix.rhel_ver }} AppStream\" \
-              \"baseurl=https://mirror.stream.centos.org/${{ matrix.rhel_ver }}-stream/AppStream/x86_64/os/\" \
-              'enabled=1' \
-              'gpgcheck=0' \
-              'repo_gpgcheck=0' \
-              'priority=20' \
+              'includepkgs=bubblewrap' \
               > /etc/yum.repos.d/centos-stream-bubblewrap.repo
+
+            dnf install -y --disablerepo='*' --enablerepo='centos-stream-bubblewrap' bubblewrap
 
             dnf install -y \
               rpm-build \
@@ -98,7 +93,6 @@ jobs:
               rust \
               cargo \
               mariadb-connector-c-devel \
-              bubblewrap \
               checkpolicy \
               policycoreutils \
               ${{ matrix.python_pkg }}
