@@ -81,6 +81,7 @@ jobs:
               rust \
               cargo \
               mariadb-connector-c-devel \
+              bubblewrap \
               checkpolicy \
               policycoreutils \
               ${{ matrix.python_pkg }}
