@@ -71,10 +71,12 @@ jobs:
             dnf install -y \"dnf-command(config-manager)\" 2>/dev/null || true
             dnf config-manager --set-enabled crb 2>/dev/null || dnf config-manager --set-enabled powertools 2>/dev/null || true
 
-            printf '%s\\n' \
+            # CentOS Stream hosts bubblewrap in AppStream for both 9 and 10.
+            # CRB is not the correct source for this package on RHEL 9.
+            printf '%s\n' \
               '[centos-stream-bubblewrap]' \
               'name=CentOS Stream ${{ matrix.rhel_ver }} bubblewrap' \
-              'baseurl=https://mirror.stream.centos.org/${{ matrix.rhel_ver }}-stream/CRB/x86_64/os/' \
+              'baseurl=https://mirror.stream.centos.org/${{ matrix.rhel_ver }}-stream/AppStream/x86_64/os/' \
               'enabled=1' \
               'gpgcheck=0' \
               'repo_gpgcheck=0' \
