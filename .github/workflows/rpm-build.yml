@@ -81,7 +81,6 @@ jobs:
               rust \
               cargo \
               mariadb-connector-c-devel \
-              flatpak \
               checkpolicy \
               policycoreutils \
               ${{ matrix.python_pkg }}
