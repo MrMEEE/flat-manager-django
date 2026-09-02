@@ -66,24 +66,23 @@ jobs:
       # ── Install build toolchain ─────────────────────────────────────────────
       - name: Install build dependencies
         run: |
-          docker exec rpmbuild-${{ matrix.artifact_name }} bash -lc '
+          docker exec rpmbuild-${{ matrix.artifact_name }} bash -lc "
             dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-${{ matrix.rhel_ver }}.noarch.rpm
-            dnf install -y "dnf-command(config-manager)" 2>/dev/null || true
-            dnf config-manager --set-enabled crb 2>/dev/null || \
-            dnf config-manager --set-enabled powertools 2>/dev/null || true
+            dnf install -y \"dnf-command(config-manager)\" 2>/dev/null || true
+            dnf config-manager --set-enabled crb 2>/dev/null || dnf config-manager --set-enabled powertools 2>/dev/null || true
 
-            printf '%s\n' \
+            printf '%s\\n' \
               '[centos-stream-baseos]' \
-              "name=CentOS Stream ${{ matrix.rhel_ver }} BaseOS" \
-              "baseurl=https://mirror.stream.centos.org/${{ matrix.rhel_ver }}-stream/BaseOS/x86_64/os/" \
+              \"name=CentOS Stream ${{ matrix.rhel_ver }} BaseOS\" \
+              \"baseurl=https://mirror.stream.centos.org/${{ matrix.rhel_ver }}-stream/BaseOS/x86_64/os/\" \
               'enabled=1' \
               'gpgcheck=0' \
               'repo_gpgcheck=0' \
               'priority=20' \
               '' \
               '[centos-stream-appstream]' \
-              "name=CentOS Stream ${{ matrix.rhel_ver }} AppStream" \
-              "baseurl=https://mirror.stream.centos.org/${{ matrix.rhel_ver }}-stream/AppStream/x86_64/os/" \
+              \"name=CentOS Stream ${{ matrix.rhel_ver }} AppStream\" \
+              \"baseurl=https://mirror.stream.centos.org/${{ matrix.rhel_ver }}-stream/AppStream/x86_64/os/\" \
               'enabled=1' \
               'gpgcheck=0' \
               'repo_gpgcheck=0' \
@@ -105,7 +104,7 @@ jobs:
               ${{ matrix.python_pkg }}
 
             rpmdev-setuptree
-          '
+          "
 
       # actions/checkout runs as the runner UID; the container runs as root.
       # Git refuses to operate on the repo unless we mark it safe explicitly.
