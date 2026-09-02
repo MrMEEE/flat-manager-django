@@ -30,15 +30,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - distro_label:  CentOS Stream 9
-            container:     quay.io/centos/centos:stream9
-            artifact_name: centos-stream-9
+          - distro_label:  RHEL 9 / UBI 9
+            container:     registry.access.redhat.com/ubi9/ubi:latest
+            artifact_name: rhel-9
             python_pkg:    "python3.11 python3.11-devel"
             rhel_ver:      9
 
-          - distro_label:  CentOS Stream 10
-            container:     quay.io/centos/centos:stream10
-            artifact_name: centos-stream-10
+          - distro_label:  RHEL 10 / UBI 10
+            container:     registry.access.redhat.com/ubi10/ubi:latest
+            artifact_name: rhel-10
             python_pkg:    "python3 python3-devel"
             rhel_ver:      10
 
@@ -59,33 +59,35 @@ jobs:
             --name rpmbuild-${{ matrix.artifact_name }} \
             --workdir /workspace \
             -v "${GITHUB_WORKSPACE}:/workspace" \
-            --entrypoint /usr/bin/env \
+            --entrypoint /bin/bash \
             ${{ matrix.container }} \
-            sleep infinity
+            -lc 'sleep infinity'
 
       # ── Install build toolchain ─────────────────────────────────────────────
       - name: Install build dependencies
         run: |
-          docker exec rpmbuild-${{ matrix.artifact_name }} dnf install -y epel-release 2>/dev/null || true
-          docker exec rpmbuild-${{ matrix.artifact_name }} dnf install -y 'dnf-command(config-manager)' 2>/dev/null || true
-          docker exec rpmbuild-${{ matrix.artifact_name }} dnf config-manager --set-enabled crb 2>/dev/null || \
-            docker exec rpmbuild-${{ matrix.artifact_name }} dnf config-manager --set-enabled powertools 2>/dev/null || true
+          docker exec rpmbuild-${{ matrix.artifact_name }} bash -lc '
+            dnf install -y epel-release 2>/dev/null || true
+            dnf install -y "dnf-command(config-manager)" 2>/dev/null || true
+            dnf config-manager --set-enabled crb 2>/dev/null || \
+            dnf config-manager --set-enabled powertools 2>/dev/null || true
 
-          docker exec rpmbuild-${{ matrix.artifact_name }} dnf install -y \
-            rpm-build \
-            rpmdevtools \
-            git \
-            gcc \
-            gcc-c++ \
-            rust \
-            cargo \
-            mariadb-connector-c-devel \
-            flatpak \
-            checkpolicy \
-            policycoreutils \
-            ${{ matrix.python_pkg }}
+            dnf install -y \
+              rpm-build \
+              rpmdevtools \
+              git \
+              gcc \
+              gcc-c++ \
+              rust \
+              cargo \
+              mariadb-connector-c-devel \
+              flatpak \
+              checkpolicy \
+              policycoreutils \
+              ${{ matrix.python_pkg }}
 
-          docker exec rpmbuild-${{ matrix.artifact_name }} rpmdev-setuptree
+            rpmdev-setuptree
+          '
 
       # actions/checkout runs as the runner UID; the container runs as root.
       # Git refuses to operate on the repo unless we mark it safe explicitly.
