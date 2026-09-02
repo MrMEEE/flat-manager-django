@@ -7,7 +7,7 @@ It is updated automatically by tools/release.py.
 """
 
 # Version format: MAJOR.MINOR.PATCH
-VERSION = "1.0.5"
+VERSION = "1.0.6"
 BUILD_DATE = "2026-09-02"
 
 
