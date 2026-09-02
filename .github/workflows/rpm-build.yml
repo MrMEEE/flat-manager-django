@@ -4,12 +4,11 @@ name: Build RPM
 on:
   push:
     tags:
-      - '[0-9]*'
       - 'v[0-9]*'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to build (e.g. 0.8.7 or v0.8.7) — must be an existing tag'
+        description: 'Version to build (e.g. 0.8.7) — must be an existing tag'
         required: true
         type: string
 
@@ -31,21 +30,26 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - distro_label:  CentOS Stream 9
-            container:     quay.io/centos/centos:stream9
-            artifact_name: centos-stream-9
-            python_pkg:    "python3.11 python3.11-devel"
-            rhel_ver:      9
+          - distro_label:      CentOS Stream 9
+            container:         quay.io/centos/centos:stream9
+            container_options: --privileged
+            artifact_name:     centos-stream-9
+            python_pkg:       "python3.11 python3.11-devel"
+            rhel_ver:         9
 
-          - distro_label:  CentOS Stream 10
-            container:     quay.io/centos/centos:stream10
-            artifact_name: centos-stream-10
-            python_pkg:    "python3 python3-devel"
-            rhel_ver:      10
+          - distro_label:      CentOS Stream 10
+            container:         quay.io/centos/centos:stream10
+            # The stream10 minimal image does not ship /usr/bin/tail, which is
+            # what GitHub Actions uses as the default container entrypoint to keep
+            # the container alive. Use bash instead so the job can start.
+            container_options: --privileged --entrypoint /bin/bash
+            artifact_name:     centos-stream-10
+            python_pkg:       "python3 python3-devel"
+            rhel_ver:         10
 
     container:
       image: ${{ matrix.container }}
-      options: --privileged
+      options: ${{ matrix.container_options }}
 
     steps:
       # ── Install build toolchain ─────────────────────────────────────────────
@@ -148,31 +152,14 @@ jobs:
       - name: List release assets
         run: find release-rpms/ -name '*.rpm' | sort
 
-      - name: Determine release tag
-        id: reltag
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            RAW_TAG="${{ github.event.inputs.version }}"
-          else
-            RAW_TAG="${GITHUB_REF_NAME}"
-          fi
-          RAW_TAG="${RAW_TAG#refs/tags/}"
-          if [[ "${RAW_TAG}" == v* ]]; then
-            TAG="${RAW_TAG}"
-          else
-            TAG="v${RAW_TAG}"
-          fi
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "Resolved release tag: ${TAG}"
-
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.reltag.outputs.tag }}
+          tag_name: v${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name }}
           files: release-rpms/**/*.rpm
           generate_release_notes: true
           draft: false
-          prerelease: ${{ contains(steps.reltag.outputs.tag, '-') }}
+          prerelease: ${{ contains(github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name, '-') }}
           fail_on_unmatched_files: true
           body: |
             ## Installation
