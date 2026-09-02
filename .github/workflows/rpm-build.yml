@@ -72,23 +72,23 @@ jobs:
             dnf config-manager --set-enabled crb 2>/dev/null || \
             dnf config-manager --set-enabled powertools 2>/dev/null || true
 
-            cat > /etc/yum.repos.d/centos-stream-bubblewrap.repo <<EOF
-[centos-stream-baseos]
-name=CentOS Stream ${{ matrix.rhel_ver }} BaseOS
-baseurl=https://mirror.stream.centos.org/${{ matrix.rhel_ver }}-stream/BaseOS/x86_64/os/
-enabled=1
-gpgcheck=0
-repo_gpgcheck=0
-priority=20
-
-[centos-stream-appstream]
-name=CentOS Stream ${{ matrix.rhel_ver }} AppStream
-baseurl=https://mirror.stream.centos.org/${{ matrix.rhel_ver }}-stream/AppStream/x86_64/os/
-enabled=1
-gpgcheck=0
-repo_gpgcheck=0
-priority=20
-EOF
+            printf '%s\n' \
+              '[centos-stream-baseos]' \
+              "name=CentOS Stream ${{ matrix.rhel_ver }} BaseOS" \
+              "baseurl=https://mirror.stream.centos.org/${{ matrix.rhel_ver }}-stream/BaseOS/x86_64/os/" \
+              'enabled=1' \
+              'gpgcheck=0' \
+              'repo_gpgcheck=0' \
+              'priority=20' \
+              '' \
+              '[centos-stream-appstream]' \
+              "name=CentOS Stream ${{ matrix.rhel_ver }} AppStream" \
+              "baseurl=https://mirror.stream.centos.org/${{ matrix.rhel_ver }}-stream/AppStream/x86_64/os/" \
+              'enabled=1' \
+              'gpgcheck=0' \
+              'repo_gpgcheck=0' \
+              'priority=20' \
+              > /etc/yum.repos.d/centos-stream-bubblewrap.repo
 
             dnf install -y \
               rpm-build \
