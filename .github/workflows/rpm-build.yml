@@ -162,13 +162,13 @@ jobs:
       - name: Build RPMs
         run: |
           VERSION="${{ steps.ver.outputs.version }}"
-          docker exec rpmbuild-${{ matrix.artifact_name }} bash -lc '
+          docker exec rpmbuild-${{ matrix.artifact_name }} bash -lc "
             command -v rpmbuild
             rpmbuild -ba /workspace/packaging/flat-manager-django.spec \
-              --define "version_string ${VERSION}" \
-              --define "_topdir /root/rpmbuild" \
-              --define "rhel ${{ matrix.rhel_ver }}"
-          '
+              --define \"version_string ${VERSION}\" \
+              --define \"_topdir /root/rpmbuild\" \
+              --define \"rhel ${{ matrix.rhel_ver }}\"
+          "
 
       # ── Copy built RPMs out ─────────────────────────────────────────────────
       - name: Collect built RPMs
