@@ -313,12 +313,12 @@ def ensure_appstream_compose_shims(build=None):
                     except OSError as e:
                         if build:
                             log_build(build, 'warning',
-                                      f"Could not write appstream-compose shim to {compose_path}: {e}")
+                                    f"Could not write appstream-compose shim to {compose_path}: {e}")
 
     if patched and build:
         log_build(build, 'info',
-                  f"Installed appstream-compose shim in {len(patched)} SDK(s): "
-                  + ', '.join(os.path.dirname(p).replace('/files/bin', '') for p in patched))
+                f"Installed appstream-compose shim in {len(patched)} SDK(s): "
+                + ', '.join(os.path.dirname(p).replace('/files/bin', '') for p in patched))
 
 
 
@@ -456,14 +456,14 @@ def _patch_build_dir_versions(build_dir, package_id, version, log_fn=None):
     on-disk after flatpak-builder returns):
 
     1. ``files/share/metainfo/{package_id}.metainfo.xml``
-       (or the fallback appdata variants) — the canonical metainfo source.
-       Created from scratch if absent.
+    (or the fallback appdata variants) — the canonical metainfo source.
+    Created from scratch if absent.
 
     2. ``export/share/app-info/xmls/{package_id}.xml.gz``
-       The gzip-compressed AppStream XML that flatpak build-export commits
-       into the OSTree ref and that flatpak build-update-repo later reads to
-       build the repository's appstream summary.  Patching here is what
-       actually makes 'flatpak list' show the version.
+    The gzip-compressed AppStream XML that flatpak build-export commits
+    into the OSTree ref and that flatpak build-update-repo later reads to
+    build the repository's appstream summary.  Patching here is what
+    actually makes 'flatpak list' show the version.
 
     After calling this function the caller MUST re-export the build_dir with
     ``flatpak build-export`` so the patched files replace the earlier commit.
@@ -744,8 +744,8 @@ def package_from_git_task(self, package_id):
 
         if submodule_init_result.returncode != 0:
             log_build(build, 'warning',
-                      f"Shallow submodule init failed (exit {submodule_init_result.returncode}): "
-                      f"{submodule_init_result.stderr.strip()}")
+                    f"Shallow submodule init failed (exit {submodule_init_result.returncode}): "
+                    f"{submodule_init_result.stderr.strip()}")
             log_build(build, 'info', "Retrying git submodule update without --depth 1...")
             submodule_init_result = subprocess.run(
                 ['git', 'submodule', 'update', '--init', '--recursive'],
@@ -983,8 +983,8 @@ def package_from_git_task(self, package_id):
                     log_build(build, 'info', "Re-export succeeded — version will appear in flatpak list")
                 else:
                     log_build(build, 'warning',
-                              f"Re-export after metainfo patch failed (non-fatal): "
-                              f"{reexport_result.stderr.strip() or reexport_result.stdout.strip()}")
+                            f"Re-export after metainfo patch failed (non-fatal): "
+                            f"{reexport_result.stderr.strip() or reexport_result.stdout.strip()}")
         else:
             log_build(build, 'info', "No version detected — skipping metainfo version patch")
 
@@ -1053,7 +1053,7 @@ def _get_bst_binary(bst_version):
 
     - BST 2: prefers the active Python virtualenv's ``bin/bst``.
     - BST 1: reads ``bst1_venv_path`` from SiteConfig (UI-configurable),
-      falling back to ``BST1_VENV_PATH`` in settings.py.
+    falling back to ``BST1_VENV_PATH`` in settings.py.
     """
     # 1) Helper for resolving tools inside a venv root.
     def _tool_in_venv(venv_root, tool_name='bst'):
@@ -1101,14 +1101,14 @@ def buildstream_build_task(self, bst_source_id, force_rebuild=False):
     Build a BuildStream project from a git repository.
 
     Pipeline:
-      1. Clone the git repository at the requested branch.
-      1b. (force_rebuild only) Run ``bst artifact delete <bst_element>`` to
-          purge the cached artifact so BST performs a full rebuild from source.
-      2. Run ``bst build <bst_element>`` inside the cloned project directory.
-      3. Run ``bst artifact checkout <bst_element> --directory <checkout_dir>``
-         to extract the artifact.  The checkout directory is an OSTree flatpak
-         repo that is imported via ``flatpak build-commit-from``.
-      4. Status goes to "built" (the normal publish pipeline takes it from there).
+    1. Clone the git repository at the requested branch.
+    1b. (force_rebuild only) Run ``bst artifact delete <bst_element>`` to
+        purge the cached artifact so BST performs a full rebuild from source.
+    2. Run ``bst build <bst_element>`` inside the cloned project directory.
+    3. Run ``bst artifact checkout <bst_element> --directory <checkout_dir>``
+        to extract the artifact.  The checkout directory is an OSTree flatpak
+        repo that is imported via ``flatpak build-commit-from``.
+    4. Status goes to "built" (the normal publish pipeline takes it from there).
     """
     from apps.flatpak.models import BuildStreamSource, Build, BuildLog, SiteConfig
 
@@ -1168,7 +1168,7 @@ def buildstream_build_task(self, bst_source_id, force_rebuild=False):
         log_build(build, 'info', f"Cloning {source.git_repo_url} (branch: {source.git_branch})")
         clone_result = subprocess.run(
             ['git', 'clone', '--branch', source.git_branch, '--depth', '1',
-             '--recurse-submodules', source.git_repo_url, 'source'],
+            '--recurse-submodules', source.git_repo_url, 'source'],
             cwd=temp_dir,
             capture_output=True,
             text=True,
@@ -1411,7 +1411,7 @@ def buildstream_build_task(self, bst_source_id, force_rebuild=False):
         if reset_count:
             waiting.update(status='pending', error_message='', completed_at=None)
             log_build(build, 'info',
-                      f"Auto-reset {reset_count} promotion(s) to pending after successful rebuild")
+                    f"Auto-reset {reset_count} promotion(s) to pending after successful rebuild")
             logger.info(
                 f"BST source {bst_source_id}: auto-reset {reset_count} failed promotion(s) "
                 f"to pending after rebuild"
@@ -1618,12 +1618,12 @@ def publish_package_task(package_id, generate_deltas=False):
         build_repo_commit = _resolve_ref(build_repo_path, ref_name)
         target_commit = _resolve_ref(target_repo_path, ref_name)
         already_current = (build_repo_commit and target_commit and
-                           build_repo_commit == target_commit)
+                        build_repo_commit == target_commit)
 
         if already_current:
             log_build(build, 'info',
-                      f"{ref_name} already at commit {build_repo_commit[:12]} in "
-                      f"{package.repository.name} — skipping pull")
+                    f"{ref_name} already at commit {build_repo_commit[:12]} in "
+                    f"{package.repository.name} — skipping pull")
         else:
             log_build(build, 'info', f"Pulling {ref_name} from build-repo to {package.repository.name}")
 
@@ -1635,9 +1635,9 @@ def publish_package_task(package_id, generate_deltas=False):
 
             pull_result = subprocess.run(
                 ['ostree', 'pull-local',
-                 f'--repo={target_repo_path}',
-                 build_repo_path,
-                 ref_name],
+                f'--repo={target_repo_path}',
+                build_repo_path,
+                ref_name],
                 capture_output=True,
                 text=True,
                 timeout=300,
@@ -1676,8 +1676,8 @@ def publish_package_task(package_id, generate_deltas=False):
             log_build(build, 'info', "Repository metadata updated and signed successfully")
         else:
             log_build(build, 'warning',
-                      f"Repository metadata update issue: {meta_result.get('message', '')} "
-                      f"{meta_result.get('detail', meta_result.get('error', ''))}")
+                    f"Repository metadata update issue: {meta_result.get('message', '')} "
+                    f"{meta_result.get('detail', meta_result.get('error', ''))}")
             logger.warning("update_repo_metadata warning for %s: %s", target_repo_path, meta_result)
         
         # Mark as published
@@ -1763,15 +1763,15 @@ def _fixup_upstream_appstream(build_repo_path, target_repo_path, gpg_key, log_fn
         if pull.returncode != 0:
             if log_fn:
                 log_fn('warning',
-                       f"appstream fixup: pull-local {ref} failed: "
-                       f"{pull.stderr.strip() or pull.stdout.strip()}")
+                    f"appstream fixup: pull-local {ref} failed: "
+                    f"{pull.stderr.strip() or pull.stdout.strip()}")
             continue
 
         # Create (or update) the named ref in the target repo so flatpak can
         # find it by name when serving the appstream data to clients.
         subprocess.run(
             ['ostree', 'refs', f'--repo={target_repo_path}',
-             '--force', f'--create={ref}', commit],
+            '--force', f'--create={ref}', commit],
             capture_output=True, text=True,
         )
 
@@ -1794,18 +1794,18 @@ def _fixup_upstream_appstream(build_repo_path, target_repo_path, gpg_key, log_fn
                     continue
                 sign = subprocess.run(
                     ['ostree', f'--repo={target_repo_path}', 'gpg-sign',
-                     f'--gpg-homedir={homedir}', rev.stdout.strip(), gpg_key.key_id],
+                    f'--gpg-homedir={homedir}', rev.stdout.strip(), gpg_key.key_id],
                     capture_output=True, text=True,
                 )
                 if sign.returncode != 0 and log_fn:
                     log_fn('warning',
-                           f"appstream fixup: gpg-sign {ref} failed: "
-                           f"{sign.stderr.strip()}")
+                        f"appstream fixup: gpg-sign {ref} failed: "
+                        f"{sign.stderr.strip()}")
 
             # Re-generate + sign the summary to include the new appstream commits.
             subprocess.run(
                 ['ostree', 'summary', f'--repo={target_repo_path}', '-u',
-                 '--gpg-sign', gpg_key.key_id, '--gpg-homedir', homedir],
+                '--gpg-sign', gpg_key.key_id, '--gpg-homedir', homedir],
                 capture_output=True, text=True,
             )
     else:
@@ -1825,9 +1825,9 @@ def _resolve_remote_ref(remote_name, ref):
     though they look like 'runtime/' refs at the flatpak level.
 
     Tries:
-      1. ref as-is
-      2. swapped prefix (runtime/ <-> app/)
-      3. no leading prefix (name/arch/branch only)
+    1. ref as-is
+    2. swapped prefix (runtime/ <-> app/)
+    3. no leading prefix (name/arch/branch only)
     across '', --system, and --user flatpak scopes.
 
     Returns ('', ref) when nothing could be resolved.
@@ -1885,6 +1885,10 @@ def _ostree_pull_ref(repo_path, remote_name, ref, commit, log_fn, timeout_second
     fail with "exceeded maximum size" against a stale summary size hint,
     while pulling by checksum can 403 when the object isn't served yet.
 
+    Sends a wget-like User-Agent via --http-header: Flathub's CDN has been
+    observed 403-ing libostree's default User-Agent on some object fetches
+    even though the identical URL succeeds via wget/curl.
+
     Returns (success, elapsed_seconds).
     """
     targets = [f'{ref}@{commit}', ref] if commit else [ref]
@@ -1893,7 +1897,9 @@ def _ostree_pull_ref(repo_path, remote_name, ref, commit, log_fn, timeout_second
         log_fn('info', f"Starting ostree pull of {target}{retry_note}")
         start = time.monotonic()
         proc = subprocess.Popen(
-            ['ostree', 'pull', f'--repo={repo_path}', remote_name, target],
+            ['ostree', 'pull', f'--repo={repo_path}',
+             '--http-header=User-Agent=Wget/1.21.3',
+             remote_name, target],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
         )
         try:
@@ -1913,7 +1919,7 @@ def _ostree_pull_ref(repo_path, remote_name, ref, commit, log_fn, timeout_second
         is_last = i == len(targets) - 1
         level = 'warning' if not is_last else 'error'
         log_fn(level, f"Pull of {target} failed (exit {proc.returncode})"
-                       + ('; trying without checksum' if not is_last else ''))
+                    + ('; trying without checksum' if not is_last else ''))
     return False, 0
 
 
@@ -2151,7 +2157,7 @@ def pull_external_ref_task(external_ref_id):
         # from it. --no-gpg-verify avoids needing to import remote GPG keys.
         subprocess.run(
             ['ostree', 'remote', 'add', '--if-not-exists', '--no-gpg-verify',
-             f'--repo={build_repo_path}', remote_name, remote_url],
+            f'--repo={build_repo_path}', remote_name, remote_url],
             capture_output=True, text=True
         )
         _log_external(ext, 'info', f"Remote '{remote_name}' configured in build-repo")
@@ -2161,12 +2167,12 @@ def pull_external_ref_task(external_ref_id):
             _log_external(ext, 'info', f"Upstream commit: {upstream_commit[:12]}")
             if resolved_ref != ref:
                 _log_external(ext, 'info',
-                              f"Ref corrected: {ref} -> {resolved_ref} (remote uses different prefix)")
+                            f"Ref corrected: {ref} -> {resolved_ref} (remote uses different prefix)")
                 ref = resolved_ref
                 ext.ref = resolved_ref
         else:
             _log_external(ext, 'warning',
-                          f"Could not determine upstream commit for {ref} via flatpak remote-info")
+                        f"Could not determine upstream commit for {ref} via flatpak remote-info")
 
         # Build a dependency snapshot (direct + transitive refs) from upstream
         # metadata so External details and Missing Dependencies can include
@@ -2213,7 +2219,7 @@ def pull_external_ref_task(external_ref_id):
         if commit:
             ext.commit_hash = commit
             _log_external(ext, 'info',
-                          f"Resolved commit {commit[:12]} from {resolved_ref_name}")
+                        f"Resolved commit {commit[:12]} from {resolved_ref_name}")
 
             # Ensure the canonical plain ref exists in build-repo so later
             # pull-local / promotion paths can reference ext.ref directly.
@@ -2229,11 +2235,11 @@ def pull_external_ref_task(external_ref_id):
                 )
                 if create_ref.returncode == 0:
                     _log_external(ext, 'info',
-                                  f"Created canonical local ref {ref} -> {commit[:12]}")
+                                f"Created canonical local ref {ref} -> {commit[:12]}")
                 else:
                     _log_external(ext, 'warning',
-                                  "Could not create canonical local ref "
-                                  f"{ref}: {create_ref.stderr.strip() or create_ref.stdout.strip()}")
+                                "Could not create canonical local ref "
+                                f"{ref}: {create_ref.stderr.strip() or create_ref.stdout.strip()}")
         else:
             refs_result = subprocess.run(
                 ['ostree', 'refs', f'--repo={build_repo_path}'],
@@ -2401,7 +2407,7 @@ def publish_external_ref_task(external_ref_id):
                 )
             else:
                 _log_external(ext, 'info',
-                              f"Copied via {used_source} and created target ref {ext.ref}")
+                            f"Copied via {used_source} and created target ref {ext.ref}")
         elif used_source != ext.ref:
             _log_external(ext, 'info', f"Copied via source {used_source}")
 
@@ -2427,7 +2433,7 @@ def publish_external_ref_task(external_ref_id):
             with temp_gpg_homedir(gpg_key) as homedir:
                 sign_result = subprocess.run(
                     ['ostree', f'--repo={target_repo_path}', 'gpg-sign',
-                     f'--gpg-homedir={homedir}', target_commit, gpg_key.key_id],
+                    f'--gpg-homedir={homedir}', target_commit, gpg_key.key_id],
                     capture_output=True, text=True
                 )
             if sign_result.returncode != 0:
@@ -2436,7 +2442,7 @@ def publish_external_ref_task(external_ref_id):
                     f"{sign_result.stderr.strip() or sign_result.stdout.strip()}"
                 )
             _log_external(ext, 'info',
-                          f"Signed imported commit {target_commit[:12]} with key {gpg_key.key_id}")
+                        f"Signed imported commit {target_commit[:12]} with key {gpg_key.key_id}")
         elif gpg_key and not target_commit:
             raise RuntimeError(
                 "Imported ref copied, but could not resolve target commit for GPG signing"
@@ -2677,12 +2683,12 @@ def _snapshot_build_external_refs(build, package):
 
     Priority:
     1. If the dep matches a tracked ExternalRef, use that object and its
-       upstream_commit as the baseline.
+    upstream_commit as the baseline.
     2. For deps that are only installed locally (e.g. org.freedesktop.Sdk
-       pulled via flatpak but not tracked as an ExternalRef), fall back to
-       `flatpak info --show-commit` to capture the installed commit hash.
-       These records have external_ref=None so they show the commit but
-       can't track future upstream changes until an ExternalRef is added.
+    pulled via flatpak but not tracked as an ExternalRef), fall back to
+    `flatpak info --show-commit` to capture the installed commit hash.
+    These records have external_ref=None so they show the commit but
+    can't track future upstream changes until an ExternalRef is added.
     """
     from apps.flatpak.models import BuildExternalRef, ExternalRef
 
@@ -2852,7 +2858,7 @@ def detect_and_install_dependencies(package, error_message, build=None):
                     log_build(build, 'info', f"{dep} is already installed")
                 else:
                     log_build(build, 'error',
-                              f"Failed to install {dep}: {install_result.stderr or install_result.stdout}")
+                            f"Failed to install {dep}: {install_result.stderr or install_result.stdout}")
                     return False
         except subprocess.TimeoutExpired:
             log_build(build, 'error', f"Timeout installing {dep}")
@@ -2903,10 +2909,10 @@ def _extract_version_from_manifest(package_id, manifest_file):
             # This handles IDs where the last segment is generic ('desktop',
             # 'app', etc.) and the real app name appears earlier.
             _skip_parts = {'com', 'org', 'net', 'io', 'de', 'app', 'apps',
-                           'github', 'gitlab', 'codeberg'}
+                        'github', 'gitlab', 'codeberg'}
             _id_parts = package_id.split('.') if package_id else []
             app_name_candidates = [p.lower() for p in _id_parts
-                                   if p.lower() not in _skip_parts and len(p) > 1]
+                                if p.lower() not in _skip_parts and len(p) > 1]
             app_name = app_name_candidates[-1] if app_name_candidates else None
             # Score each module by how well its name matches the package ID.
             # Exact match wins over partial match — prevents e.g. "eog-plugins"
@@ -2924,7 +2930,7 @@ def _extract_version_from_manifest(package_id, manifest_file):
                     if module_name == cand:
                         match_score = max(match_score, 10)
                     elif (module_name.replace('-', '') == cand
-                          or module_name.replace('_', '') == cand):
+                        or module_name.replace('_', '') == cand):
                         match_score = max(match_score, 5)
                     elif cand in module_name or module_name in cand:
                         match_score = max(match_score, 1)
@@ -3025,10 +3031,10 @@ def _get_freedesktop_sdk_version(sdk, arch, sdk_version, scope_flag, build=None)
 
     Strategy:
     1. Query ``flatpak info --show-metadata`` for the installed SDK and look for
-       a line such as ``sdk=org.freedesktop.Sdk//24.08``.
+    a line such as ``sdk=org.freedesktop.Sdk//24.08``.
     2. If the SDK is not yet installed (metadata unavailable), fall back to
-       ``flatpak list --runtime`` and return the highest installed
-       org.freedesktop.Sdk version.
+    ``flatpak list --runtime`` and return the highest installed
+    org.freedesktop.Sdk version.
     """
     import re as _re
 
@@ -3050,7 +3056,7 @@ def _get_freedesktop_sdk_version(sdk, arch, sdk_version, scope_flag, build=None)
     try:
         result = subprocess.run(
             ['flatpak', 'info', '--show-metadata', scope_flag,
-             f"{sdk}/{arch}/{sdk_version}"],
+            f"{sdk}/{arch}/{sdk_version}"],
             capture_output=True, text=True, timeout=30
         )
         if result.returncode == 0:
@@ -3058,7 +3064,7 @@ def _get_freedesktop_sdk_version(sdk, arch, sdk_version, scope_flag, build=None)
             if ver:
                 if build:
                     log_build(build, 'info',
-                              f"Resolved freedesktop SDK version {ver} from {sdk}/{sdk_version} metadata")
+                            f"Resolved freedesktop SDK version {ver} from {sdk}/{sdk_version} metadata")
                 return ver
     except Exception as e:
         if build:
@@ -3080,7 +3086,7 @@ def _get_freedesktop_sdk_version(sdk, arch, sdk_version, scope_flag, build=None)
             ver = sorted(versions)[-1]
             if build:
                 log_build(build, 'info',
-                          f"Freedesktop SDK version {ver} found via flatpak list (fallback)")
+                        f"Freedesktop SDK version {ver} found via flatpak list (fallback)")
             return ver
     except Exception as e:
         if build:
@@ -3124,10 +3130,10 @@ def parse_manifest_dependencies(package, manifest_file, build=None):
             # Build candidate names from all meaningful package ID segments.
             # e.g. com.jgraph.drawio.desktop → ['jgraph', 'drawio', 'desktop']
             _skip_parts = {'com', 'org', 'net', 'io', 'de', 'app', 'apps',
-                           'github', 'gitlab', 'codeberg'}
+                        'github', 'gitlab', 'codeberg'}
             _id_parts = package.package_id.split('.') if package.package_id else []
             app_name_candidates = [p.lower() for p in _id_parts
-                                   if p.lower() not in _skip_parts and len(p) > 1]
+                                if p.lower() not in _skip_parts and len(p) > 1]
             app_name = app_name_candidates[-1] if app_name_candidates else None
 
             # Score each module by how well its name matches the package ID.
@@ -3149,7 +3155,7 @@ def parse_manifest_dependencies(package, manifest_file, build=None):
                     if module_name == cand:
                         match_score = max(match_score, 10)
                     elif (module_name.replace('-', '') == cand
-                          or module_name.replace('_', '') == cand):
+                        or module_name.replace('_', '') == cand):
                         match_score = max(match_score, 5)
                     elif cand in module_name or module_name in cand:
                         match_score = max(match_score, 1)
@@ -3306,13 +3312,13 @@ def parse_manifest_dependencies(package, manifest_file, build=None):
                     fd_ver = _fd_version_cache[cache_key]
                     if fd_ver:
                         log_build(build, 'info',
-                                  f"Extension {extension}: using freedesktop SDK version "
-                                  f"{fd_ver} (instead of {sdk_version})")
+                                f"Extension {extension}: using freedesktop SDK version "
+                                f"{fd_ver} (instead of {sdk_version})")
                         ext_version = fd_ver
                     else:
                         log_build(build, 'warning',
-                                  f"Could not resolve freedesktop SDK version for {extension}; "
-                                  f"falling back to {sdk_version}")
+                                f"Could not resolve freedesktop SDK version for {extension}; "
+                                f"falling back to {sdk_version}")
 
                 extension_full = f"{extension}/{arch}/{ext_version}"
                 dependencies['sdk_extensions'].append({
@@ -3529,7 +3535,7 @@ def install_flatpak_dependencies(package, dependencies, build=None):
             for remote_name, _ in active_remotes_info:
                 r = subprocess.run(
                     ['flatpak', 'install', '-y', install_scope, '--noninteractive',
-                     remote_name, ref],
+                    remote_name, ref],
                     capture_output=True, text=True, timeout=600,
                 )
                 if r.returncode == 0:
@@ -4137,10 +4143,10 @@ def promote_bst_task(bst_promotion_id):
         # re-sign the summary after build-commit-from added the new BST commits.
         # Regenerating all deltas from scratch would exceed the subprocess timeout.
         meta_result = update_repo_metadata(target_repo_path, promo.target_repo.gpg_key,
-                                           generate_deltas=False)
+                                        generate_deltas=False)
         if not meta_result['success']:
             logger.warning("BST promotion metadata update issue for %s: %s",
-                           promo.target_repo.name, meta_result)
+                        promo.target_repo.name, meta_result)
 
         promo.status = 'promoted'
         promo.completed_at = timezone.now()
@@ -4310,11 +4316,11 @@ def _fetch_upstream_tags_by_scheme(url, version_scheme):
         ``(stable_version, stable_raw_tag, unstable_version, error)``
 
     * ``stable_version``   — normalised latest stable-by-scheme version string,
-                             or ``''`` if no stable tag was found.
+                            or ``''`` if no stable tag was found.
     * ``stable_raw_tag``   — original tag string for the stable version, or None.
     * ``unstable_version`` — normalised latest scheme-unstable version string,
-                             **only** when it is strictly newer than
-                             ``stable_version``; otherwise None.
+                            **only** when it is strictly newer than
+                            ``stable_version``; otherwise None.
     * ``error``            — human-readable error string on failure, else None.
     """
     import re
@@ -4385,15 +4391,15 @@ def _parse_version_from_tag(tag):
     flag from a tag name.
 
     Handles common formats:
-      v8.4.2                → (8, 4, 2),        is_prerelease=False, is_date=False
-      8.4.2                 → (8, 4, 2),        is_prerelease=False, is_date=False
-      grass_8_4_2           → (8, 4, 2),        is_prerelease=False, is_date=False
-      grass_7_6_1RC1        → (7, 6, 1),        is_prerelease=True,  is_date=False
-      release-3.10.1        → (3, 10, 1),       is_prerelease=False, is_date=False
-      v2.0.0-beta.1         → (2, 0, 0),        is_prerelease=True,  is_date=False
-      FIREFOX_149_0b10_BUILD1 → (149, 0),       is_prerelease=True,  is_date=False
-      FIREFOX_149_0_BUILD1    → (149, 0),       is_prerelease=False, is_date=False
-      2022-08-12-01         → (2022, 8, 12, 1), is_prerelease=False, is_date=True
+    v8.4.2                → (8, 4, 2),        is_prerelease=False, is_date=False
+    8.4.2                 → (8, 4, 2),        is_prerelease=False, is_date=False
+    grass_8_4_2           → (8, 4, 2),        is_prerelease=False, is_date=False
+    grass_7_6_1RC1        → (7, 6, 1),        is_prerelease=True,  is_date=False
+    release-3.10.1        → (3, 10, 1),       is_prerelease=False, is_date=False
+    v2.0.0-beta.1         → (2, 0, 0),        is_prerelease=True,  is_date=False
+    FIREFOX_149_0b10_BUILD1 → (149, 0),       is_prerelease=True,  is_date=False
+    FIREFOX_149_0_BUILD1    → (149, 0),       is_prerelease=False, is_date=False
+    2022-08-12-01         → (2022, 8, 12, 1), is_prerelease=False, is_date=True
 
     Date-version tags (YYYY-MM-DD snapshots/nightlies) are flagged so the
     caller can deprioritise them in favour of real release version numbers.
@@ -4453,7 +4459,7 @@ def _fetch_latest_upstream_tag(url):
     1. Pull all tags.
     2. Parse each into a numeric version tuple.
     3. Prefer stable releases; fall back to pre-releases only when no stable
-       tag is found at all.
+    tag is found at all.
     4. Return the highest version's original tag string.
 
     Returns ``(version_string, error_string)`` where exactly one is non-None.
@@ -4528,8 +4534,8 @@ def _run_version_script(script_text, package_id):
     Execute a user-supplied version script and return (version, error).
 
     The script's shebang line determines the interpreter:
-      #!/usr/bin/env python3  /  #!/usr/bin/python*  → python3
-      anything else (or no shebang)                  → /bin/bash
+    #!/usr/bin/env python3  /  #!/usr/bin/python*  → python3
+    anything else (or no shebang)                  → /bin/bash
 
     stdout is captured; the first non-empty stripped line is the version.
     A 30-second timeout is enforced; non-zero exit codes are treated as errors.
@@ -4645,9 +4651,9 @@ def _fetch_available_version(package):
     Returns ``(version, version_scheme, error)`` where exactly one of
     *version* / *error* is ``None``:
     * ``(str, str, None)`` on success — version is **not** persisted here;
-      callers are responsible for saving it.  *version_scheme* is the scheme
-      string extracted from ``x-checker-data`` in the manifest (may be ``''``
-      when the manifest has no scheme; ``None`` when no manifest was found).
+    callers are responsible for saving it.  *version_scheme* is the scheme
+    string extracted from ``x-checker-data`` in the manifest (may be ``''``
+    when the manifest has no scheme; ``None`` when no manifest was found).
     * ``(None, None, str)`` on failure.
 
     This is the low-level helper used by both the Celery task and the
@@ -4847,11 +4853,11 @@ def check_upstream_version_task(package_id):
     """Check and store the latest upstream version for a single package.
 
     Version resolution order:
-      1. Run ``upstream_version_script`` if set; use its stdout as the version.
-         The script may optionally print a release date on the second line.
-      2. Fall back to git-tag detection via ``upstream_url`` (if set) when the
-         script is absent, empty, or fails.  The tag date is fetched via a
-         shallow clone and stored as the release date.
+    1. Run ``upstream_version_script`` if set; use its stdout as the version.
+        The script may optionally print a release date on the second line.
+    2. Fall back to git-tag detection via ``upstream_url`` (if set) when the
+        script is absent, empty, or fails.  The tag date is fetched via a
+        shallow clone and stored as the release date.
 
     Release-date fallback: if no explicit date is available, the timestamp when
     this version was *first observed* is used as the display date (per package,
