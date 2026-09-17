@@ -1863,6 +1863,21 @@ def _get_flatpak_remote_commit(remote_name, ref):
     return commit
 
 
+def _resolve_ref_via_ostree(repo_path, remote_name, ref):
+    """Resolve REMOTE:REF to a commit hash using raw ostree (not flatpak).
+
+    ``flatpak remote-info`` only parses app/runtime-shaped refs (id/arch/branch)
+    and fails silently on refs like ``appstream/x86_64``. ``ostree rev-parse``
+    has no such restriction, so it works for any ref the remote publishes.
+    """
+    result = subprocess.run(
+        ['ostree', 'rev-parse', f'--repo={repo_path}', f'{remote_name}:{ref}'],
+        capture_output=True, text=True, timeout=30,
+    )
+    value = result.stdout.strip() if result.returncode == 0 else ''
+    return value if re.fullmatch(r'[0-9a-f]{64}', value) else ''
+
+
 def _dependency_type_from_ref(full_ref):
     """Classify a dependency ref for UI/status display."""
     parts = full_ref.split('/')
@@ -2216,10 +2231,24 @@ def pull_external_ref_task(external_ref_id):
         # lives exclusively in the appstream/x86_64 (and appstream2/x86_64)
         # refs. We pull them now into build-repo so publish/promote can copy
         # them to the target after flatpak build-update-repo runs.
+        #
+        # Pull by explicit commit checksum (ref@checksum) rather than by bare
+        # ref name. Pulling by name makes ostree size-check the fetched
+        # .commit object against the size recorded in the remote's (often
+        # CDN-cached/stale) summary file, which fails with "exceeded maximum
+        # size" once the real commit has grown past that stale value. Passing
+        # the checksum skips the summary size hint entirely.
+        #
+        # Resolve via raw ostree, not _resolve_remote_ref(): that helper shells
+        # out to `flatpak remote-info`, which only understands app/runtime
+        # shaped refs and silently fails to resolve 'appstream/x86_64', which
+        # then falls back to the by-name pull and re-triggers the same error.
         for appstream_ref in ('appstream/x86_64', 'appstream2/x86_64'):
+            as_commit = _resolve_ref_via_ostree(build_repo_path, remote_name, appstream_ref)
+            pull_target = f'{appstream_ref}@{as_commit}' if as_commit else appstream_ref
             _log_external(ext, 'info', f"Pulling {appstream_ref} from remote")
             as_proc = subprocess.Popen(
-                ['ostree', 'pull', f'--repo={build_repo_path}', remote_name, appstream_ref],
+                ['ostree', 'pull', f'--repo={build_repo_path}', remote_name, pull_target],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
             )
             try:
