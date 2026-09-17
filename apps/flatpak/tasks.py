@@ -1878,6 +1878,45 @@ def _resolve_ref_via_ostree(repo_path, remote_name, ref):
     return value if re.fullmatch(r'[0-9a-f]{64}', value) else ''
 
 
+def _ostree_pull_ref(repo_path, remote_name, ref, commit, log_fn, timeout_seconds=1800):
+    """Pull *ref* from *remote_name*, trying checksum-qualified and bare-name
+    forms since Flathub's CDN rejects one or the other depending on whether
+    the commit is indexed in its cached summary: pulling by bare name can
+    fail with "exceeded maximum size" against a stale summary size hint,
+    while pulling by checksum can 403 when the object isn't served yet.
+
+    Returns (success, elapsed_seconds).
+    """
+    targets = [f'{ref}@{commit}', ref] if commit else [ref]
+    for i, target in enumerate(targets):
+        retry_note = ' (retry without checksum)' if i else ''
+        log_fn('info', f"Starting ostree pull of {target}{retry_note}")
+        start = time.monotonic()
+        proc = subprocess.Popen(
+            ['ostree', 'pull', f'--repo={repo_path}', remote_name, target],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        )
+        try:
+            for line in proc.stdout:
+                line = line.rstrip('\r\n')
+                if line and '\r' not in line:
+                    log_fn('info', line)
+            proc.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            log_fn('warning', f"Timed out pulling {target}")
+            continue
+        elapsed = time.monotonic() - start
+        if proc.returncode == 0:
+            return True, elapsed
+        is_last = i == len(targets) - 1
+        level = 'warning' if not is_last else 'error'
+        log_fn(level, f"Pull of {target} failed (exit {proc.returncode})"
+                       + ('; trying without checksum' if not is_last else ''))
+    return False, 0
+
+
 def _dependency_type_from_ref(full_ref):
     """Classify a dependency ref for UI/status display."""
     parts = full_ref.split('/')
@@ -2145,32 +2184,15 @@ def pull_external_ref_task(external_ref_id):
 
         # Pull the exact commit from the remote. We create/update the plain ref
         # explicitly afterwards instead of relying on --mirror ref semantics.
-        pull_target = f'{ref}@{upstream_commit}' if upstream_commit else ref
-        _log_external(ext, 'info',
-                      f"Starting ostree pull of {pull_target} (may take several minutes for large refs)")
-        pull_start = time.monotonic()
-        pull_proc = subprocess.Popen(
-            ['ostree', 'pull', f'--repo={build_repo_path}', remote_name, pull_target],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        # _ostree_pull_ref tries the checksum-qualified form first and falls
+        # back to the bare ref name if the CDN rejects the direct object
+        # fetch (HTTP 403) — see its docstring for why both forms exist.
+        pull_ok, elapsed = _ostree_pull_ref(
+            build_repo_path, remote_name, ref, upstream_commit,
+            lambda level, msg: _log_external(ext, level, msg),
         )
-        try:
-            last_heartbeat = time.monotonic()
-            for line in pull_proc.stdout:
-                line = line.rstrip('\r\n')
-                if not line or line.startswith('\r') or '\r' in line:
-                    # Skip carriage-return progress bars
-                    continue
-                _log_external(ext, 'info', line)
-                last_heartbeat = time.monotonic()
-            pull_proc.wait(timeout=1800)
-        except subprocess.TimeoutExpired:
-            pull_proc.kill()
-            pull_proc.wait()
-            raise RuntimeError("ostree pull timed out after 30 minutes")
-        elapsed = time.monotonic() - pull_start
-
-        if pull_proc.returncode != 0:
-            raise RuntimeError(f"ostree pull failed (exit {pull_proc.returncode})")
+        if not pull_ok:
+            raise RuntimeError("ostree pull failed")
         _log_external(ext, 'info', f"ostree pull completed in {elapsed:.0f}s")
 
         _log_external(ext, 'info', f"ostree pull succeeded")
@@ -2230,43 +2252,23 @@ def pull_external_ref_task(external_ref_id):
         # remotes do NOT embed AppStream in individual app commits; the data
         # lives exclusively in the appstream/x86_64 (and appstream2/x86_64)
         # refs. We pull them now into build-repo so publish/promote can copy
-        # them to the target after flatpak build-update-repo runs.
-        #
-        # Pull by explicit commit checksum (ref@checksum) rather than by bare
-        # ref name. Pulling by name makes ostree size-check the fetched
-        # .commit object against the size recorded in the remote's (often
-        # CDN-cached/stale) summary file, which fails with "exceeded maximum
-        # size" once the real commit has grown past that stale value. Passing
-        # the checksum skips the summary size hint entirely.
+        # them to the target after flatpak build-update-repo runs. Non-fatal:
+        # failures here don't block publishing.
         #
         # Resolve via raw ostree, not _resolve_remote_ref(): that helper shells
         # out to `flatpak remote-info`, which only understands app/runtime
-        # shaped refs and silently fails to resolve 'appstream/x86_64', which
-        # then falls back to the by-name pull and re-triggers the same error.
+        # shaped refs and silently fails to resolve 'appstream/x86_64'.
         for appstream_ref in ('appstream/x86_64', 'appstream2/x86_64'):
             as_commit = _resolve_ref_via_ostree(build_repo_path, remote_name, appstream_ref)
-            pull_target = f'{appstream_ref}@{as_commit}' if as_commit else appstream_ref
-            _log_external(ext, 'info', f"Pulling {appstream_ref} from remote")
-            as_proc = subprocess.Popen(
-                ['ostree', 'pull', f'--repo={build_repo_path}', remote_name, pull_target],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            pull_ok, _elapsed = _ostree_pull_ref(
+                build_repo_path, remote_name, appstream_ref, as_commit,
+                lambda level, msg: _log_external(ext, level, msg),
+                timeout_seconds=300,
             )
-            try:
-                for line in as_proc.stdout:
-                    line = line.rstrip('\r\n')
-                    if line and '\r' not in line:
-                        _log_external(ext, 'info', line)
-                as_proc.wait(timeout=300)
-            except subprocess.TimeoutExpired:
-                as_proc.kill()
-                as_proc.wait()
-                _log_external(ext, 'warning', f"Timed out pulling {appstream_ref} (non-fatal)")
-                continue
-            if as_proc.returncode == 0:
+            if pull_ok:
                 _log_external(ext, 'info', f"Pulled {appstream_ref} successfully")
             else:
-                _log_external(ext, 'warning',
-                              f"Could not pull {appstream_ref} (non-fatal, exit {as_proc.returncode})")
+                _log_external(ext, 'warning', f"Could not pull {appstream_ref} (non-fatal)")
 
         # Regenerate the summary so pull-local can find the ref by name.
         subprocess.run(
