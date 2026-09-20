@@ -57,6 +57,7 @@
 <div id="results-container">
 
 <!-- ═══ Ready to Commit ══════════════════════════════════════════════════════ -->
+{% if can_commit_flatpaks %}
 <div class="card mb-4 border-warning">
     <div class="card-header d-flex justify-content-between align-items-center bg-warning bg-opacity-10"
          style="cursor:pointer" data-bs-toggle="collapse" data-bs-target="#section-commit" aria-expanded="false">
@@ -118,8 +119,10 @@
     </div>
     </div><!-- /#section-commit -->
 </div>
+{% endif %}
 
 <!-- ═══ Ready to Publish ═════════════════════════════════════════════════════ -->
+{% if can_publish_flatpaks %}
 <div class="card mb-4 border-success">
     <div class="card-header d-flex justify-content-between align-items-center bg-success bg-opacity-10"
          style="cursor:pointer" data-bs-toggle="collapse" data-bs-target="#section-publish" aria-expanded="false">
@@ -181,8 +184,10 @@
     </div>
     </div><!-- /#section-publish -->
 </div>
+{% endif %}
 
 <!-- ═══ Ready to Promote ═════════════════════════════════════════════════════ -->
+{% if can_promote_builds %}
 <div class="card mb-4 border-primary">
     <div class="card-header d-flex justify-content-between align-items-center bg-primary bg-opacity-10"
          style="cursor:pointer" data-bs-toggle="collapse" data-bs-target="#section-promote" aria-expanded="false">
@@ -327,8 +332,10 @@
     </div>
     </div><!-- /#section-promote -->
 </div>
+{% endif %}
 
 {% if ready_to_promote_bst or bst_promotions %}
+{% if can_promote_buildstreams %}
 <!-- ═══ Ready to Promote (BuildStream) ══════════════════════════════════════ -->
 {% if ready_to_promote_bst %}
 <div class="card mb-4 border-info">
@@ -513,8 +520,10 @@
 </div>
 {% endif %}
 {% endif %}
+{% endif %}
 
 {% if ready_to_promote_externals or external_ref_promotions %}
+{% if can_promote_externals %}
 <!-- ═══ Ready to Promote (Externals) ═══════════════════════════════════════ -->
 {% if ready_to_promote_externals %}
 <div class="card mb-4 border-secondary">
@@ -717,6 +726,7 @@
 </div>
 {% endif %}
 {% endif %}
+{% endif %}
 
 <div class="card mb-4">
     <div class="card-header d-flex justify-content-between align-items-center"
@@ -764,12 +774,12 @@
                             <a href="{% url 'flatpak:external_detail' row.external_ref.pk %}" class="btn btn-sm btn-outline-primary">
                                 <i class="bi bi-eye"></i>
                             </a>
-                            {% if row.placement_kind == 'source' %}
+                            {% if row.placement_kind == 'source' and can_publish_externals %}
                             <button class="btn btn-sm btn-outline-danger ms-1"
                                     onclick="confirmExternalUnpublish({{ row.external_ref.pk }}, {{ row.external_ref_version.pk }}, '{{ row.external_ref.display_name|default:row.external_ref.ref|escapejs }}', '{{ row.repository.name|escapejs }}', '{{ row.external_ref_version.commit_hash|slice:":12" }}')">
                                 <i class="bi bi-trash3"></i> Unpublish
                             </button>
-                            {% else %}
+                            {% elif row.placement_kind != 'source' and can_promote_externals %}
                             <button class="btn btn-sm btn-outline-danger ms-1"
                                     onclick="externalPromoDelete({{ row.promotion.pk }}, '{{ row.repository.name|escapejs }}')">
                                 <i class="bi bi-trash3"></i> Remove
@@ -844,10 +854,10 @@
                             <a href="{% url 'flatpak:build_detail' build.pk %}" class="btn btn-sm btn-outline-primary">
                                 <i class="bi bi-eye"></i>
                             </a>
-                            <button class="btn btn-sm btn-outline-danger ms-1"
+                            {% if can_publish_flatpaks %}<button class="btn btn-sm btn-outline-danger ms-1"
                                     onclick="confirmUnpublish({{ build.pk }}, '{{ build.package.package_name|escapejs }}', '#{{ build.build_number }}')">
                                 <i class="bi bi-trash3"></i> Unpublish
-                            </button>
+                            </button>{% endif %}
                         </td>
                     </tr>
                     {% endfor %}
@@ -869,10 +879,10 @@
                             <a href="{% url 'flatpak:build_detail' build.pk %}" class="btn btn-sm btn-outline-primary">
                                 <i class="bi bi-eye"></i>
                             </a>
-                            <button class="btn btn-sm btn-outline-danger ms-1"
+                            {% if can_publish_flatpaks %}<button class="btn btn-sm btn-outline-danger ms-1"
                                     onclick="confirmUnpublish({{ build.pk }}, '{{ build.package.package_name|escapejs }}', '#{{ build.build_number }}')">
                                 <i class="bi bi-trash3"></i> Unpublish
-                            </button>
+                            </button>{% endif %}
                         </td>
                     </tr>
                     {% endfor %}
@@ -888,6 +898,7 @@
     </div><!-- /#section-pub-builds -->
 </div>
 
+{% if can_promote_builds %}
 <div class="card">
     <div class="card-header d-flex justify-content-between align-items-center"
          style="cursor:pointer" data-bs-toggle="collapse" data-bs-target="#section-promotions" aria-expanded="false">
@@ -1019,6 +1030,7 @@
     </div>
     </div><!-- /#section-promotions -->
 </div>
+{% endif %}
 </div><!-- /#results-container -->
 <script>
 (function () {

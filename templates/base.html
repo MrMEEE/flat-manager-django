@@ -123,14 +123,20 @@
             </a>
             {% endif %}
 
-            {% if user.can_view_flatpaks %}
+            {% if user.can_view_flatpaks or user.can_view_buildstreams or user.can_view_externals %}
             <hr class="my-2" style="border-color: rgba(255,255,255,0.15);">
+            {% endif %}
+            {% if user.can_view_flatpaks %}
             <a class="nav-link" href="{% url 'flatpak:package_list' %}">
                 <i class="bi bi-box-seam"></i> Flatpaks
             </a>
+            {% endif %}
+            {% if user.can_view_buildstreams %}
             <a class="nav-link" href="{% url 'flatpak:bst_source_list' %}">
                 <i class="bi bi-layers"></i> BuildStream
             </a>
+            {% endif %}
+            {% if user.can_view_externals %}
             <a class="nav-link" href="{% url 'flatpak:external_list' %}">
                 <i class="bi bi-cloud-download"></i> Externals
             </a>
@@ -142,14 +148,20 @@
             </a>
             {% endif %}
 
-            {% if user.can_view_builds %}
+            {% if user.can_view_builds or user.can_view_published_builds or user.can_view_dependencies %}
             <hr class="my-2" style="border-color: rgba(255,255,255,0.15);">
+            {% endif %}
+            {% if user.can_view_builds %}
             <a class="nav-link" href="{% url 'flatpak:build_list' %}">
                 <i class="bi bi-hammer"></i> Builds
             </a>
+            {% endif %}
+            {% if user.can_view_builds or user.can_view_published_builds %}
             <a class="nav-link" href="{% url 'flatpak:promotion_list' %}">
                 <i class="bi bi-arrow-up-right-circle"></i> Published Builds
             </a>
+            {% endif %}
+            {% if user.can_view_dependencies %}
             <a class="nav-link" href="{% url 'flatpak:dependencies_list' %}">
                 <i class="bi bi-puzzle"></i> Dependencies
             </a>

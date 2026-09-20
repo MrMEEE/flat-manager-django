@@ -15,6 +15,24 @@ All write mixins redirect unauthenticated users to the login page and return
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 
 
+def scope_queryset_for_user(queryset, user, resource, action='read', relation='organisations'):
+    """Limit an organisation-tagged queryset to the user's RBAC scope."""
+    organisation_ids = user.permission_organisation_ids(resource, action)
+    if organisation_ids is None:
+        return queryset
+    if not organisation_ids:
+        return queryset.none()
+    return queryset.filter(**{f'{relation}__in': organisation_ids}).distinct()
+
+
+def apply_default_organisation(instance, user):
+    """Assign the user's default organisation when the new item has none."""
+    organisation = getattr(user, 'default_organisation', None)
+    organisations = getattr(instance, 'organisations', None)
+    if organisation is not None and organisations is not None and not organisations.exists():
+        organisations.add(organisation)
+
+
 class ResourceActionRequiredMixin(LoginRequiredMixin, UserPassesTestMixin):
     """Require an explicit resource/action permission for a protected view."""
     resource = None
@@ -25,7 +43,9 @@ class ResourceActionRequiredMixin(LoginRequiredMixin, UserPassesTestMixin):
             return False
         if not self.resource or not self.action:
             return False
-        return self.request.user.has_permission(self.resource, self.action)
+        return self.request.user.has_permission(self.resource, self.action) or bool(
+            self.request.user.permission_organisation_ids(self.resource, self.action)
+        )
 
 
 class AdminRequiredMixin(LoginRequiredMixin, UserPassesTestMixin):
@@ -47,7 +67,10 @@ class BuildAdminRequiredMixin(LoginRequiredMixin, UserPassesTestMixin):
     """Requires build capabilities for the build flow."""
 
     def test_func(self):
-        return self.request.user.is_authenticated and self.request.user.has_permission('builds', 'build')
+        return self.request.user.is_authenticated and (
+            self.request.user.has_permission('builds', 'build')
+            or bool(self.request.user.permission_organisation_ids('builds', 'build'))
+        )
 
 
 class WriteRequiredMixin(LoginRequiredMixin, UserPassesTestMixin):

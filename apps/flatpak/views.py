@@ -6,6 +6,7 @@ from urllib import request as urllib_request
 from urllib import error as urllib_error
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import PermissionDenied
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView
 from django.views import View
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
@@ -13,13 +14,36 @@ from django.urls import reverse_lazy, reverse
 from django.contrib import messages
 from django.shortcuts import render, redirect, get_object_or_404
 from django.conf import settings
-from apps.users.mixins import BuildAdminRequiredMixin, ResourceActionRequiredMixin
+from apps.users.mixins import (
+    BuildAdminRequiredMixin, ResourceActionRequiredMixin, scope_queryset_for_user,
+    apply_default_organisation,
+)
 from .models import GPGKey, Repository, RepositorySubset, Package, Build, Promotion, BuildStreamSource, Client, AppUsageObservation, ExternalRef, ExternalRefVersion, ExternalRefPromotion, Organisation, FlatpakRemote
 from .forms import GPGKeyGenerateForm, GPGKeyImportForm, GPGKeyRenewForm
 from .utils.gpg import generate_gpg_key, import_gpg_key, renew_gpg_key
 from .utils.ostree import init_ostree_repo, sign_repo_summary, delete_ostree_repo, temp_gpg_homedir, update_repo_metadata
 
 logger = logging.getLogger(__name__)
+
+
+def _has_scoped_permission(user, resource, action, legacy_resource=None, legacy_action=None):
+    """Check a permission globally or in an organisation, with legacy fallback."""
+    allowed = user.has_permission(resource, action) or bool(
+        user.permission_organisation_ids(resource, action)
+    )
+    if legacy_resource and legacy_action:
+        allowed = allowed or user.has_permission(legacy_resource, legacy_action) or bool(
+            user.permission_organisation_ids(legacy_resource, legacy_action)
+        )
+    return allowed
+
+
+def _scope_published_queryset(queryset, user, action, legacy_resource, legacy_action, relation='organisations'):
+    """Scope a Published Builds object using its dedicated or legacy grant."""
+    dedicated_ids = user.permission_organisation_ids('published_builds', action)
+    if user.has_permission('published_builds', action) or dedicated_ids:
+        return scope_queryset_for_user(queryset, user, 'published_builds', action, relation)
+    return scope_queryset_for_user(queryset, user, legacy_resource, legacy_action, relation)
 
 class GPGKeyListView(LoginRequiredMixin, ListView):
     """List all GPG keys."""
@@ -28,12 +52,18 @@ class GPGKeyListView(LoginRequiredMixin, ListView):
     context_object_name = 'gpg_keys'
     paginate_by = 20
 
+    def get_queryset(self):
+        return scope_queryset_for_user(GPGKey.objects.all(), self.request.user, 'gpg_keys')
+
 
 class GPGKeyDetailView(LoginRequiredMixin, DetailView):
     """GPG key detail view."""
     model = GPGKey
     template_name = 'flatpak/gpgkey_detail.html'
     context_object_name = 'gpg_key'
+
+    def get_queryset(self):
+        return scope_queryset_for_user(GPGKey.objects.all(), self.request.user, 'gpg_keys')
 
 
 @login_required
@@ -65,6 +95,7 @@ def gpgkey_generate(request):
                     expires_at=key_data.get('expires_at'),
                     created_by=request.user
                 )
+                apply_default_organisation(gpgkey, request.user)
                 messages.success(request, f'GPG key "{gpgkey.name}" generated successfully.')
                 return redirect('flatpak:gpgkey_detail', pk=gpgkey.pk)
             except Exception as e:
@@ -100,6 +131,7 @@ def gpgkey_import(request):
                     passphrase_hint='',
                     created_by=request.user
                 )
+                apply_default_organisation(gpgkey, request.user)
                 messages.success(request, f'GPG key "{gpgkey.name}" imported successfully.')
                 return redirect('flatpak:gpgkey_detail', pk=gpgkey.pk)
             except Exception as e:
@@ -191,12 +223,18 @@ class RepositoryListView(LoginRequiredMixin, ListView):
     context_object_name = 'repositories'
     paginate_by = 20
 
+    def get_queryset(self):
+        return scope_queryset_for_user(Repository.objects.all(), self.request.user, 'repositories')
+
 
 class RepositoryDetailView(LoginRequiredMixin, DetailView):
     """Repository detail view."""
     model = Repository
     template_name = 'flatpak/repository_detail.html'
     context_object_name = 'repository'
+
+    def get_queryset(self):
+        return scope_queryset_for_user(Repository.objects.all(), self.request.user, 'repositories')
 
 
 class RepositoryCreateView(ResourceActionRequiredMixin, CreateView):
@@ -216,6 +254,7 @@ class RepositoryCreateView(ResourceActionRequiredMixin, CreateView):
     def form_valid(self, form):
         form.instance.created_by = self.request.user
         response = super().form_valid(form)
+        apply_default_organisation(self.object, self.request.user)
         
         # Initialize OSTree repository
         repo = self.object
@@ -601,7 +640,7 @@ class PackageListView(LoginRequiredMixin, ListView):
             qs = qs.filter(status=status)
         if repo:
             qs = qs.filter(repository_id=repo)
-        return qs
+        return scope_queryset_for_user(qs, self.request.user, 'flatpaks')
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -623,6 +662,9 @@ class PackageDetailView(LoginRequiredMixin, DetailView):
     model = Package
     template_name = 'flatpak/package_detail.html'
     context_object_name = 'package'
+
+    def get_queryset(self):
+        return scope_queryset_for_user(Package.objects.all(), self.request.user, 'flatpaks')
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -671,7 +713,7 @@ class PackageBuildsApiView(LoginRequiredMixin, View):
 
     def get(self, request, pk):
         try:
-            package = Package.objects.get(pk=pk)
+            package = scope_queryset_for_user(Package.objects.all(), request.user, 'flatpaks').get(pk=pk)
         except Package.DoesNotExist:
             return JsonResponse({'error': 'Not found'}, status=404)
 
@@ -709,7 +751,9 @@ class PackageCheckUpstreamView(LoginRequiredMixin, View):
             _fetch_latest_upstream_tag, _fetch_upstream_tags_by_scheme,
             _run_version_script, _normalise_version,
         )
-        package = get_object_or_404(Package, pk=pk)
+        package = get_object_or_404(
+            scope_queryset_for_user(Package.objects.all(), request.user, 'flatpaks'), pk=pk
+        )
         if not package.upstream_url and not package.upstream_version_script.strip():
             return JsonResponse({'error': 'No upstream URL or version script configured for this package'}, status=400)
 
@@ -773,7 +817,9 @@ class PackageCheckAvailableView(LoginRequiredMixin, View):
     def post(self, request, pk):
         from django.utils import timezone as tz
         from apps.flatpak.tasks import _fetch_available_version
-        package = get_object_or_404(Package, pk=pk)
+        package = get_object_or_404(
+            scope_queryset_for_user(Package.objects.all(), request.user, 'flatpaks'), pk=pk
+        )
         if not package.git_repo_url:
             return JsonResponse(
                 {'error': 'No git repository URL configured for this package'},
@@ -920,6 +966,14 @@ class BuildListView(LoginRequiredMixin, ListView):
             qs = qs.filter(
                 Q(package__repository_id=repo) | Q(bst_source__repository_id=repo)
             )
+        organisation_ids = self.request.user.permission_organisation_ids('builds', 'read')
+        if organisation_ids is not None:
+            if not organisation_ids:
+                return qs.none()
+            qs = qs.filter(
+                Q(package__organisations__in=organisation_ids)
+                | Q(bst_source__organisations__in=organisation_ids)
+            ).distinct()
         return qs
 
     def get_context_data(self, **kwargs):
@@ -940,9 +994,31 @@ class BuildDetailView(LoginRequiredMixin, DetailView):
     model = Build
     template_name = 'flatpak/build_detail.html'
     context_object_name = 'build'
+
+    def get_queryset(self):
+        from django.db.models import Q
+        qs = Build.objects.all()
+        organisation_ids = self.request.user.permission_organisation_ids('builds', 'read')
+        if organisation_ids is not None:
+            if not organisation_ids:
+                return qs.none()
+            qs = qs.filter(
+                Q(package__organisations__in=organisation_ids)
+                | Q(bst_source__organisations__in=organisation_ids)
+            ).distinct()
+        return qs
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        context['can_commit_flatpaks'] = _has_scoped_permission(
+            self.request.user, 'published_builds', 'commit', 'flatpaks', 'commit'
+        )
+        context['can_publish_flatpaks'] = _has_scoped_permission(
+            self.request.user, 'published_builds', 'publish', 'flatpaks', 'publish'
+        )
+        context['can_promote_builds'] = _has_scoped_permission(
+            self.request.user, 'published_builds', 'promotion', 'builds', 'promote'
+        )
         context['logs'] = self.object.logs.all().order_by('timestamp')
         context['artifacts'] = self.object.artifacts.all()
         context['promotions'] = self.object.promotions.select_related(
@@ -968,7 +1044,15 @@ class BuildPromotionsApiView(LoginRequiredMixin, View):
     """AJAX — returns current promotions and available targets for a build."""
 
     def get(self, request, pk):
-        build = get_object_or_404(Build, pk=pk)
+        from django.db.models import Q
+        build_queryset = Build.objects.all()
+        build_org_ids = request.user.permission_organisation_ids('builds', 'read')
+        if build_org_ids is not None:
+            build_queryset = build_queryset.filter(
+                Q(package__organisations__in=build_org_ids)
+                | Q(bst_source__organisations__in=build_org_ids)
+            ).distinct() if build_org_ids else build_queryset.none()
+        build = get_object_or_404(build_queryset, pk=pk)
         promotions_data = []
         for p in build.promotions.select_related('target_repo', 'promoted_by').all():
             promotions_data.append({
@@ -996,8 +1080,16 @@ class PromoteView(LoginRequiredMixin, View):
     """Create and queue a promotion for a published build."""
 
     def post(self, request, build_pk):
+        if not _has_scoped_permission(request.user, 'published_builds', 'promotion', 'builds', 'promote'):
+            raise PermissionDenied()
         import json as _json
-        build = get_object_or_404(Build, pk=build_pk)
+        build = get_object_or_404(
+            _scope_published_queryset(
+                Build.objects.filter(package__isnull=False), request.user,
+                'promotion', 'builds', 'promote', relation='package__organisations',
+            ),
+            pk=build_pk,
+        )
         if build.status != 'published':
             return JsonResponse({'error': 'Build must be published before promoting'}, status=400)
         try:
@@ -1031,8 +1123,16 @@ class PromotionRetryView(LoginRequiredMixin, View):
     """Re-queue a pending or failed promotion."""
 
     def post(self, request, pk):
+        if not _has_scoped_permission(request.user, 'published_builds', 'promotion', 'builds', 'promote'):
+            raise PermissionDenied()
         from apps.flatpak.tasks import promote_build_task
-        promotion = get_object_or_404(Promotion, pk=pk)
+        promotion = get_object_or_404(
+            _scope_published_queryset(
+                Promotion.objects.all(), request.user, 'promotion',
+                'builds', 'promote', relation='package__organisations',
+            ),
+            pk=pk,
+        )
         if promotion.status not in ('pending', 'failed'):
             return JsonResponse(
                 {'error': f'Promotion is {promotion.status}, only pending/failed can be retried'},
@@ -1049,9 +1149,17 @@ class BstPromoteView(LoginRequiredMixin, View):
     """Create and queue a BST promotion for a published BST build."""
 
     def post(self, request, build_pk):
+        if not _has_scoped_permission(request.user, 'published_builds', 'promotion', 'buildstreams', 'promote'):
+            raise PermissionDenied()
         import json as _json
         from apps.flatpak.models import BstPromotion
-        build = get_object_or_404(Build, pk=build_pk)
+        build = get_object_or_404(
+            _scope_published_queryset(
+                Build.objects.filter(bst_source__isnull=False), request.user,
+                'promotion', 'buildstreams', 'promote', relation='bst_source__organisations',
+            ),
+            pk=build_pk,
+        )
         if not build.bst_source_id:
             return JsonResponse({'error': 'Not a BST build'}, status=400)
         if build.status != 'published':
@@ -1087,10 +1195,15 @@ class ExternalRefPromoteView(LoginRequiredMixin, View):
     """Promote a published ExternalRef to a child repository."""
 
     def post(self, request, pk):
+        if not _has_scoped_permission(request.user, 'published_builds', 'promotion', 'externals', 'promote'):
+            raise PermissionDenied()
         import json
         from apps.flatpak.tasks import promote_external_ref_task
 
-        ext = get_object_or_404(ExternalRef, pk=pk)
+        ext = get_object_or_404(
+            _scope_published_queryset(ExternalRef.objects.all(), request.user, 'promotion', 'externals', 'promote'),
+            pk=pk,
+        )
         if ext.status != 'published':
             return JsonResponse({'error': f'External ref must be published first (current: {ext.status})'}, status=400)
 
@@ -1140,9 +1253,17 @@ class ExternalRefPromoteView(LoginRequiredMixin, View):
 
 class ExternalRefPromotionRetryView(LoginRequiredMixin, View):
     def post(self, request, pk):
+        if not _has_scoped_permission(request.user, 'published_builds', 'promotion', 'externals', 'promote'):
+            raise PermissionDenied()
         from apps.flatpak.tasks import promote_external_ref_task
 
-        promo = get_object_or_404(ExternalRefPromotion, pk=pk)
+        promo = get_object_or_404(
+            _scope_published_queryset(
+                ExternalRefPromotion.objects.all(), request.user, 'promotion',
+                'externals', 'promote', relation='external_ref__organisations',
+            ),
+            pk=pk,
+        )
         promo.status = 'pending'
         promo.error_message = ''
         promo.completed_at = None
@@ -1153,9 +1274,17 @@ class ExternalRefPromotionRetryView(LoginRequiredMixin, View):
 
 class ExternalRefPromotionDeleteView(LoginRequiredMixin, View):
     def post(self, request, pk):
+        if not _has_scoped_permission(request.user, 'published_builds', 'promotion', 'externals', 'promote'):
+            raise PermissionDenied()
         from apps.flatpak.utils.ostree import update_repo_metadata
 
-        promo = get_object_or_404(ExternalRefPromotion.objects.select_related('external_ref', 'target_repo'), pk=pk)
+        promo = get_object_or_404(
+            _scope_published_queryset(
+                ExternalRefPromotion.objects.select_related('external_ref', 'target_repo'),
+                request.user, 'promotion', 'externals', 'promote', relation='external_ref__organisations',
+            ),
+            pk=pk,
+        )
         target_repo = promo.target_repo
         repo_path = target_repo.repo_path
         ref_name = promo.external_ref.ref
@@ -1179,9 +1308,17 @@ class BstPromotionRetryView(LoginRequiredMixin, View):
     """Re-queue a pending or failed BST promotion."""
 
     def post(self, request, pk):
+        if not _has_scoped_permission(request.user, 'published_builds', 'promotion', 'buildstreams', 'promote'):
+            raise PermissionDenied()
         from apps.flatpak.models import BstPromotion
         from apps.flatpak.tasks import promote_bst_task
-        promo = get_object_or_404(BstPromotion, pk=pk)
+        promo = get_object_or_404(
+            _scope_published_queryset(
+                BstPromotion.objects.all(), request.user, 'promotion',
+                'buildstreams', 'promote', relation='bst_source__organisations',
+            ),
+            pk=pk,
+        )
         if promo.status not in ('pending', 'failed'):
             return JsonResponse(
                 {'error': f'Promotion is {promo.status}, only pending/failed can be retried'},
@@ -1198,8 +1335,16 @@ class BstPromotionDeleteView(LoginRequiredMixin, View):
     """Delete a BST promotion record."""
 
     def post(self, request, pk):
+        if not _has_scoped_permission(request.user, 'published_builds', 'promotion', 'buildstreams', 'promote'):
+            raise PermissionDenied()
         from apps.flatpak.models import BstPromotion
-        promo = get_object_or_404(BstPromotion, pk=pk)
+        promo = get_object_or_404(
+            _scope_published_queryset(
+                BstPromotion.objects.all(), request.user, 'promotion',
+                'buildstreams', 'promote', relation='bst_source__organisations',
+            ),
+            pk=pk,
+        )
         promo.delete()
         return JsonResponse({'status': 'ok'})
 
@@ -1297,7 +1442,15 @@ class PromotionDeleteView(LoginRequiredMixin, View):
     """Delete a promotion (and all descendant-repo promotions) and remove OSTree refs."""
 
     def post(self, request, pk):
-        promotion = get_object_or_404(Promotion, pk=pk)
+        if not _has_scoped_permission(request.user, 'published_builds', 'promotion', 'builds', 'promote'):
+            raise PermissionDenied()
+        promotion = get_object_or_404(
+            _scope_published_queryset(
+                Promotion.objects.all(), request.user, 'promotion',
+                'builds', 'promote', relation='package__organisations',
+            ),
+            pk=pk,
+        )
         # Collect child promotions before we delete the parent (to avoid losing the ref chain)
         children = _collect_child_promotions(promotion.build, promotion.target_repo)
         try:
@@ -1318,7 +1471,15 @@ class BuildUnpublishView(LoginRequiredMixin, View):
     """Remove a published build from build-repo and set its status back to committed."""
 
     def post(self, request, pk):
-        build = get_object_or_404(Build, pk=pk)
+        if not _has_scoped_permission(request.user, 'published_builds', 'publish', 'flatpaks', 'publish'):
+            raise PermissionDenied()
+        build = get_object_or_404(
+            _scope_published_queryset(
+                Build.objects.filter(package__isnull=False), request.user, 'publish',
+                'flatpaks', 'publish', relation='package__organisations',
+            ),
+            pk=pk,
+        )
         if build.status != 'published':
             return JsonResponse({'error': 'Build is not published'}, status=400)
 
@@ -1558,16 +1719,42 @@ class PromotionListView(LoginRequiredMixin, ListView):
             qs = qs.filter(status=status)
         if repo:
             qs = qs.filter(target_repo_id=repo)
+        organisation_ids = self.request.user.permission_organisation_ids('builds', 'read')
+        if organisation_ids is not None:
+            if not organisation_ids:
+                return qs.none()
+            qs = qs.filter(package__organisations__in=organisation_ids).distinct()
         return qs
 
     def get_context_data(self, **kwargs):
         from django.db.models import Q
         context = super().get_context_data(**kwargs)
+        context['can_commit_flatpaks'] = _has_scoped_permission(
+            self.request.user, 'published_builds', 'commit', 'flatpaks', 'commit'
+        )
+        context['can_publish_flatpaks'] = _has_scoped_permission(
+            self.request.user, 'published_builds', 'publish', 'flatpaks', 'publish'
+        )
+        context['can_promote_builds'] = _has_scoped_permission(
+            self.request.user, 'published_builds', 'promotion', 'builds', 'promote'
+        )
+        context['can_promote_buildstreams'] = _has_scoped_permission(
+            self.request.user, 'published_builds', 'promotion', 'buildstreams', 'promote'
+        )
+        context['can_publish_externals'] = _has_scoped_permission(
+            self.request.user, 'published_builds', 'externals', 'externals', 'publish'
+        )
+        context['can_promote_externals'] = _has_scoped_permission(
+            self.request.user, 'published_builds', 'promotion', 'externals', 'promote'
+        )
         pub_qs = (
             Build.objects.filter(status='published', package__isnull=False)
             .select_related('package', 'package__repository', 'package__created_by')
             .order_by('-completed_at')
         )
+        organisation_ids = self.request.user.permission_organisation_ids('builds', 'read')
+        if organisation_ids is not None:
+            pub_qs = pub_qs.filter(package__organisations__in=organisation_ids).distinct()
         q = self.request.GET.get('q', '').strip()
         pub_repo = self.request.GET.get('pub_repo', '').strip()
         if q:
@@ -1597,6 +1784,12 @@ class PromotionListView(LoginRequiredMixin, ListView):
             )
             .order_by('-updated_at')
         )
+        external_org_ids = self.request.user.permission_organisation_ids('externals', 'read')
+        if external_org_ids is not None:
+            _source_externals = [
+                ext for ext in _source_externals
+                if ext.organisations.filter(pk__in=external_org_ids).exists()
+            ]
         # Build placement rows for the Published Externals table.
         # Row shape: {external_ref, external_ref_version, repository, remote,
         #             placement_kind ('source'|'promoted'), placed_at, promotion}.
@@ -1637,14 +1830,22 @@ class PromotionListView(LoginRequiredMixin, ListView):
         # Use Package.status (canonical truth) so we always see the current
         # state of each package, not stale Build rows from previous attempts.
         context['ready_to_commit'] = (
-            Package.objects
+            scope_queryset_for_user(
+                Package.objects,
+                self.request.user,
+                'flatpaks',
+            )
             .filter(status='built')
             .select_related('repository')
             .prefetch_related('builds')
             .order_by('package_name')
         )
         context['ready_to_publish'] = (
-            Package.objects
+            scope_queryset_for_user(
+                Package.objects,
+                self.request.user,
+                'flatpaks',
+            )
             .filter(status='committed')
             .select_related('repository')
             .prefetch_related('builds')
@@ -1661,6 +1862,11 @@ class PromotionListView(LoginRequiredMixin, ListView):
             .prefetch_related('promotions', 'promotions__target_repo')
             .order_by('package__package_name', '-build_number')
         )
+        build_org_ids = self.request.user.permission_organisation_ids('builds', 'read')
+        if build_org_ids is not None:
+            promote_builds = promote_builds.filter(
+                package__organisations__in=build_org_ids
+            ).distinct() if build_org_ids else promote_builds.none()
         seen_packages = set()
         for build in promote_builds:
             # Only show the latest published build per package
@@ -1746,6 +1952,11 @@ class PromotionListView(LoginRequiredMixin, ListView):
             .prefetch_related('bst_promotions', 'bst_promotions__target_repo')
             .order_by('bst_source__name', '-build_number')
         )
+        buildstream_org_ids = self.request.user.permission_organisation_ids('buildstreams', 'read')
+        if buildstream_org_ids is not None:
+            bst_published = bst_published.filter(
+                bst_source__organisations__in=buildstream_org_ids
+            ).distinct() if buildstream_org_ids else bst_published.none()
         seen_bst = set()
         for build in bst_published:
             if build.bst_source_id in seen_bst:
@@ -1793,6 +2004,7 @@ class PackageCreateView(ResourceActionRequiredMixin, CreateView):
     def form_valid(self, form):
         form.instance.created_by = self.request.user
         response = super().form_valid(form)
+        apply_default_organisation(self.object, self.request.user)
 
         if form.instance.git_repo_url:
             messages.success(
@@ -2007,7 +2219,10 @@ class PackageRetryView(LoginRequiredMixin, View):
         if not request.user.has_permission('flatpaks', 'build'):
             raise PermissionDenied()
         from django.http import JsonResponse
-        package = get_object_or_404(Package, pk=pk)
+        package = get_object_or_404(
+            scope_queryset_for_user(Package.objects.all(), request.user, 'flatpaks', 'build'),
+            pk=pk,
+        )
         
         # Only allow retry for failed or cancelled packages
         if package.status not in ['failed', 'cancelled', 'built', 'committed', 'published']:
@@ -2033,12 +2248,15 @@ class PackageCommitView(LoginRequiredMixin, View):
     """Commit a built flatpak."""
 
     def post(self, request, pk):
-        if not request.user.has_permission('flatpaks', 'build'):
+        if not _has_scoped_permission(request.user, 'published_builds', 'commit', 'flatpaks', 'commit'):
             raise PermissionDenied()
         from apps.flatpak.tasks import commit_package_task
         from django.http import JsonResponse
         
-        package = get_object_or_404(Package, pk=pk)
+        package = get_object_or_404(
+            _scope_published_queryset(Package.objects.all(), request.user, 'commit', 'flatpaks', 'commit'),
+            pk=pk,
+        )
         
         # Only allow commit for built packages
         if package.status not in ['pending', 'building', 'built']:
@@ -2060,7 +2278,9 @@ class PackageStatusView(LoginRequiredMixin, View):
     """Return the current status of a package as JSON (used for polling)."""
 
     def get(self, request, pk):
-        package = get_object_or_404(Package, pk=pk)
+        package = get_object_or_404(
+            scope_queryset_for_user(Package.objects.all(), request.user, 'flatpaks'), pk=pk
+        )
         return JsonResponse({'status': package.status})
 
 
@@ -2068,12 +2288,15 @@ class PackagePublishView(LoginRequiredMixin, View):
     """Publish a committed build to the repository."""
 
     def post(self, request, pk):
-        if not request.user.has_permission('flatpaks', 'publish'):
+        if not _has_scoped_permission(request.user, 'published_builds', 'publish', 'flatpaks', 'publish'):
             raise PermissionDenied()
         from apps.flatpak.tasks import publish_package_task
         from django.http import JsonResponse
         
-        package = get_object_or_404(Package, pk=pk)
+        package = get_object_or_404(
+            _scope_published_queryset(Package.objects.all(), request.user, 'publish', 'flatpaks', 'publish'),
+            pk=pk,
+        )
         
         # Only allow publish for committed packages.
         # If package.status is 'failed' but the latest build committed successfully
@@ -2107,11 +2330,14 @@ class PackageRepublishView(LoginRequiredMixin, View):
     """
 
     def post(self, request, pk):
-        if not request.user.has_permission('flatpaks', 'publish'):
+        if not _has_scoped_permission(request.user, 'published_builds', 'publish', 'flatpaks', 'publish'):
             raise PermissionDenied()
         from apps.flatpak.tasks import publish_package_task
 
-        package = get_object_or_404(Package, pk=pk)
+        package = get_object_or_404(
+            _scope_published_queryset(Package.objects.all(), request.user, 'publish', 'flatpaks', 'publish'),
+            pk=pk,
+        )
 
         # Only allow re-publish when the failure happened at publish/commit stage.
         # The build itself must have succeeded (produced_refs populated).
@@ -2848,7 +3074,7 @@ class ExternalRefListView(LoginRequiredMixin, ListView):
             qs = qs.filter(repository_id=repo)
         if self.request.GET.get('update_available') == '1':
             qs = qs.filter(update_available=True)
-        return qs
+        return scope_queryset_for_user(qs, self.request.user, 'externals')
 
     def get_context_data(self, **kwargs):
         from .models import ExternalRef
@@ -3060,7 +3286,11 @@ class ExternalRefDetailView(LoginRequiredMixin, DetailView):
 
     def get_queryset(self):
         from .models import ExternalRef
-        return ExternalRef.objects.select_related('repository', 'remote', 'created_by')
+        return scope_queryset_for_user(
+            ExternalRef.objects.select_related('repository', 'remote', 'created_by'),
+            self.request.user,
+            'externals',
+        )
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -3149,6 +3379,7 @@ class ExternalRefCreateView(ResourceActionRequiredMixin, CreateView):
         elif len(parts) >= 2:
             form.instance.display_name = parts[1]
         response = super().form_valid(form)
+        apply_default_organisation(self.object, self.request.user)
         # Immediately queue the pull task so "Save & Pull" actually pulls
         from apps.flatpak.tasks import pull_external_ref_task
         pull_external_ref_task.delay(self.object.pk)
@@ -3228,12 +3459,17 @@ class ExternalRefPublishView(LoginRequiredMixin, View):
     """Re-publish an already-pulled ExternalRef (e.g. to a different repository after editing)."""
 
     def post(self, request, pk):
-        if not request.user.has_permission('externals', 'publish'):
+        if not _has_scoped_permission(request.user, 'published_builds', 'externals', 'externals', 'publish'):
             raise PermissionDenied()
         from .models import ExternalRef
         from apps.flatpak.tasks import publish_external_ref_task
 
-        ext = get_object_or_404(ExternalRef, pk=pk)
+        ext = get_object_or_404(
+            _scope_published_queryset(
+                ExternalRef.objects.all(), request.user, 'externals', 'externals', 'publish'
+            ),
+            pk=pk,
+        )
         if ext.status != 'pulled':
             return JsonResponse({'error': f'Ref must be in pulled state (current: {ext.status})'}, status=400)
 
@@ -3245,11 +3481,17 @@ class ExternalRefUnpublishView(LoginRequiredMixin, View):
     """Remove a published ExternalRefVersion from its source repository."""
 
     def post(self, request, pk):
-        if not request.user.has_permission('externals', 'publish'):
+        if not _has_scoped_permission(request.user, 'published_builds', 'externals', 'externals', 'publish'):
             raise PermissionDenied()
         import json
 
-        ext = get_object_or_404(ExternalRef.objects.select_related('repository'), pk=pk)
+        ext = get_object_or_404(
+            _scope_published_queryset(
+                ExternalRef.objects.select_related('repository'), request.user,
+                'externals', 'externals', 'publish'
+            ),
+            pk=pk,
+        )
 
         try:
             data = json.loads(request.body or '{}')
@@ -3379,7 +3621,11 @@ class ClientListView(LoginRequiredMixin, ListView):
         from datetime import timedelta
         stale_hours = SiteConfig.get_solo().client_stale_hours
         threshold = timezone.now() - timedelta(hours=stale_hours)
-        qs = list(Client.objects.prefetch_related('organisations').all())
+        qs = list(scope_queryset_for_user(
+            Client.objects.prefetch_related('organisations').all(),
+            self.request.user,
+            'clients',
+        ))
         self._annotate_status(qs, threshold)
         # Pre-serialize JSON so the template emits valid JSON strings.
         # Django's template renders Python lists/dicts with repr() (single
@@ -3411,7 +3657,10 @@ class ClientDetailView(LoginRequiredMixin, DetailView):
 
     def get_object(self):
         from .models import Client
-        return get_object_or_404(Client.objects.prefetch_related('organisations'), pk=self.kwargs['pk'])
+        queryset = scope_queryset_for_user(
+            Client.objects.prefetch_related('organisations'), self.request.user, 'clients'
+        )
+        return get_object_or_404(queryset, pk=self.kwargs['pk'])
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -3845,6 +4094,9 @@ class BuildStreamSourceListView(LoginRequiredMixin, ListView):
     context_object_name = 'sources'
     ordering = ['-created_at']
 
+    def get_queryset(self):
+        return scope_queryset_for_user(BuildStreamSource.objects.all(), self.request.user, 'buildstreams')
+
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx['all_organisations'] = Organisation.objects.all()
@@ -3917,6 +4169,7 @@ class BuildStreamSourceCreateView(ResourceActionRequiredMixin, CreateView):
     def form_valid(self, form):
         form.instance.created_by = self.request.user
         response = super().form_valid(form)
+        apply_default_organisation(self.object, self.request.user)
         messages.success(
             self.request,
             f'BuildStream source \u201c{form.instance.name}\u201d created. '
@@ -3938,6 +4191,9 @@ class BuildStreamSourceDetailView(LoginRequiredMixin, DetailView):
     model = BuildStreamSource
     template_name = 'flatpak/buildstreamsource_detail.html'
     context_object_name = 'source'
+
+    def get_queryset(self):
+        return scope_queryset_for_user(BuildStreamSource.objects.all(), self.request.user, 'buildstreams')
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)

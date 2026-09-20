@@ -9,7 +9,7 @@ from django.conf import settings
 from django.contrib.auth.mixins import LoginRequiredMixin
 from apps.users.mixins import (
     AdminRequiredMixin, RepoAdminRequiredMixin,
-    BuildAdminRequiredMixin,
+    BuildAdminRequiredMixin, scope_queryset_for_user, apply_default_organisation,
 )
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView
 from django.views import View
@@ -117,12 +117,13 @@ class RpmPackageListView(LoginRequiredMixin, ListView):
 
     def get_queryset(self):
         from django.db.models import Count
-        return (
+        qs = (
             RpmPackage.objects
             .prefetch_related('distributions')
             .annotate(dest_count=Count('distribution_destinations', distinct=True))
             .order_by('-created_at')
         )
+        return scope_queryset_for_user(qs, self.request.user, 'rpms')
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -135,6 +136,9 @@ class RpmPackageDetailView(LoginRequiredMixin, DetailView):
     model = RpmPackage
     template_name = 'rpm/package_detail.html'
     context_object_name = 'package'
+
+    def get_queryset(self):
+        return scope_queryset_for_user(RpmPackage.objects.all(), self.request.user, 'rpms')
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -178,6 +182,7 @@ class RpmPackageCreateView(BuildAdminRequiredMixin, CreateView):
     def form_valid(self, form):
         form.instance.created_by = self.request.user
         response = super().form_valid(form)
+        apply_default_organisation(self.object, self.request.user)
         from apps.rpm.models import RpmRepository
 
         selected_distributions = form.cleaned_data.get('distributions')

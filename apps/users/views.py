@@ -1,6 +1,6 @@
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.mixins import LoginRequiredMixin
-from .mixins import AdminRequiredMixin
+from .mixins import AdminRequiredMixin, scope_queryset_for_user
 from django.http import JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views import View
@@ -64,27 +64,39 @@ class DashboardView(LoginRequiredMixin, View):
         from django.utils import timezone
         from datetime import timedelta
 
-        repo_count = Repository.objects.filter(is_active=True).count()
-        package_count = Package.objects.count()
+        repositories = scope_queryset_for_user(Repository.objects.all(), request.user, 'repositories')
+        packages = scope_queryset_for_user(Package.objects.all(), request.user, 'flatpaks')
+        externals = scope_queryset_for_user(ExternalRef.objects.all(), request.user, 'externals')
+        clients = scope_queryset_for_user(Client.objects.all(), request.user, 'clients')
+        build_org_ids = request.user.permission_organisation_ids('builds', 'read')
+        builds = Build.objects.all()
+        if build_org_ids is not None:
+            builds = builds.filter(
+                models.Q(package__organisations__in=build_org_ids)
+                | models.Q(bst_source__organisations__in=build_org_ids)
+            ).distinct() if build_org_ids else builds.none()
 
-        packages_building  = Package.objects.filter(status__in=['building', 'committing', 'committed', 'publishing']).count()
-        packages_built     = Package.objects.filter(status='built').count()
-        packages_failed    = Package.objects.filter(status__in=['failed', 'cancelled']).count()
-        packages_published = Package.objects.filter(status='published').count()
-        packages_outdated  = Package.objects.filter(
+        repo_count = repositories.filter(is_active=True).count()
+        package_count = packages.count()
+
+        packages_building  = packages.filter(status__in=['building', 'committing', 'committed', 'publishing']).count()
+        packages_built     = packages.filter(status='built').count()
+        packages_failed    = packages.filter(status__in=['failed', 'cancelled']).count()
+        packages_published = packages.filter(status='published').count()
+        packages_outdated  = packages.filter(
             upstream_version__isnull=False
         ).exclude(upstream_version='').exclude(upstream_version=F('version')).count()
-        packages_deps_outdated = Package.objects.filter(deps_need_rebuild=True).count()
+        packages_deps_outdated = packages.filter(deps_need_rebuild=True).count()
 
-        external_count      = ExternalRef.objects.count()
-        externals_importing = ExternalRef.objects.filter(status__in=['pulling', 'publishing']).count()
-        externals_imported  = ExternalRef.objects.filter(status__in=['pulled', 'published']).count()
-        externals_failed    = ExternalRef.objects.filter(status='failed').count()
-        externals_outdated  = ExternalRef.objects.filter(update_available=True).count()
-        externals_published = ExternalRef.objects.filter(status='published').count()
+        external_count      = externals.count()
+        externals_importing = externals.filter(status__in=['pulling', 'publishing']).count()
+        externals_imported  = externals.filter(status__in=['pulled', 'published']).count()
+        externals_failed    = externals.filter(status='failed').count()
+        externals_outdated  = externals.filter(update_available=True).count()
+        externals_published = externals.filter(status='published').count()
 
         recent_builds = (
-            Build.objects
+            builds
             .select_related('package', 'package__repository', 'bst_source', 'bst_source__repository')
             .order_by('-started_at')[:10]
         )
@@ -92,13 +104,13 @@ class DashboardView(LoginRequiredMixin, View):
         # Client stats
         stale_hours = SiteConfig.get_solo().client_stale_hours
         stale_threshold = timezone.now() - timedelta(hours=stale_hours)
-        clients_online   = Client.objects.filter(last_checkin__gte=stale_threshold).count()
-        clients_offline  = Client.objects.filter(
+        clients_online   = clients.filter(last_checkin__gte=stale_threshold).count()
+        clients_offline  = clients.filter(
             models.Q(last_checkin__lt=stale_threshold) | models.Q(last_checkin__isnull=True)
         ).count()
-        clients_uptodate = Client.objects.filter(outdated_count=0).count()
-        clients_outdated = Client.objects.filter(outdated_count__gt=0).count()
-        clients_foreign  = Client.objects.filter(foreign_count__gt=0).count()
+        clients_uptodate = clients.filter(outdated_count=0).count()
+        clients_outdated = clients.filter(outdated_count__gt=0).count()
+        clients_foreign  = clients.filter(foreign_count__gt=0).count()
 
         context = {
             'user': request.user,
@@ -135,33 +147,38 @@ class DashboardStatsApiView(LoginRequiredMixin, View):
         from django.utils import timezone
         from datetime import timedelta
 
+        repositories = scope_queryset_for_user(Repository.objects.all(), request.user, 'repositories')
+        packages = scope_queryset_for_user(Package.objects.all(), request.user, 'flatpaks')
+        externals = scope_queryset_for_user(ExternalRef.objects.all(), request.user, 'externals')
+        clients = scope_queryset_for_user(Client.objects.all(), request.user, 'clients')
+
         stale_hours = SiteConfig.get_solo().client_stale_hours
         stale_threshold = timezone.now() - timedelta(hours=stale_hours)
 
         return JsonResponse({
-            'repo_count':             Repository.objects.filter(is_active=True).count(),
-            'package_count':          Package.objects.count(),
-            'packages_building':      Package.objects.filter(status__in=['building', 'committing', 'committed', 'publishing']).count(),
-            'packages_built':         Package.objects.filter(status='built').count(),
-            'packages_failed':        Package.objects.filter(status__in=['failed', 'cancelled']).count(),
-            'packages_published':     Package.objects.filter(status='published').count(),
-            'packages_outdated':      Package.objects.filter(
+            'repo_count':             repositories.filter(is_active=True).count(),
+            'package_count':          packages.count(),
+            'packages_building':      packages.filter(status__in=['building', 'committing', 'committed', 'publishing']).count(),
+            'packages_built':         packages.filter(status='built').count(),
+            'packages_failed':        packages.filter(status__in=['failed', 'cancelled']).count(),
+            'packages_published':     packages.filter(status='published').count(),
+            'packages_outdated':      packages.filter(
                 upstream_version__isnull=False
             ).exclude(upstream_version='').exclude(upstream_version=F('version')).count(),
-            'packages_deps_outdated': Package.objects.filter(deps_need_rebuild=True).count(),
-            'external_count':         ExternalRef.objects.count(),
-            'externals_importing':    ExternalRef.objects.filter(status__in=['pulling', 'publishing']).count(),
-            'externals_imported':     ExternalRef.objects.filter(status__in=['pulled', 'published']).count(),
-            'externals_failed':       ExternalRef.objects.filter(status='failed').count(),
-            'externals_outdated':     ExternalRef.objects.filter(update_available=True).count(),
-            'externals_published':    ExternalRef.objects.filter(status='published').count(),
-            'clients_online':         Client.objects.filter(last_checkin__gte=stale_threshold).count(),
-            'clients_offline':        Client.objects.filter(
+            'packages_deps_outdated': packages.filter(deps_need_rebuild=True).count(),
+            'external_count':         externals.count(),
+            'externals_importing':    externals.filter(status__in=['pulling', 'publishing']).count(),
+            'externals_imported':     externals.filter(status__in=['pulled', 'published']).count(),
+            'externals_failed':       externals.filter(status='failed').count(),
+            'externals_outdated':     externals.filter(update_available=True).count(),
+            'externals_published':    externals.filter(status='published').count(),
+            'clients_online':         clients.filter(last_checkin__gte=stale_threshold).count(),
+            'clients_offline':        clients.filter(
                 models.Q(last_checkin__lt=stale_threshold) | models.Q(last_checkin__isnull=True)
             ).count(),
-            'clients_uptodate':       Client.objects.filter(outdated_count=0).count(),
-            'clients_outdated':       Client.objects.filter(outdated_count__gt=0).count(),
-            'clients_foreign':        Client.objects.filter(foreign_count__gt=0).count(),
+            'clients_uptodate':       clients.filter(outdated_count=0).count(),
+            'clients_outdated':       clients.filter(outdated_count__gt=0).count(),
+            'clients_foreign':        clients.filter(foreign_count__gt=0).count(),
         })
 
 

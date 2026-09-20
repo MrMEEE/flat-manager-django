@@ -43,11 +43,11 @@
         {% endif %}
     </h2>
     <div class="d-flex gap-2" id="action-buttons">
-        {% if build.status == 'built' %}
+        {% if build.status == 'built' and can_commit_flatpaks %}
         <button type="button" class="btn btn-outline-primary" id="btn-commit" onclick="commitBuild()">
             <i class="bi bi-check-circle"></i> Commit
         </button>
-        {% elif build.status == 'committed' %}
+        {% elif build.status == 'committed' and can_publish_flatpaks %}
         <button type="button" class="btn btn-outline-success" id="btn-publish" onclick="publishBuild()">
             <i class="bi bi-cloud-upload"></i> Publish
         </button>
@@ -563,6 +563,7 @@
     // ========== Promotions ==========
     const buildPk = {{ build.pk }};
     let promotionPollInterval = null;
+    const canPromoteBuilds = {{ can_promote_builds|yesno:"true,false" }};
 
     async function refreshPromotions() {
         try {
@@ -596,16 +597,14 @@
                     <td>${badge}${err}</td>
                     <td>${p.promoted_by || '-'}</td>
                     <td>${p.completed_at || p.created_at}</td>
-                    <td class="text-end">
-                        <button class="btn btn-sm btn-outline-danger" onclick="deletePromotion(${p.id}, '${p.target_repo_name}')">
-                            <i class="bi bi-trash3"></i>
-                        </button>
-                    </td>
+                    <td class="text-end">${canPromoteBuilds ? `<button class="btn btn-sm btn-outline-danger" onclick="deletePromotion(${p.id}, '${p.target_repo_name}')">
+                        <i class="bi bi-trash3"></i>
+                    </button>` : ''}</td>
                 </tr>`;
             }
             html += '</tbody></table>';
         }
-        if (data.available.length > 0) {
+        if (canPromoteBuilds && data.available.length > 0) {
             if (data.promotions.length > 0) html += '<hr class="my-3">';
             html += '<div class="d-flex gap-2 flex-wrap">';
             for (const r of data.available) {
@@ -615,7 +614,7 @@
             }
             html += '</div>';
         }
-        if (data.promotions.length === 0 && data.available.length === 0) {
+        if (data.promotions.length === 0 && (!canPromoteBuilds || data.available.length === 0)) {
             html = '<p class="text-muted mb-0">No promotions yet and no available targets.</p>';
         }
         container.innerHTML = html;

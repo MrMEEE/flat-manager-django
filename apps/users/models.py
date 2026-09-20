@@ -33,6 +33,7 @@ RESOURCE_RPMS = 'rpms'
 RESOURCE_BUILDS = 'builds'
 RESOURCE_BUILDSTREAMS = 'buildstreams'
 RESOURCE_EXTERNALS = 'externals'
+RESOURCE_PUBLISHED_BUILDS = 'published_builds'
 RESOURCE_DEPENDENCIES = 'dependencies'
 RESOURCE_CLIENTS = 'clients'
 RESOURCE_USERS = 'users'
@@ -47,6 +48,7 @@ RESOURCE_CHOICES = [
     (RESOURCE_BUILDS, 'Builds'),
     (RESOURCE_BUILDSTREAMS, 'Build Streams'),
     (RESOURCE_EXTERNALS, 'Externals'),
+    (RESOURCE_PUBLISHED_BUILDS, 'Published Builds'),
     (RESOURCE_DEPENDENCIES, 'Dependencies'),
     (RESOURCE_CLIENTS, 'Clients'),
     (RESOURCE_USERS, 'Users'),
@@ -59,6 +61,10 @@ ACTION_CREATE = 'create'
 ACTION_UPDATE = 'update'
 ACTION_DELETE = 'delete'
 ACTION_BUILD = 'build'
+ACTION_COMMIT = 'commit'
+ACTION_PROMOTE = 'promote'
+ACTION_EXTERNALS = 'externals'
+ACTION_PROMOTION = 'promotion'
 ACTION_PUBLISH = 'publish'
 ACTION_SYNC = 'sync'
 ACTION_MANAGE_USERS = 'manage_users'
@@ -71,6 +77,10 @@ ACTION_CHOICES = [
     (ACTION_UPDATE, 'Update'),
     (ACTION_DELETE, 'Delete'),
     (ACTION_BUILD, 'Build'),
+    (ACTION_COMMIT, 'Commit'),
+    (ACTION_PROMOTE, 'Promote'),
+    (ACTION_EXTERNALS, 'Externals'),
+    (ACTION_PROMOTION, 'Promotion'),
     (ACTION_PUBLISH, 'Publish'),
     (ACTION_SYNC, 'Sync'),
     (ACTION_MANAGE_USERS, 'Manage Users'),
@@ -81,11 +91,12 @@ ACTION_CHOICES = [
 RESOURCE_ACTIONS = {
     RESOURCE_REPOSITORIES: [(ACTION_READ, 'Read'), (ACTION_CREATE, 'Create'), (ACTION_UPDATE, 'Update'), (ACTION_DELETE, 'Delete'), (ACTION_SYNC, 'Sync'), (ACTION_ALL, 'All')],
     RESOURCE_GPG_KEYS: [(ACTION_READ, 'Read'), (ACTION_CREATE, 'Create'), (ACTION_UPDATE, 'Update'), (ACTION_DELETE, 'Delete'), (ACTION_ALL, 'All')],
-    RESOURCE_FLATPAKS: [(ACTION_READ, 'Read'), (ACTION_CREATE, 'Create'), (ACTION_UPDATE, 'Update'), (ACTION_DELETE, 'Delete'), (ACTION_PUBLISH, 'Publish'), (ACTION_ALL, 'All')],
+    RESOURCE_FLATPAKS: [(ACTION_READ, 'Read'), (ACTION_CREATE, 'Create'), (ACTION_UPDATE, 'Update'), (ACTION_DELETE, 'Delete'), (ACTION_COMMIT, 'Commit'), (ACTION_PUBLISH, 'Publish'), (ACTION_ALL, 'All')],
     RESOURCE_RPMS: [(ACTION_READ, 'Read'), (ACTION_CREATE, 'Create'), (ACTION_UPDATE, 'Update'), (ACTION_DELETE, 'Delete'), (ACTION_BUILD, 'Build'), (ACTION_ALL, 'All')],
-    RESOURCE_BUILDS: [(ACTION_READ, 'Read'), (ACTION_BUILD, 'Build'), (ACTION_PUBLISH, 'Publish'), (ACTION_ALL, 'All')],
-    RESOURCE_BUILDSTREAMS: [(ACTION_READ, 'Read'), (ACTION_CREATE, 'Create'), (ACTION_UPDATE, 'Update'), (ACTION_DELETE, 'Delete'), (ACTION_BUILD, 'Build'), (ACTION_PUBLISH, 'Publish'), (ACTION_ALL, 'All')],
-    RESOURCE_EXTERNALS: [(ACTION_READ, 'Read'), (ACTION_CREATE, 'Create'), (ACTION_UPDATE, 'Update'), (ACTION_DELETE, 'Delete'), (ACTION_PUBLISH, 'Publish'), (ACTION_SYNC, 'Sync'), (ACTION_ALL, 'All')],
+    RESOURCE_BUILDS: [(ACTION_READ, 'Read'), (ACTION_BUILD, 'Build'), (ACTION_PROMOTE, 'Promote'), (ACTION_PUBLISH, 'Publish'), (ACTION_ALL, 'All')],
+    RESOURCE_BUILDSTREAMS: [(ACTION_READ, 'Read'), (ACTION_CREATE, 'Create'), (ACTION_UPDATE, 'Update'), (ACTION_DELETE, 'Delete'), (ACTION_BUILD, 'Build'), (ACTION_PROMOTE, 'Promote'), (ACTION_PUBLISH, 'Publish'), (ACTION_ALL, 'All')],
+    RESOURCE_EXTERNALS: [(ACTION_READ, 'Read'), (ACTION_CREATE, 'Create'), (ACTION_UPDATE, 'Update'), (ACTION_DELETE, 'Delete'), (ACTION_PROMOTE, 'Promote'), (ACTION_PUBLISH, 'Publish'), (ACTION_SYNC, 'Sync'), (ACTION_ALL, 'All')],
+    RESOURCE_PUBLISHED_BUILDS: [(ACTION_COMMIT, 'Commit'), (ACTION_EXTERNALS, 'Externals'), (ACTION_PROMOTION, 'Promotion'), (ACTION_PUBLISH, 'Publish'), (ACTION_ALL, 'All')],
     RESOURCE_DEPENDENCIES: [(ACTION_READ, 'Read'), (ACTION_CREATE, 'Create'), (ACTION_UPDATE, 'Update'), (ACTION_DELETE, 'Delete'), (ACTION_SYNC, 'Sync'), (ACTION_ALL, 'All')],
     RESOURCE_CLIENTS: [(ACTION_READ, 'Read'), (ACTION_UPDATE, 'Update'), (ACTION_DELETE, 'Delete'), (ACTION_ALL, 'All')],
     RESOURCE_USERS: [(ACTION_READ, 'Read'), (ACTION_CREATE, 'Create'), (ACTION_UPDATE, 'Update'), (ACTION_DELETE, 'Delete'), (ACTION_MANAGE_USERS, 'Manage Users'), (ACTION_ALL, 'All')],
@@ -165,6 +176,14 @@ class User(AbstractUser):
     Extends Django's AbstractUser with additional fields.
     """
     email = models.EmailField(blank=True)
+    default_organisation = models.ForeignKey(
+        'flatpak.Organisation',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='default_users',
+        help_text='Organisation automatically assigned to newly created items.',
+    )
     objects = UserManager()
 
     # is_local=True → only Django password auth is tried (never LDAP).
@@ -216,25 +235,39 @@ class User(AbstractUser):
         return self.has_permission('users', 'manage_users')
 
     def can_view_resource(self, resource, organisation=None):
-        return self.has_permission(resource, ACTION_READ, organisation=organisation)
+        return self.has_permission(resource, ACTION_READ, organisation=organisation) or (
+            organisation is None and bool(self.permission_organisation_ids(resource, ACTION_READ))
+        )
 
     def can_create_resource(self, resource, organisation=None):
-        return self.has_permission(resource, ACTION_CREATE, organisation=organisation)
+        return self.has_permission(resource, ACTION_CREATE, organisation=organisation) or (
+            organisation is None and bool(self.permission_organisation_ids(resource, ACTION_CREATE))
+        )
 
     def can_update_resource(self, resource, organisation=None):
-        return self.has_permission(resource, ACTION_UPDATE, organisation=organisation)
+        return self.has_permission(resource, ACTION_UPDATE, organisation=organisation) or (
+            organisation is None and bool(self.permission_organisation_ids(resource, ACTION_UPDATE))
+        )
 
     def can_delete_resource(self, resource, organisation=None):
-        return self.has_permission(resource, ACTION_DELETE, organisation=organisation)
+        return self.has_permission(resource, ACTION_DELETE, organisation=organisation) or (
+            organisation is None and bool(self.permission_organisation_ids(resource, ACTION_DELETE))
+        )
 
     def can_build_resource(self, resource, organisation=None):
-        return self.has_permission(resource, ACTION_BUILD, organisation=organisation)
+        return self.has_permission(resource, ACTION_BUILD, organisation=organisation) or (
+            organisation is None and bool(self.permission_organisation_ids(resource, ACTION_BUILD))
+        )
 
     def can_publish_resource(self, resource, organisation=None):
-        return self.has_permission(resource, ACTION_PUBLISH, organisation=organisation)
+        return self.has_permission(resource, ACTION_PUBLISH, organisation=organisation) or (
+            organisation is None and bool(self.permission_organisation_ids(resource, ACTION_PUBLISH))
+        )
 
     def can_sync_resource(self, resource, organisation=None):
-        return self.has_permission(resource, ACTION_SYNC, organisation=organisation)
+        return self.has_permission(resource, ACTION_SYNC, organisation=organisation) or (
+            organisation is None and bool(self.permission_organisation_ids(resource, ACTION_SYNC))
+        )
 
     def can_view_repositories(self, organisation=None):
         return self.can_view_resource(RESOURCE_REPOSITORIES, organisation=organisation)
@@ -275,6 +308,9 @@ class User(AbstractUser):
     def can_build_flatpaks(self, organisation=None):
         return self.can_build_resource(RESOURCE_FLATPAKS, organisation=organisation)
 
+    def can_commit_flatpaks(self, organisation=None):
+        return self.has_permission(RESOURCE_FLATPAKS, ACTION_COMMIT, organisation=organisation)
+
     def can_publish_flatpaks(self, organisation=None):
         return self.can_publish_resource(RESOURCE_FLATPAKS, organisation=organisation)
 
@@ -290,8 +326,14 @@ class User(AbstractUser):
     def can_publish_builds(self, organisation=None):
         return self.can_publish_resource(RESOURCE_BUILDS, organisation=organisation)
 
+    def can_promote_builds(self, organisation=None):
+        return self.has_permission(RESOURCE_BUILDS, ACTION_PROMOTE, organisation=organisation)
+
     def can_view_buildstreams(self, organisation=None):
         return self.can_view_resource(RESOURCE_BUILDSTREAMS, organisation=organisation)
+
+    def can_view_dependencies(self, organisation=None):
+        return self.can_view_resource(RESOURCE_DEPENDENCIES, organisation=organisation)
 
     def can_create_buildstreams(self, organisation=None):
         return self.can_create_resource(RESOURCE_BUILDSTREAMS, organisation=organisation)
@@ -322,6 +364,17 @@ class User(AbstractUser):
 
     def can_publish_externals(self, organisation=None):
         return self.can_publish_resource(RESOURCE_EXTERNALS, organisation=organisation)
+
+    def can_promote_externals(self, organisation=None):
+        return self.has_permission(RESOURCE_EXTERNALS, ACTION_PROMOTE, organisation=organisation)
+
+    def can_view_published_builds(self, organisation=None):
+        actions = (ACTION_COMMIT, ACTION_EXTERNALS, ACTION_PROMOTION, ACTION_PUBLISH)
+        return any(
+            self.has_permission(RESOURCE_PUBLISHED_BUILDS, action, organisation=organisation)
+            or (organisation is None and bool(self.permission_organisation_ids(RESOURCE_PUBLISHED_BUILDS, action)))
+            for action in actions
+        )
 
     def can_sync_externals(self, organisation=None):
         return self.can_sync_resource(RESOURCE_EXTERNALS, organisation=organisation)
@@ -397,6 +450,26 @@ class User(AbstractUser):
             return True
 
         return False
+
+    def permission_organisation_ids(self, resource, action):
+        """Return allowed organisation IDs, or None when access is global."""
+        if self.is_superuser:
+            return None
+
+        action_filter = models.Q(action=action) | models.Q(action=ACTION_ALL)
+        grant_qs = self.permission_grants.filter(
+            resource=resource, granted=True,
+        ).filter(action_filter)
+        group_qs = PermissionGroupPermission.objects.filter(
+            group__users=self, resource=resource, granted=True,
+        ).filter(action_filter)
+
+        if grant_qs.filter(organisation__isnull=True).exists() or group_qs.filter(organisation__isnull=True).exists():
+            return None
+
+        ids = set(grant_qs.exclude(organisation__isnull=True).values_list('organisation_id', flat=True))
+        ids.update(group_qs.exclude(organisation__isnull=True).values_list('organisation_id', flat=True))
+        return ids
 
 
 # ---------------------------------------------------------------------------
@@ -482,20 +555,26 @@ class PermissionGroup(models.Model):
                 ('flatpaks', 'create', True),
                 ('flatpaks', 'update', True),
                 ('flatpaks', 'delete', True),
+                ('flatpaks', 'commit', True),
+                ('flatpaks', 'publish', True),
                 ('rpms', 'read', True),
                 ('rpms', 'build', True),
                 ('builds', 'read', True),
                 ('builds', 'build', True),
+                ('builds', 'promote', True),
+                ('builds', 'publish', True),
                 ('buildstreams', 'read', True),
                 ('buildstreams', 'create', True),
                 ('buildstreams', 'update', True),
                 ('buildstreams', 'delete', True),
                 ('buildstreams', 'build', True),
+                ('buildstreams', 'promote', True),
                 ('buildstreams', 'publish', True),
                 ('externals', 'read', True),
                 ('externals', 'create', True),
                 ('externals', 'update', True),
                 ('externals', 'delete', True),
+                ('externals', 'promote', True),
                 ('externals', 'publish', True),
                 ('externals', 'sync', True),
                 ('dependencies', 'read', True),
@@ -526,20 +605,26 @@ class PermissionGroup(models.Model):
                 ('flatpaks', 'create', True),
                 ('flatpaks', 'update', True),
                 ('flatpaks', 'delete', True),
+                ('flatpaks', 'commit', True),
+                ('flatpaks', 'publish', True),
                 ('rpms', 'read', True),
                 ('rpms', 'build', True),
                 ('builds', 'read', True),
                 ('builds', 'build', True),
+                ('builds', 'promote', True),
+                ('builds', 'publish', True),
                 ('buildstreams', 'read', True),
                 ('buildstreams', 'create', True),
                 ('buildstreams', 'update', True),
                 ('buildstreams', 'delete', True),
                 ('buildstreams', 'build', True),
+                ('buildstreams', 'promote', True),
                 ('buildstreams', 'publish', True),
                 ('externals', 'read', True),
                 ('externals', 'create', True),
                 ('externals', 'update', True),
                 ('externals', 'delete', True),
+                ('externals', 'promote', True),
                 ('externals', 'publish', True),
                 ('externals', 'sync', True),
                 ('dependencies', 'read', True),
@@ -558,13 +643,17 @@ class PermissionGroup(models.Model):
             'permissions': [
                 ('builds', 'read', True),
                 ('builds', 'build', True),
+                ('builds', 'promote', True),
                 ('buildstreams', 'read', True),
                 ('buildstreams', 'build', True),
+                ('buildstreams', 'promote', True),
                 ('rpms', 'read', True),
                 ('rpms', 'build', True),
                 ('repositories', 'read', True),
                 ('flatpaks', 'read', True),
+                ('flatpaks', 'commit', True),
                 ('externals', 'read', True),
+                ('externals', 'promote', True),
                 ('dependencies', 'read', True),
                 ('dependencies', 'sync', True),
             ],
@@ -582,7 +671,9 @@ class PermissionGroup(models.Model):
                 ('gpg_keys', 'delete', True),
                 ('flatpaks', 'read', True),
                 ('flatpaks', 'publish', True),
+                ('builds', 'promote', True),
                 ('externals', 'read', True),
+                ('externals', 'promote', True),
                 ('externals', 'publish', True),
                 ('dependencies', 'read', True),
                 ('dependencies', 'sync', True),

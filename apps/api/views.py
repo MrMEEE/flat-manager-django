@@ -5,8 +5,10 @@ from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
 from .permissions import IsAdmin, CanBuild, CanRepoAdmin
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters
+from django.db.models import Q
 
 from apps.users.models import User, UserProfile, APIToken
+from apps.users.mixins import scope_queryset_for_user, apply_default_organisation
 from apps.flatpak.models import GPGKey, Repository, RepositorySubset, Package, Build, BuildArtifact, BuildLog, Token
 from apps.flatpak.utils.gpg import generate_gpg_key, import_gpg_key
 from .serializers import (
@@ -68,6 +70,9 @@ class GPGKeyViewSet(viewsets.ModelViewSet):
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name', 'email', 'key_id', 'fingerprint']
     ordering_fields = ['name', 'created_at']
+
+    def get_queryset(self):
+        return scope_queryset_for_user(super().get_queryset(), self.request.user, 'gpg_keys')
     
     def get_serializer_class(self):
         if self.action == 'list':
@@ -75,7 +80,8 @@ class GPGKeyViewSet(viewsets.ModelViewSet):
         return GPGKeySerializer
     
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        instance = serializer.save(created_by=self.request.user)
+        apply_default_organisation(instance, self.request.user)
     
     @action(detail=True, methods=['get'])
     def public_key(self, request, pk=None):
@@ -122,6 +128,7 @@ class GPGKeyViewSet(viewsets.ModelViewSet):
                 passphrase_hint='',
                 created_by=request.user
             )
+            apply_default_organisation(gpg_key, request.user)
             
             serializer = self.get_serializer(gpg_key)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -160,6 +167,7 @@ class GPGKeyViewSet(viewsets.ModelViewSet):
                 passphrase_hint='',
                 created_by=request.user
             )
+            apply_default_organisation(gpg_key, request.user)
             
             serializer = self.get_serializer(gpg_key)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -186,9 +194,13 @@ class RepositoryViewSet(viewsets.ModelViewSet):
     filterset_fields = ['is_active', 'collection_id']
     search_fields = ['name', 'description', 'collection_id']
     ordering_fields = ['name', 'created_at']
+
+    def get_queryset(self):
+        return scope_queryset_for_user(super().get_queryset(), self.request.user, 'repositories')
     
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        instance = serializer.save(created_by=self.request.user)
+        apply_default_organisation(instance, self.request.user)
     
     @action(detail=True, methods=['get'])
     def builds(self, request, pk=None):
@@ -235,6 +247,9 @@ class PackageViewSet(viewsets.ModelViewSet):
     filterset_fields = ['status', 'repository', 'arch', 'branch']
     search_fields = ['package_id', 'package_name']
     ordering_fields = ['created_at', 'build_number']
+
+    def get_queryset(self):
+        return scope_queryset_for_user(super().get_queryset(), self.request.user, 'flatpaks')
     
     def get_permissions(self):
         """Allow unauthenticated access to logs; read-only for authenticated; write requires CanBuild."""
@@ -246,6 +261,7 @@ class PackageViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         package = serializer.save(created_by=self.request.user)
+        apply_default_organisation(package, self.request.user)
         # Package will be automatically picked up by periodic check_pending_builds task
         # No need to manually trigger here
     
@@ -418,6 +434,18 @@ class BuildViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ['package', 'status', 'build_number']
     search_fields = ['package__package_id', 'package__package_name']
     ordering_fields = ['build_number', 'started_at', 'completed_at']
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        organisation_ids = self.request.user.permission_organisation_ids('builds', 'read')
+        if organisation_ids is None:
+            return qs
+        if not organisation_ids:
+            return qs.none()
+        return qs.filter(
+            Q(package__organisations__in=organisation_ids)
+            | Q(bst_source__organisations__in=organisation_ids)
+        ).distinct()
     
     @action(detail=True, methods=['get'], authentication_classes=[], permission_classes=[AllowAny])
     def logs(self, request, pk=None):

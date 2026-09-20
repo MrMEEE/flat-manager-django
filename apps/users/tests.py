@@ -2,6 +2,7 @@ from django.core.exceptions import PermissionDenied
 from django.test import RequestFactory, TestCase
 
 from apps.flatpak.models import Organisation, Repository
+from apps.flatpak.models import Package
 from apps.flatpak.views import RepositoryUpdateView
 from apps.users.models import (
     PermissionGrant,
@@ -55,6 +56,57 @@ class PermissionGrantTests(TestCase):
         )
 
         self.assertFalse(user.has_permission('repositories', 'read', organisation=org_b))
+
+    def test_permission_scope_reports_allowed_organisations(self):
+        org = Organisation.objects.create(
+            name='Scoped Org',
+            responsible_name='Alice',
+            responsible_email='alice@example.com',
+        )
+        user = User.objects.create_user(username='scoped-user', password='password')
+        PermissionGrant.objects.create(
+            user=user,
+            organisation=org,
+            resource='flatpaks',
+            action='read',
+            granted=True,
+        )
+
+        self.assertEqual(user.permission_organisation_ids('flatpaks', 'read'), {org.pk})
+        self.assertTrue(user.can_view_flatpaks())
+
+    def test_global_permission_scope_is_unrestricted(self):
+        user = User.objects.create_user(username='global-user', password='password')
+        PermissionGrant.objects.create(
+            user=user,
+            resource='flatpaks',
+            action='read',
+            granted=True,
+        )
+
+        self.assertIsNone(user.permission_organisation_ids('flatpaks', 'read'))
+
+    def test_default_organisation_is_available_for_new_items(self):
+        org = Organisation.objects.create(
+            name='Default Org',
+            responsible_name='Alice',
+            responsible_email='alice@example.com',
+        )
+        user = User.objects.create_user(
+            username='default-org-user', password='password', default_organisation=org,
+        )
+        repository = Repository.objects.create(name='Default Repo', created_by=user)
+
+        package = Package.objects.create(
+            repository=repository,
+            package_id='org.example.App',
+            package_name='Example App',
+            created_by=user,
+        )
+        from apps.users.mixins import apply_default_organisation
+        apply_default_organisation(package, user)
+
+        self.assertIn(org, package.organisations.all())
 
 
 class PermissionGroupTests(TestCase):
@@ -151,7 +203,14 @@ class PermissionGroupTests(TestCase):
 
         self.assertIn('read', {value for value, _ in RESOURCE_ACTIONS['buildstreams']})
         self.assertIn('build', {value for value, _ in RESOURCE_ACTIONS['buildstreams']})
+        self.assertIn('promote', {value for value, _ in RESOURCE_ACTIONS['builds']})
+        self.assertIn('commit', {value for value, _ in RESOURCE_ACTIONS['flatpaks']})
         self.assertIn('publish', {value for value, _ in RESOURCE_ACTIONS['externals']})
+        self.assertIn('promote', {value for value, _ in RESOURCE_ACTIONS['externals']})
+        self.assertEqual(
+            {'commit', 'externals', 'promotion', 'publish', 'all'},
+            {value for value, _ in RESOURCE_ACTIONS['published_builds']},
+        )
         self.assertIn('sync', {value for value, _ in RESOURCE_ACTIONS['dependencies']})
         self.assertIn('all', {value for value, _ in RESOURCE_ACTIONS['repositories']})
 
