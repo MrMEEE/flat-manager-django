@@ -65,4 +65,5 @@ urlpatterns = [
     path('v2/moderation/requests/<int:request_id>/review', flathub.ReviewModerationView.as_view(), name='flathub-review-moderation'),
     path('auth/', include('rest_framework.urls')),
     path('git-branches/', views.git_branches, name='git_branches'),
+    path('version/', views.version, name='version'),
 ]

@@ -566,3 +566,11 @@ def git_branches(request):
         # Fallback on any error
         return JsonResponse({'branches': ['master', 'main']})
 
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def version(request):
+    """Report the running application version."""
+    from version import VERSION, BUILD_DATE
+    return Response({'version': VERSION, 'build_date': BUILD_DATE})
+

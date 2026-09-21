@@ -2372,10 +2372,13 @@ class ConfigView(LoginRequiredMixin, View):
     def _context(self, form):
         from .models import FlatpakRemote
         from .forms import FlatpakRemoteForm
+        from version import VERSION, BUILD_DATE
         return {
             'form': form,
             'remotes': FlatpakRemote.objects.all(),
             'remote_form': FlatpakRemoteForm(),
+            'app_version': VERSION,
+            'app_build_date': BUILD_DATE,
         }
 
     def get(self, request):
