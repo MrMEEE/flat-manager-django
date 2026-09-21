@@ -450,7 +450,11 @@ class BuildViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=['get'], authentication_classes=[], permission_classes=[AllowAny])
     def logs(self, request, pk=None):
         """Get build logs (public endpoint)."""
-        build = self.get_object()
+        # Bypass get_queryset()'s org-scoping, which assumes an authenticated user.
+        try:
+            build = Build.objects.get(pk=pk)
+        except Build.DoesNotExist:
+            return Response({'error': 'Build not found'}, status=status.HTTP_404_NOT_FOUND)
         logs = build.logs.all().order_by('timestamp')
         
         log_data = [{
