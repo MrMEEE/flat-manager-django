@@ -1,5 +1,5 @@
 from rest_framework import viewsets, status
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
 from .permissions import IsAdmin, CanBuild, CanRepoAdmin
@@ -450,7 +450,6 @@ class BuildViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=['get'], authentication_classes=[], permission_classes=[AllowAny])
     def logs(self, request, pk=None):
         """Get build logs (public endpoint)."""
-        # Bypass get_queryset()'s org-scoping, which assumes an authenticated user.
         try:
             build = Build.objects.get(pk=pk)
         except Build.DoesNotExist:

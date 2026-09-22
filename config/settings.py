@@ -229,6 +229,10 @@ RPM_BUILD_PATH = os.environ.get('RPM_BUILD_PATH', os.path.join(FLATPAK_BUILD_PAT
 
 # Temporary directory for git clones and other short-lived work.
 TEMP_DIR = os.environ.get('TEMP_DIR', os.path.join(_data_parent, 'tmp'))
+os.makedirs(TEMP_DIR, exist_ok=True)
+os.environ['TMPDIR'] = TEMP_DIR
+os.environ['TEMP'] = TEMP_DIR
+os.environ['TMP'] = TEMP_DIR
 
 # How often to auto-sync RPM repository lists from subscription-manager (hours).
 RPM_REPO_SYNC_INTERVAL_HOURS = int(os.environ.get('RPM_REPO_SYNC_INTERVAL_HOURS', '24'))

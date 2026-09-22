@@ -8,6 +8,13 @@ import shutil
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
+from django.conf import settings
+
+
+def _get_temp_base():
+    base = (getattr(settings, 'TEMP_DIR', '') or tempfile.gettempdir()).strip()
+    os.makedirs(base, exist_ok=True)
+    return base
 
 
 @contextmanager
@@ -22,7 +29,7 @@ def temp_gpg_homedir(gpg_key):
         with temp_gpg_homedir(repo.gpg_key) as homedir:
             sign_repo_summary(repo_path, repo.gpg_key.key_id, gpg_homedir=homedir)
     """
-    tmpdir = tempfile.mkdtemp(prefix='flatmgr_gpg_')
+    tmpdir = tempfile.mkdtemp(prefix='flatmgr_gpg_', dir=_get_temp_base())
     try:
         os.chmod(tmpdir, stat.S_IRWXU)  # 700 — required by GnuPG
         if gpg_key and gpg_key.private_key:

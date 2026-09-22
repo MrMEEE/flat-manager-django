@@ -17,6 +17,21 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def _get_temp_base():
+    base = (getattr(settings, 'TEMP_DIR', '') or tempfile.gettempdir()).strip()
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
+def _temp_env():
+    env = os.environ.copy()
+    temp_base = _get_temp_base()
+    env['TMPDIR'] = temp_base
+    env['TEMP'] = temp_base
+    env['TMP'] = temp_base
+    return env
+
+
 def _host_uses_lib64():
     """
     Return True when the host OS uses ``lib64`` as its native multilib
@@ -343,6 +358,7 @@ def run_cancellable(cmd, cwd, build, timeout_seconds):
     proc = subprocess.Popen(
         cmd,
         cwd=cwd,
+        env=_temp_env(),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         encoding='utf-8',
@@ -680,7 +696,7 @@ def package_from_git_task(self, package_id):
         send_build_status_update(package_id, 'building', 'Cloning git repository')
         
         # Create temporary directory for build
-        temp_dir = tempfile.mkdtemp(prefix=f'fmdc_build_{package.build_number}_')
+        temp_dir = tempfile.mkdtemp(prefix=f'fmdc_build_{package.build_number}_', dir=_get_temp_base())
         log_build(build, 'info', f"Created build directory: {temp_dir}")
         
         # Clone git repository
@@ -1161,7 +1177,7 @@ def buildstream_build_task(self, bst_source_id, force_rebuild=False):
         log_build(build, 'info', f"Element: {source.bst_element}")
         send_build_status_update(bst_source_id, 'building', 'Cloning git repository')
 
-        temp_dir = tempfile.mkdtemp(prefix=f'fmdc_bst_{source.build_number}_')
+        temp_dir = tempfile.mkdtemp(prefix=f'fmdc_bst_{source.build_number}_', dir=_get_temp_base())
         log_build(build, 'info', f"Created build directory: {temp_dir}")
 
         # ── 1. Clone ────────────────────────────────────────────────────────
@@ -4551,7 +4567,8 @@ def _run_version_script(script_text, package_id):
 
     try:
         with tempfile.NamedTemporaryFile(
-            mode='w', suffix='.sh', prefix='fmd_verscript_', delete=False
+            mode='w', suffix='.sh', prefix='fmd_verscript_', delete=False,
+            dir=_get_temp_base(),
         ) as tmp:
             tmp.write(script_text.replace('\r\n', '\n').replace('\r', '\n'))
             tmp_path = tmp.name
@@ -4618,7 +4635,7 @@ def _fetch_tag_date(url, raw_tag):
     import shlex as _shlex
     tmp = None
     try:
-        tmp = tempfile.mkdtemp(prefix='fmdc_tagdate_')
+        tmp = tempfile.mkdtemp(prefix='fmdc_tagdate_', dir=_get_temp_base())
         os.chmod(tmp, 0o700)
         src = os.path.join(tmp, 'repo')
         git_cmd = (
@@ -4664,7 +4681,7 @@ def _fetch_available_version(package):
 
     temp_dir = None
     try:
-        temp_dir = tempfile.mkdtemp(prefix=f'fmdc_avail_{package.pk}_')
+        temp_dir = tempfile.mkdtemp(prefix=f'fmdc_avail_{package.pk}_', dir=_get_temp_base())
         # UMask=0111 in the systemd service strips execute bits from every
         # mkdir() call in the entire process tree — including all the
         # subdirectories git creates inside .git/ during clone.  Manually

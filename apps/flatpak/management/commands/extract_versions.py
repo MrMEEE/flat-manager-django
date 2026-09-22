@@ -2,12 +2,19 @@
 Management command to extract versions from existing builds.
 """
 from django.core.management.base import BaseCommand
+from django.conf import settings
 from apps.flatpak.models import Build
 import os
 import tempfile
 import subprocess
 import json
 import yaml
+
+
+def _get_temp_base():
+    base = (getattr(settings, 'TEMP_DIR', '') or tempfile.gettempdir()).strip()
+    os.makedirs(base, exist_ok=True)
+    return base
 
 
 class Command(BaseCommand):
@@ -77,7 +84,7 @@ class Command(BaseCommand):
                 self.stdout.write(f'Build {build.id} ({build.app_id}): Processing...')
                 
                 # Create temporary directory
-                temp_dir = tempfile.mkdtemp(prefix=f'version_extract_{build.id}_')
+                temp_dir = tempfile.mkdtemp(prefix=f'version_extract_{build.id}_', dir=_get_temp_base())
                 
                 # Clone repository to get manifest
                 self.stdout.write(f'  Cloning {build.git_repo_url} (branch: {build.git_branch})...')

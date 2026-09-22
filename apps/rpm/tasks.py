@@ -15,6 +15,12 @@ from asgiref.sync import async_to_sync
 
 logger = logging.getLogger(__name__)
 
+
+def _get_temp_base():
+    base = (getattr(settings, 'TEMP_DIR', '') or tempfile.gettempdir()).strip()
+    os.makedirs(base, exist_ok=True)
+    return base
+
 _ANSI_ESC_RE = re.compile(r'\x1b\[[0-9;]*[mKGHJAB]')
 
 
@@ -177,7 +183,7 @@ def _create_mock_config(base_config, build, local_repo_path, allow_internet_acce
 
     # Resolve cfg_path early so we can write gpgkey files alongside it
     if cfg_path is None:
-        cfg_path = os.path.join(tempfile.gettempdir(), f'fmd-mock-{build_id}.cfg')
+        cfg_path = os.path.join(_get_temp_base(), f'fmd-mock-{build_id}.cfg')
     os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
 
     selected_repos = list(build.selected_repos.all())
@@ -480,7 +486,7 @@ def _sign_rpms(rpm_paths: list, gpg_key, build) -> bool:
         log_rpm_build(build, 'warning', 'No private key material available — skipping RPM signing')
         return False
 
-    tmpdir = tempfile.mkdtemp(prefix='fmd-gpg-')
+    tmpdir = tempfile.mkdtemp(prefix='fmd-gpg-', dir=_get_temp_base())
     try:
         os.chmod(tmpdir, stat.S_IRWXU)  # 0700 – gpg requires this
         env = {**os.environ, 'GNUPGHOME': tmpdir}
@@ -534,7 +540,7 @@ def _sign_repomd(repo_path: str, gpg_key, build) -> None:
         log_rpm_build(build, 'warning', 'repomd.xml not found — skipping repomd signing')
         return
 
-    tmpdir = tempfile.mkdtemp(prefix='fmd-gpg-')
+    tmpdir = tempfile.mkdtemp(prefix='fmd-gpg-', dir=_get_temp_base())
     try:
         os.chmod(tmpdir, stat.S_IRWXU)
         env = {**os.environ, 'GNUPGHOME': tmpdir}
@@ -1743,7 +1749,7 @@ def check_rpm_available_version_task(package_id: int):
     branch = (package.git_branch or 'main').strip()
 
     try:
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(dir=_get_temp_base()) as tmpdir:
             result = subprocess.run(
                 ['git', 'clone', '--depth', '1', '--branch', branch,
                  '--', package.git_repo_url, tmpdir],
