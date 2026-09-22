@@ -34,7 +34,7 @@ def normalize_manifest_libdirs(manifest_file, build=None):
     """
     On hosts where CMake/Meson default to ``lib64`` (RHEL9/x86_64 etc.),
     inject ``-DCMAKE_INSTALL_LIBDIR=lib`` / ``--libdir=lib`` into every
-    cmake-ninja / meson module in the manifest.
+    cmake / cmake-ninja / meson module in the manifest.
 
     flatpak-builder only puts ``/app/lib/pkgconfig`` on ``PKG_CONFIG_PATH``,
     so ``.pc`` files that land in ``lib64/pkgconfig`` are invisible to
@@ -108,7 +108,7 @@ def normalize_manifest_libdirs(manifest_file, build=None):
                     config_opts = []
                     mod['config-opts'] = config_opts
                 name = mod.get('name', '<unnamed>')
-                if buildsystem == 'cmake-ninja':
+                if buildsystem in ('cmake', 'cmake-ninja'):
                     key = '-DCMAKE_INSTALL_LIBDIR=lib'
                     if not any('CMAKE_INSTALL_LIBDIR' in str(o) for o in config_opts):
                         config_opts.append(key)
