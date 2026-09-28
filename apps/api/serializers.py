@@ -1,4 +1,6 @@
 from rest_framework import serializers
+from rest_framework.validators import UniqueValidator
+from django.db.models import Q
 from apps.users.models import User, UserProfile, APIToken
 from apps.flatpak.models import GPGKey, Repository, RepositorySubset, Package, Build, BuildArtifact, BuildLog, Token
 
@@ -13,10 +15,18 @@ class UserSerializer(serializers.ModelSerializer):
 
 class UserProfileSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
+    user_id = serializers.PrimaryKeyRelatedField(
+        source='user',
+        queryset=User.objects.all(),
+        write_only=True,
+        # user is a OneToOneField; validate here so a duplicate is a 400, not a 500.
+        validators=[UniqueValidator(queryset=UserProfile.objects.all())],
+    )
     
     class Meta:
         model = UserProfile
-        fields = ['user', 'bio', 'phone', 'organization']
+        fields = ['id', 'user', 'user_id', 'bio', 'phone', 'organization']
+        read_only_fields = ['id']
 
 
 class APITokenSerializer(serializers.ModelSerializer):
@@ -48,9 +58,13 @@ class GPGKeyListSerializer(serializers.ModelSerializer):
 
 
 class RepositorySubsetSerializer(serializers.ModelSerializer):
+    repository_id = serializers.PrimaryKeyRelatedField(
+        source='repository', queryset=Repository.objects.all(), write_only=True
+    )
+    
     class Meta:
         model = RepositorySubset
-        fields = ['id', 'name', 'collection_id', 'base_url']
+        fields = ['id', 'name', 'collection_id', 'base_url', 'repository_id']
         read_only_fields = ['id']
 
 
@@ -75,7 +89,9 @@ class RepositorySerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at', 'repo_path']
     
     def get_build_count(self, obj):
-        return obj.builds.count()
+        return Build.objects.filter(
+            Q(package__repository=obj) | Q(bst_source__repository=obj)
+        ).count()
     
     def get_public_key_path(self, obj):
         return obj.get_public_key_path()
@@ -88,9 +104,14 @@ class RepositorySerializer(serializers.ModelSerializer):
 
 
 class BuildArtifactSerializer(serializers.ModelSerializer):
+    build_id = serializers.PrimaryKeyRelatedField(
+        source='build', queryset=Build.objects.all(), write_only=True
+    )
+    
     class Meta:
         model = BuildArtifact
-        fields = ['id', 'filename', 'file_path', 'file_size', 'checksum', 'uploaded_at']
+        fields = ['id', 'filename', 'file_path', 'file_size', 'checksum',
+                  'uploaded_at', 'build_id']
         read_only_fields = ['id', 'uploaded_at']
 
 

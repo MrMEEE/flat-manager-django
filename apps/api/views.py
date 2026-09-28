@@ -206,7 +206,9 @@ class RepositoryViewSet(viewsets.ModelViewSet):
     def builds(self, request, pk=None):
         """Get all builds for a repository."""
         repository = self.get_object()
-        builds = repository.builds.all()
+        builds = Build.objects.filter(
+            Q(package__repository=repository) | Q(bst_source__repository=repository)
+        ).distinct()
         serializer = BuildSerializer(builds, many=True)
         return Response(serializer.data)
     
@@ -290,7 +292,7 @@ class PackageViewSet(viewsets.ModelViewSet):
     def cancel(self, request, pk=None):
         """Cancel a build."""
         package = self.get_object()
-        if package.status in ['completed', 'failed', 'cancelled']:
+        if package.status in ['published', 'failed', 'cancelled']:
             return Response(
                 {'error': 'Build cannot be cancelled in current state'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -302,13 +304,22 @@ class PackageViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['get'], authentication_classes=[], permission_classes=[AllowAny])
     def logs(self, request, pk=None):
-        """Get build logs with live updates (public endpoint)."""
-        # Manually get build to bypass permission check on get_object()
+        """Get the latest build's logs with live updates (public endpoint)."""
+        # Queried directly to bypass the permission check in get_object().
         try:
-            build = Build.objects.get(pk=pk)
-        except Build.DoesNotExist:
-            return Response({'error': 'Build not found'}, status=status.HTTP_404_NOT_FOUND)
-        
+            package = Package.objects.get(pk=pk)
+        except Package.DoesNotExist:
+            return Response({'error': 'Package not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        build = package.builds.order_by('-build_number').first()
+        if build is None:
+            return Response({
+                'build_id': None,
+                'status': package.status,
+                'logs': [],
+                'total_logs': 0
+            })
+
         logs = build.logs.all().order_by('timestamp')
         
         log_data = [{
@@ -337,7 +348,7 @@ class PackageViewSet(viewsets.ModelViewSet):
         
         # Queue commit task
         from apps.flatpak.tasks import commit_package_task
-        commit_package_task.delay(build.id)
+        commit_package_task.delay(package.id)
         
         return Response({
             'status': 'Build commit started',
@@ -355,7 +366,7 @@ class PackageViewSet(viewsets.ModelViewSet):
             )
         
         from apps.flatpak.tasks import publish_package_task
-        publish_package_task.delay(build.id)
+        publish_package_task.delay(package.id)
         return Response({
             'status': 'Build publishing started',
             'build_id': package.package_id
@@ -413,14 +424,6 @@ class PackageViewSet(viewsets.ModelViewSet):
             'ref': ref_name,
             'commit': commit
         })
-    
-    @action(detail=True, methods=['get'])
-    def logs(self, request, pk=None):
-        """Get build logs."""
-        package = self.get_object()
-        logs = build.logs.all()
-        serializer = BuildLogSerializer(logs, many=True)
-        return Response(serializer.data)
 
 
 class BuildViewSet(viewsets.ReadOnlyModelViewSet):
@@ -520,6 +523,7 @@ def git_branches(request):
     """
     Lookup available branches from a Git repository.
     """
+    import os
     import subprocess
     from django.http import JsonResponse
     
@@ -528,20 +532,16 @@ def git_branches(request):
         return JsonResponse({'error': 'repo_url parameter required'}, status=400)
     
     try:
-        # Simple approach - just run the command and parse output
-        # Using shell=True to avoid subprocess hanging issues
-        cmd = f"timeout 3 git ls-remote --heads '{repo_url}' 2>/dev/null"
+        # Argument list, never a shell string: repo_url is untrusted input.
         result = subprocess.run(
-            cmd,
-            shell=True,
+            ['git', 'ls-remote', '--heads', '--', repo_url],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=5,
+            env={**os.environ, 'GIT_TERMINAL_PROMPT': '0', 'GIT_ASKPASS': '/bin/true'},
         )
         
-        if result.returncode == 124:  # timeout
-            return JsonResponse({'branches': ['master', 'main']})  # fallback
-        elif result.returncode != 0:
+        if result.returncode != 0:
             return JsonResponse({'branches': ['master', 'main']})  # fallback
         
         # Parse branch names from output

@@ -4,6 +4,11 @@ import secrets
 import os
 
 
+def generate_repository_token():
+    """Generate a random value for Token.token (64 hex characters)."""
+    return secrets.token_hex(32)
+
+
 class GPGKey(models.Model):
     """
     GPG key for signing repositories.
@@ -579,6 +584,9 @@ class BuildLog(models.Model):
 class Token(models.Model):
     """
     Repository tokens for access control.
+
+    NOT ENFORCED: nothing validates an incoming request against these tokens and
+    token_type has no conditional logic, so a token currently grants no access.
     """
     TOKEN_TYPES = [
         ('upload', 'Upload'),
@@ -588,7 +596,7 @@ class Token(models.Model):
     
     repository = models.ForeignKey(Repository, on_delete=models.CASCADE, related_name='tokens')
     name = models.CharField(max_length=255)
-    token = models.CharField(max_length=64, unique=True)
+    token = models.CharField(max_length=64, unique=True, default=generate_repository_token)
     token_type = models.CharField(max_length=20, choices=TOKEN_TYPES)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
