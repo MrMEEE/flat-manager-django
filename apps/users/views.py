@@ -8,6 +8,7 @@ from django.views.generic import ListView, DetailView, CreateView, UpdateView, D
 from django.urls import reverse_lazy, reverse
 from django.contrib import messages
 from django.db import models
+from rest_framework.authtoken.models import Token as AuthToken
 from .models import (
     User, UserProfile, PermissionGrant, PermissionGroup, PermissionGroupPermission,
     LDAPSource, LDAPGroupMapping,
@@ -251,6 +252,7 @@ class ProfileView(LoginRequiredMixin, View):
         return {
             'profile': request.user.profile,
             'pw_form': pw_form or ChangePasswordForm(user=request.user),
+            'api_token': AuthToken.objects.filter(user=request.user).first(),
         }
 
     def get(self, request):
@@ -272,6 +274,28 @@ class ProfileView(LoginRequiredMixin, View):
                 messages.success(request, 'Password changed successfully.')
                 return redirect('users:profile')
             return render(request, 'users/profile.html', self._context(request, pw_form=form))
+
+        if action == 'create_api_token':
+            token, created = AuthToken.objects.get_or_create(user=request.user)
+            if created:
+                messages.success(request, 'API token created.')
+            else:
+                messages.info(request, 'You already have an API token.')
+            return redirect('users:profile')
+
+        if action == 'regenerate_api_token':
+            AuthToken.objects.filter(user=request.user).delete()
+            AuthToken.objects.create(user=request.user)
+            messages.success(request, 'API token regenerated. The previous token no longer works.')
+            return redirect('users:profile')
+
+        if action == 'revoke_api_token':
+            deleted, _ = AuthToken.objects.filter(user=request.user).delete()
+            if deleted:
+                messages.success(request, 'API token revoked.')
+            else:
+                messages.info(request, 'You do not have an API token.')
+            return redirect('users:profile')
 
         # Default: profile update
         profile = request.user.profile

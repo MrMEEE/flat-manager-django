@@ -1,9 +1,16 @@
+from django.contrib.messages.storage.fallback import FallbackStorage
+from django.contrib.sessions.backends.db import SessionStore
 from django.core.exceptions import PermissionDenied
 from django.test import RequestFactory, TestCase
+from rest_framework.authtoken.models import Token as AuthToken
+from rest_framework.test import APIClient
+from rest_framework.authtoken.models import Token as AuthToken
+from rest_framework.test import APIClient
 
 from apps.flatpak.models import Organisation, Repository
 from apps.flatpak.models import Package
 from apps.flatpak.views import RepositoryUpdateView
+from apps.users.views import ProfileView
 from apps.users.models import (
     PermissionGrant,
     PermissionGroup,
@@ -252,3 +259,64 @@ class PermissionGroupTests(TestCase):
 
         with self.assertRaises(PermissionDenied):
             RepositoryUpdateView.as_view()(request, pk=repo.pk)
+
+
+class ProfileApiTokenTests(TestCase):
+    """The Django test client cannot render templates on Python 3.14, so these
+    tests drive ProfileView through RequestFactory instead."""
+
+    def setUp(self):
+        self.factory = RequestFactory()
+        self.user = User.objects.create_user(
+            username='tokenuser', email='t@example.com', password='pw12345678')
+
+    def _request(self, method, data=None):
+        request = getattr(self.factory, method)('/profile/', data or {})
+        request.user = self.user
+        request.session = SessionStore()
+        request._messages = FallbackStorage(request)
+        return ProfileView.as_view()(request)
+
+    def test_profile_offers_creation_when_no_token(self):
+        response = self._request('get')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('Create API Token', response.content.decode())
+
+    def test_create_then_shows_token_and_curl_example(self):
+        self._request('post', {'action': 'create_api_token'})
+        token = AuthToken.objects.get(user=self.user)
+        content = self._request('get').content.decode()
+        self.assertIn(token.key, content)
+        self.assertIn('Authorization: Token $FLATMAN_TOKEN', content)
+
+    def test_create_is_idempotent(self):
+        self._request('post', {'action': 'create_api_token'})
+        first = AuthToken.objects.get(user=self.user).key
+        self._request('post', {'action': 'create_api_token'})
+        self.assertEqual(AuthToken.objects.filter(user=self.user).count(), 1)
+        self.assertEqual(AuthToken.objects.get(user=self.user).key, first)
+
+    def test_regenerate_replaces_the_key(self):
+        self._request('post', {'action': 'create_api_token'})
+        first = AuthToken.objects.get(user=self.user).key
+        self._request('post', {'action': 'regenerate_api_token'})
+        self.assertEqual(AuthToken.objects.filter(user=self.user).count(), 1)
+        self.assertNotEqual(AuthToken.objects.get(user=self.user).key, first)
+
+    def test_revoke_deletes_the_token(self):
+        self._request('post', {'action': 'create_api_token'})
+        self._request('post', {'action': 'revoke_api_token'})
+        self.assertFalse(AuthToken.objects.filter(user=self.user).exists())
+
+    def test_token_authenticates_against_the_api(self):
+        self._request('post', {'action': 'create_api_token'})
+        key = AuthToken.objects.get(user=self.user).key
+        api = APIClient()
+        self.assertEqual(api.get('/api/repositories/').status_code, 401)
+        api.credentials(HTTP_AUTHORIZATION='Token ' + key)
+        self.assertEqual(api.get('/api/repositories/').status_code, 200)
+
+    def test_profile_update_still_works(self):
+        self._request('post', {'bio': 'hello', 'phone': '', 'organization': ''})
+        self.user.profile.refresh_from_db()
+        self.assertEqual(self.user.profile.bio, 'hello')
