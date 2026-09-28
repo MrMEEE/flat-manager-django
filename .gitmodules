@@ -1,0 +1,3 @@
+[submodule "ansible/collections/ansible_collections/mrmeee/flatman"]
+	path = ansible/collections/ansible_collections/mrmeee/flatman
+	url = git@github.com:MrMEEE/ansible_collection.flatman.git

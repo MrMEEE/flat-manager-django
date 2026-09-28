@@ -1,0 +1,7 @@
+---
+# The flatman modules only need ansible-core. This file lets the collection be
+# pulled in without the submodule, for example on a control node.
+collections:
+  - name: https://github.com/MrMEEE/ansible_collection.flatman.git
+    type: git
+    version: main
