@@ -298,7 +298,7 @@ def push_rpm(rpm_path: str, url: str, login: str, token: str, repository_id: int
             return False
         return parsed < (4, 18, 0)
 
-    def _create_upload_request() -> tuple[str | None, str]:
+    def _create_upload_request() -> tuple[str | None, str | None, str]:
         result, err = post(
             url, auth,
             f"/katello/api/v2/repositories/{repository_id}/content_uploads",
@@ -306,11 +306,14 @@ def push_rpm(rpm_path: str, url: str, login: str, token: str, repository_id: int
             verify_ssl,
         )
         if err or not result:
-            return None, f"Could not create upload request: {err}"
+            return None, None, f"Could not create upload request: {err}"
         upload_id = result.get("upload_id")
-        if not upload_id:
-            return None, f"No upload_id in response: {result}"
-        return str(upload_id), ""
+        content_unit_href = result.get("content_unit_href")
+        if upload_id:
+            return str(upload_id), None, ""
+        if content_unit_href:
+            return None, str(content_unit_href), ""
+        return None, None, f"No upload_id or content_unit_href in response: {result}"
 
     def _put_url(upload_id: str) -> str:
         return url.rstrip("/") + f"/katello/api/v2/repositories/{repository_id}/content_uploads/{upload_id}"
@@ -406,9 +409,16 @@ def push_rpm(rpm_path: str, url: str, login: str, token: str, repository_id: int
             return "multipart", f"File upload failed: {upload_error}"
         return "multipart", ""
 
-    def _import_upload(upload_id: str) -> str:
+    def _import_upload(upload_id: str | None, content_unit_href: str | None = None) -> str:
+        upload = {
+            "id": upload_id or "duplicate",
+            "name": filename,
+            "checksum": checksum,
+        }
+        if content_unit_href:
+            upload["content_unit_id"] = content_unit_href
         import_payload = {
-            "uploads": [{"id": upload_id, "name": filename, "checksum": checksum}],
+            "uploads": [upload],
             "publish_repository": True,
             "content_type": "rpm",
         }
@@ -436,17 +446,19 @@ def push_rpm(rpm_path: str, url: str, login: str, token: str, repository_id: int
         return ""
 
     # Step 1: Create upload request
-    upload_id, create_err = _create_upload_request()
-    if create_err or not upload_id:
+    upload_id, content_unit_href, create_err = _create_upload_request()
+    if create_err:
         return create_err
 
-    # Step 2: Upload file (raw first, multipart fallback)
-    upload_method, upload_err = _upload_with_fallback(upload_id)
-    if upload_err:
-        return upload_err
+    upload_method = "duplicate"
+    if upload_id:
+        # Step 2: Upload file (raw first, multipart fallback)
+        upload_method, upload_err = _upload_with_fallback(upload_id)
+        if upload_err:
+            return upload_err
 
     # Step 3: Import and publish
-    err = _import_upload(upload_id)
+    err = _import_upload(upload_id, content_unit_href)
     if not err:
         return ""
 
@@ -457,18 +469,20 @@ def push_rpm(rpm_path: str, url: str, login: str, token: str, repository_id: int
             repository_id,
             upload_id,
         )
-        retry_upload_id, retry_create_err = _create_upload_request()
-        if retry_create_err or not retry_upload_id:
+        retry_upload_id, retry_content_unit_href, retry_create_err = _create_upload_request()
+        if retry_create_err:
             return f"Failed to import upload: {err} (retry setup failed: {retry_create_err})"
 
-        retry_method, retry_upload_err = _upload_with_fallback(retry_upload_id)
-        if retry_upload_err:
-            return (
-                f"Failed to import upload: {err} "
-                f"(retry {retry_method} upload failed: {retry_upload_err})"
-            )
+        retry_method = "duplicate"
+        if retry_upload_id:
+            retry_method, retry_upload_err = _upload_with_fallback(retry_upload_id)
+            if retry_upload_err:
+                return (
+                    f"Failed to import upload: {err} "
+                    f"(retry {retry_method} upload failed: {retry_upload_err})"
+                )
 
-        retry_import_err = _import_upload(retry_upload_id)
+        retry_import_err = _import_upload(retry_upload_id, retry_content_unit_href)
         if retry_import_err:
             compat_err = _upload_via_upload_content()
             if not compat_err:

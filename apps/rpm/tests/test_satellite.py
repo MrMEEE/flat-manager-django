@@ -49,6 +49,36 @@ class PushRpmTests(SimpleTestCase):
     @mock.patch("apps.rpm.satellite.get")
     @mock.patch("apps.rpm.satellite._request")
     @mock.patch("apps.rpm.satellite.post")
+    def test_existing_content_href_skips_upload_and_imports_existing_unit(
+        self,
+        mock_post,
+        mock_request,
+        mock_get,
+        mock_urlopen,
+        _mock_exists,
+        _mock_read_bytes,
+    ):
+        content_unit_href = "/pulp/api/v3/content/rpm/packages/019f88ed/"
+        mock_get.return_value = ({"version": "4.20.0"}, "")
+        mock_post.return_value = ({"content_unit_href": content_unit_href}, "")
+        mock_request.return_value = ({}, "")
+
+        err = satellite.push_rpm("/tmp/test.rpm", "https://sat.example", "svc", "token", 7, True)
+
+        self.assertEqual(err, "")
+        mock_urlopen.assert_not_called()
+        self.assertEqual(mock_request.call_count, 1)
+        import_payload = mock_request.call_args.args[4]
+        self.assertEqual(import_payload["uploads"][0]["id"], "duplicate")
+        self.assertEqual(import_payload["uploads"][0]["content_unit_id"], content_unit_href)
+        self.assertNotIn("size", import_payload["uploads"][0])
+
+    @mock.patch("pathlib.Path.read_bytes", return_value=b"rpm-bytes")
+    @mock.patch("pathlib.Path.exists", return_value=True)
+    @mock.patch("apps.rpm.satellite.urllib.request.urlopen")
+    @mock.patch("apps.rpm.satellite.get")
+    @mock.patch("apps.rpm.satellite._request")
+    @mock.patch("apps.rpm.satellite.post")
     def test_checksum_mismatch_retries_with_fresh_raw_upload(
         self,
         mock_post,
