@@ -76,6 +76,8 @@ class GPGKeyViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_permissions(self):
+        if self.action == 'renew':
+            return [IsAuthenticated()]
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [IsAuthenticated()]
         return [CanRepoAdmin()]

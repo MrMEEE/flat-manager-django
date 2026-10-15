@@ -1,4 +1,5 @@
 from django.shortcuts import get_object_or_404
+from django.views import View
 from rest_framework import mixins, serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import MethodNotAllowed, PermissionDenied, ValidationError
@@ -346,9 +347,27 @@ class WorkflowCatalogViewSet(viewsets.ViewSet):
 RESOURCE_ROUTES['workflows'] = WorkflowCatalogViewSet
 
 
+class GPGKeyRenewWorkflow(View):
+    """Renew a signing key using key_lifetime (0, 1y, 2y, 5y, or 10y)."""
+
+    def post(self, request, pk):
+        return flatpak_views.gpgkey_renew(request, pk)
+
+
 def register_workflows(router, api_views):
     for prefix, viewset in RESOURCE_ROUTES.items():
         router.register(prefix, viewset, basename=prefix)
+
+    workflow_action(api_views.GPGKeyViewSet, 'renew', GPGKeyRenewWorkflow,
+                    'gpg_keys', 'update')
+    workflow_action(LDAPSourceViewSet, 'test_connection', user_views.LDAPSourceTestConnectionView,
+                    'users', 'admin', detail=False, admin=True)
+    workflow_action(LDAPSourceViewSet, 'test_search', user_views.LDAPSourceTestSearchView,
+                    'users', 'admin', detail=False, admin=True)
+    workflow_action(RpmPackageViewSet, 'scan_spec_files', rpm_views.RpmScanSpecFilesView,
+                    'rpms', 'build', detail=False, method='get')
+    workflow_action(RpmPackageViewSet, 'scan_branches', rpm_views.RpmScanBranchesView,
+                    'rpms', 'build', detail=False, method='get')
 
     workflow_action(FlatpakRemoteViewSet, 'toggle', flatpak_views.FlatpakRemoteToggleView,
                     'config', 'update', admin=True)

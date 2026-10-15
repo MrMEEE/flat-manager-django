@@ -934,3 +934,157 @@ class ExpandedTokenAPITests(TestCase):
         response = self.client.post('/api/organisations/', ['not', 'an', 'object'], format='json')
         self.assertEqual(response.status_code, 400, response.content)
 
+
+class TokenDiagnosticWorkflowTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_superuser(username='diagnostics', password='test')
+        self.client = APIClient()
+        self.client.credentials(HTTP_AUTHORIZATION='Token ' + AuthToken.objects.create(user=self.admin).key)
+        self.key = GPGKey.objects.create(
+            name='signing', email='signing@example.com', key_id='1234', fingerprint='abcd',
+            public_key='original public key', private_key='private key')
+
+    @patch('apps.flatpak.views.renew_gpg_key')
+    def test_renew_updates_key_and_expiry(self, renew):
+        from datetime import date
+        renew.return_value = {'public_key': 'renewed public key', 'expires_at': date(2027, 10, 16)}
+        response = self.client.post(f'/api/gpg-keys/{self.key.pk}/renew/', {'key_lifetime': '1y'}, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        renew.assert_called_once_with(self.key, '1y')
+        self.key.refresh_from_db()
+        self.assertEqual(self.key.public_key, 'renewed public key')
+        self.assertEqual(self.key.expires_at, date(2027, 10, 16))
+        self.assertNotIn('private key', response.content.decode())
+
+    @patch('apps.flatpak.views.renew_gpg_key')
+    def test_renew_rejects_invalid_lifetime_without_running_gpg(self, renew):
+        for payload in ({}, {'key_lifetime': 'invalid'}):
+            response = self.client.post(f'/api/gpg-keys/{self.key.pk}/renew/', payload, format='json')
+            self.assertEqual(response.status_code, 400, response.content)
+        renew.assert_not_called()
+
+    @patch('apps.flatpak.views.renew_gpg_key', return_value={'public_key': 'renewed', 'expires_at': None})
+    def test_renew_enforces_organisation_scope(self, renew):
+        allowed = Organisation.objects.create(name='Allowed')
+        other = Organisation.objects.create(name='Other')
+        user = User.objects.create_user(username='key-manager')
+        PermissionGrant.objects.create(user=user, resource='gpg_keys', action='update',
+                                       organisation=allowed, granted=True)
+        self.key.organisations.add(other)
+        self.client.credentials(HTTP_AUTHORIZATION='Token ' + AuthToken.objects.create(user=user).key)
+        path = f'/api/gpg-keys/{self.key.pk}/renew/'
+        response = self.client.post(path, {'key_lifetime': '0'}, format='json')
+        self.assertEqual(response.status_code, 404, response.content)
+        renew.assert_not_called()
+        self.key.organisations.add(allowed)
+        response = self.client.post(path, {'key_lifetime': '0'}, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        renew.assert_called_once_with(self.key, '0')
+
+    @patch('ldap3.Connection')
+    @patch('apps.users.views._build_ldap_server')
+    def test_ldap_connection_can_use_stored_password(self, server, connection):
+        from apps.users.models import LDAPSource
+        source = LDAPSource.objects.create(name='LDAP', hostname='ldap.example.com')
+        source.set_bind_password('stored-secret')
+        source.save()
+        connection.return_value.bind.return_value = True
+        response = self.client.post('/api/ldap-sources/test-connection/', {
+            'hostname': source.hostname, 'port': 636, 'protocol': 'ldaps', 'verify_certs': True,
+            'bind_dn': 'cn=bind,dc=example,dc=com', 'source_pk': source.pk,
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(response.json()['ok'])
+        server.assert_called_once_with(source.hostname, 636, 'ldaps', True)
+        self.assertEqual(connection.call_args.kwargs['password'], 'stored-secret')
+        connection.return_value.unbind.assert_called_once()
+        self.assertNotIn('stored-secret', response.content.decode())
+
+    @patch('ldap3.Connection')
+    @patch('apps.users.views._build_ldap_server')
+    def test_ldap_search_returns_user_and_group_attributes(self, server, connection):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        entry = MagicMock()
+        entry.entry_dn = 'uid=alice,dc=example,dc=com'
+        attributes = {'uid': ['alice'], 'memberOf': ['cn=packagers', 'cn=users']}
+        entry.__getitem__.side_effect = lambda name: SimpleNamespace(values=attributes.get(name, []))
+        connection.return_value.bind.return_value = True
+        connection.return_value.search.return_value = True
+        connection.return_value.entries = [entry]
+        response = self.client.post('/api/ldap-sources/test-search/', {
+            'hostname': 'ldap.example.com', 'base_dn': 'dc=example,dc=com',
+            'search_username': 'alice*', 'attr_username': 'uid',
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(response.json()['ok'])
+        self.assertEqual(response.json()['dn'], entry.entry_dn)
+        self.assertEqual(response.json()['attributes']['memberOf'], attributes['memberOf'])
+        self.assertIn(r'(uid=alice\2a)', connection.return_value.search.call_args.kwargs['search_filter'])
+
+    @patch('apps.rpm.views.subprocess.run')
+    def test_rpm_branch_discovery_returns_sorted_names(self, run):
+        from types import SimpleNamespace
+        run.return_value = SimpleNamespace(returncode=0, stderr='', stdout=(
+            'abc\trefs/heads/testing\ndef\trefs/heads/main\n'))
+        response = self.client.post('/api/rpm-packages/scan-branches/', {
+            'url': 'https://example.com/source.git',
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()['branches'], ['main', 'testing'])
+        self.assertEqual(run.call_args.args[0], [
+            'git', 'ls-remote', '--heads', '--', 'https://example.com/source.git'])
+
+    @patch('apps.rpm.views.subprocess.run')
+    def test_rpm_spec_discovery_and_temporary_cleanup(self, run):
+        import shlex
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from types import SimpleNamespace
+
+        def clone(command, **kwargs):
+            source = Path(shlex.split(command[2])[-1])
+            (source / 'SPECS').mkdir(parents=True)
+            (source / 'SPECS' / 'app.spec').write_text('Name: app\n')
+            (source / 'other.spec').write_text('Name: other\n')
+            return SimpleNamespace(returncode=0, stdout='', stderr='')
+
+        run.side_effect = clone
+        with TemporaryDirectory() as base, patch('apps.rpm.views._get_writable_temp_base', return_value=base):
+            response = self.client.post('/api/rpm-packages/scan-spec-files/', {
+                'url': 'https://example.com/source.git', 'branch': 'stable',
+            }, format='json')
+            self.assertEqual(response.status_code, 200, response.content)
+            self.assertEqual(response.json()['spec_files'], ['SPECS/app.spec', 'other.spec'])
+            self.assertEqual(list(Path(base).iterdir()), [])
+
+    @patch('apps.rpm.views.subprocess.run')
+    def test_rpm_discovery_rejects_missing_urls_and_reports_timeouts(self, run):
+        import subprocess
+        for action_name in ('scan-branches', 'scan-spec-files'):
+            response = self.client.post(f'/api/rpm-packages/{action_name}/', {}, format='json')
+            self.assertEqual(response.status_code, 400, response.content)
+        run.assert_not_called()
+        run.side_effect = subprocess.TimeoutExpired('git', 30)
+        response = self.client.post('/api/rpm-packages/scan-branches/', {
+            'url': 'https://example.com/source.git',
+        }, format='json')
+        self.assertEqual(response.status_code, 504, response.content)
+
+    @patch('apps.flatpak.views.renew_gpg_key')
+    @patch('apps.users.views._build_ldap_server')
+    @patch('apps.rpm.views.subprocess.run')
+    def test_read_only_token_cannot_run_diagnostics(self, run, ldap, renew):
+        user = User.objects.create_user(username='viewer')
+        self.client.credentials(HTTP_AUTHORIZATION='Token ' + AuthToken.objects.create(user=user).key)
+        for path in (
+            f'/api/gpg-keys/{self.key.pk}/renew/',
+            '/api/ldap-sources/test-connection/', '/api/ldap-sources/test-search/',
+            '/api/rpm-packages/scan-branches/', '/api/rpm-packages/scan-spec-files/',
+        ):
+            with self.subTest(path=path):
+                response = self.client.post(path, {}, format='json')
+                self.assertEqual(response.status_code, 403, response.content)
+        for operation in (run, ldap, renew):
+            operation.assert_not_called()
+
