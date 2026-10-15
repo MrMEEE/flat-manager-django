@@ -2,6 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from . import views
 from . import flathub
+from .workflows import register_workflows
 
 router = DefaultRouter()
 router.register(r'users', views.UserViewSet)
@@ -16,6 +17,7 @@ router.register(r'tokens', views.TokenViewSet)
 router.register(r'external-refs', views.ExternalRefViewSet, basename='external-ref')
 router.register(r'promotions', views.PromotionViewSet, basename='promotion')
 router.register(r'external-ref-promotions', views.ExternalRefPromotionViewSet, basename='external-ref-promotion')
+register_workflows(router, views)
 
 app_name = 'api'
 

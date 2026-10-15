@@ -528,7 +528,7 @@ class BuildViewSet(viewsets.ReadOnlyModelViewSet):
         })
 
 
-class ExternalRefViewSet(viewsets.ReadOnlyModelViewSet):
+class ExternalRefViewSet(viewsets.ModelViewSet):
     """List External refs and their versions, inspect logs, or queue pull/publish/promote tasks."""
     queryset = ExternalRef.objects.select_related('repository', 'remote').prefetch_related('versions')
     serializer_class = ExternalRefSerializer
@@ -536,6 +536,24 @@ class ExternalRefViewSet(viewsets.ReadOnlyModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ['repository', 'remote', 'status', 'ref']
     search_fields = ['ref', 'display_name']
+
+    def get_permissions(self):
+        required = {'create': 'create', 'update': 'update', 'partial_update': 'update', 'destroy': 'delete'}
+        if self.request.user.is_authenticated and self.action in required:
+            if not _has_scoped_permission(self.request.user, 'externals', required[self.action]):
+                raise PermissionDenied()
+        return super().get_permissions()
+
+    def perform_create(self, serializer):
+        external = serializer.save(created_by=self.request.user)
+        apply_default_organisation(external, self.request.user)
+        from apps.flatpak.tasks import pull_external_ref_task
+        pull_external_ref_task.delay(external.pk)
+
+    def perform_destroy(self, instance):
+        from apps.flatpak.tasks import remove_external_ref_from_repos
+        remove_external_ref_from_repos(instance)
+        instance.delete()
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -546,7 +564,8 @@ class ExternalRefViewSet(viewsets.ReadOnlyModelViewSet):
             return _scope_published_queryset(
                 queryset, self.request.user, permission, 'externals', self.action,
             )
-        return scope_queryset_for_user(queryset, self.request.user, 'externals')
+        permission = {'update': 'update', 'partial_update': 'update', 'destroy': 'delete'}.get(self.action, 'read')
+        return scope_queryset_for_user(queryset, self.request.user, 'externals', permission)
 
     @action(detail=True, methods=['post'])
     def pull(self, request, pk=None):

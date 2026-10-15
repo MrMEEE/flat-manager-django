@@ -367,6 +367,20 @@ class TokenWorkflowTests(TestCase):
             commit_hash='a' * 64, status='published')
 
     @patch('apps.flatpak.tasks.pull_external_ref_task.delay')
+    def test_external_definitions_can_be_created_and_edited(self, task):
+        response = self.client.post('/api/external-refs/', {
+            'repository': self.source.pk, 'remote': self.remote.pk,
+            'ref': 'app/org.example.New/x86_64/stable',
+        }, format='json')
+        self.assertEqual(response.status_code, 201, response.content)
+        task.assert_called_once_with(response.json()['id'])
+        response = self.client.patch(f"/api/external-refs/{response.json()['id']}/", {
+            'ref': 'app/org.example.New/x86_64/testing',
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()['ref'], 'app/org.example.New/x86_64/testing')
+
+    @patch('apps.flatpak.tasks.pull_external_ref_task.delay')
     def test_pull_external_with_token(self, task):
         response = self.client.post(f'/api/external-refs/{self.external.pk}/pull/', {}, format='json')
         self.assertEqual(response.status_code, 202, response.content)
@@ -604,4 +618,319 @@ class TokenWorkflowTests(TestCase):
         response = self.client.post(
             f'/api/external-refs/{self.external.pk}/pull/', {}, format='json')
         self.assertEqual(response.status_code, 202, response.content)
+
+
+class ExpandedTokenAPITests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_superuser(username='api-admin', password='test')
+        self.client = APIClient()
+        self.client.credentials(HTTP_AUTHORIZATION='Token ' + AuthToken.objects.create(user=self.admin).key)
+        self.repo = Repository.objects.create(name='main')
+
+    def test_all_resource_lists_serialize_as_json(self):
+        from apps.api.workflows import RESOURCE_ROUTES
+        for prefix in RESOURCE_ROUTES:
+            with self.subTest(prefix=prefix):
+                response = self.client.get(f'/api/{prefix}/')
+                self.assertEqual(response.status_code, 200, response.content)
+                self.assertTrue(response['Content-Type'].startswith('application/json'))
+
+    def test_remote_create_update_and_delete(self):
+        response = self.client.post('/api/flatpak-remotes/', {
+            'name': 'upstream', 'url': 'https://example.com/repo', 'is_active': True,
+        }, format='json')
+        self.assertEqual(response.status_code, 201, response.content)
+        remote_id = response.json()['id']
+        response = self.client.patch(f'/api/flatpak-remotes/{remote_id}/', {'is_active': False}, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertFalse(response.json()['is_active'])
+        self.assertEqual(self.client.delete(f'/api/flatpak-remotes/{remote_id}/').status_code, 204)
+
+    def test_organisation_form_errors_are_json(self):
+        response = self.client.post('/api/organisations/', {'name': ''}, format='json')
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn('errors', response.json())
+        response = self.client.post('/api/organisations/', {
+            'name': 'Test', 'responsible_name': 'Owner', 'responsible_email': 'owner@example.com',
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(Organisation.objects.filter(name='Test').exists())
+
+    @patch('apps.flatpak.tasks.pull_external_ref_task.delay')
+    def test_external_bulk_import(self, task):
+        remote = FlatpakRemote.objects.create(name='upstream', url='https://example.com/repo')
+        response = self.client.post('/api/external-refs/bulk-import/', {
+            'repository_id': self.repo.pk, 'remote_id': remote.pk,
+            'refs': ['app/org.example.New/x86_64/stable'],
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()['created'], 1)
+        self.assertEqual(task.call_count, 1)
+
+    def test_package_retry_reuses_existing_workflow(self):
+        package = Package.objects.create(repository=self.repo, package_id='org.example.App',
+                                         package_name='App', status='failed')
+        response = self.client.post(f'/api/packages/{package.pk}/retry/', {}, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        package.refresh_from_db()
+        self.assertEqual(package.status, 'pending')
+
+    @patch('apps.flatpak.tasks.publish_package_task.delay')
+    def test_package_republish_dispatch(self, task):
+        package = Package.objects.create(repository=self.repo, package_id='org.example.App',
+                                         package_name='App', status='failed', produced_refs=['app/ref'])
+        response = self.client.post(f'/api/packages/{package.pk}/republish/', {}, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        task.assert_called_once_with(package.pk, generate_deltas=False)
+
+    def test_bst_source_create_and_retry(self):
+        from apps.flatpak.models import BuildStreamSource
+        response = self.client.post('/api/bst-sources/', {
+            'name': 'BST', 'repository': self.repo.pk, 'git_repo_url': 'https://example.com/source.git',
+            'git_branch': 'main', 'bst_element': 'app.bst', 'bst_version': 'bst2',
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        source = BuildStreamSource.objects.get(name='BST')
+        source.status = 'failed'
+        source.save()
+        response = self.client.post(f'/api/bst-sources/{source.pk}/retry/', {}, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        source.refresh_from_db()
+        self.assertEqual(source.status, 'pending')
+
+    def test_client_lockdown_and_organisation_assignment(self):
+        client = Client.objects.create(hostname='device')
+        organisation = Organisation.objects.create(name='Test')
+        response = self.client.post(f'/api/clients/{client.pk}/assign-organisations/', {
+            'organisations': [organisation.pk],
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(client.organisations.filter(pk=organisation.pk).exists())
+        response = self.client.post(f'/api/clients/{client.pk}/lockdown/', {'lockdown': True}, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        client.refresh_from_db()
+        self.assertTrue(client.lockdown)
+
+    def test_group_membership_removal_does_not_delete_group(self):
+        group = PermissionGroup.objects.create(name='Custom')
+        group.users.add(self.admin)
+        response = self.client.post(f'/api/permission-groups/{group.pk}/memberships/', {
+            'submit_action': 'remove_user', 'user_pk': self.admin.pk,
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(PermissionGroup.objects.filter(pk=group.pk).exists())
+        self.assertFalse(group.users.filter(pk=self.admin.pk).exists())
+
+    @patch('apps.flatpak.tasks.cleanup_failed_builds', return_value='Done')
+    def test_maintenance_cleanup_requires_admin(self, task):
+        user = User.objects.create_user(username='viewer')
+        self.client.credentials(HTTP_AUTHORIZATION='Token ' + AuthToken.objects.create(user=user).key)
+        response = self.client.post('/api/site-config/cleanup/', {}, format='json')
+        self.assertEqual(response.status_code, 403, response.content)
+        task.assert_not_called()
+        self.client.credentials(HTTP_AUTHORIZATION='Token ' + AuthToken.objects.get(user=self.admin).key)
+        response = self.client.post('/api/site-config/cleanup/', {}, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        task.assert_called_once()
+
+    @patch('apps.rpm.tasks.rpm_build_task.delay')
+    def test_rpm_package_create_and_build(self, task):
+        from apps.rpm.models import RpmDistribution, RpmPackage
+        distribution = RpmDistribution.objects.create(name='test', display_name='Test',
+                                                     mock_config='test', arch='x86_64', rhel_version=10)
+        response = self.client.post('/api/rpm-packages/', {
+            'name': 'test', 'git_repo_url': 'https://example.com/source.git', 'git_branch': 'main',
+            'spec_file': 'test.spec', 'distributions': [distribution.pk],
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        package = RpmPackage.objects.get(name='test')
+        self.assertEqual(task.call_count, 1)
+        response = self.client.post(f'/api/rpm-packages/{package.pk}/build/', {}, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(task.call_count, 2)
+
+    def test_credentials_are_not_serialized(self):
+        from apps.rpm.models import SatelliteServer
+        from apps.users.models import LDAPSource
+        SatelliteServer.objects.create(name='sat', url='https://example.com', login='svc', token_encrypted='TOPSECRET')
+        LDAPSource.objects.create(name='ldap', hostname='ldap.example.com', bind_password_encrypted='TOPSECRET')
+        for prefix in ('satellite-servers', 'ldap-sources'):
+            response = self.client.get(f'/api/{prefix}/')
+            self.assertEqual(response.status_code, 200, response.content)
+            self.assertNotIn('TOPSECRET', response.content.decode())
+
+    def test_read_only_token_cannot_access_global_management(self):
+        user = User.objects.create_user(username='viewer')
+        self.client.credentials(HTTP_AUTHORIZATION='Token ' + AuthToken.objects.create(user=user).key)
+        for prefix in ('organisations', 'permission-groups', 'ldap-sources', 'satellite-servers', 'site-config'):
+            with self.subTest(prefix=prefix):
+                self.assertEqual(self.client.get(f'/api/{prefix}/').status_code, 403)
+
+    def test_every_new_resource_and_action_requires_authentication(self):
+        from apps.api.urls import router
+        self.client.credentials()
+        for prefix, viewset, basename in router.registry:
+            for operation in viewset.get_extra_actions():
+                if not hasattr(operation, 'workflow'):
+                    continue
+                path = f'/api/{prefix}/' + ('1/' if operation.detail else '') + operation.url_path + '/'
+                with self.subTest(path=path):
+                    response = self.client.post(path, {}, format='json')
+                    self.assertEqual(response.status_code, 401, response.content)
+
+    def test_workflow_catalog_lists_actions_and_nested_inputs(self):
+        response = self.client.get('/api/workflows/')
+        self.assertEqual(response.status_code, 200, response.content)
+        resources = {item['path']: item for item in response.json()['resources']}
+        actions = resources['/api/rpm-packages/']['actions']
+        signing = next(item for item in actions if item['path'].endswith('/signing-key/'))
+        self.assertEqual(signing['extra_ids'], ['dist_pk'])
+
+    @patch('apps.flatpak.tasks.buildstream_build_task.delay')
+    def test_bst_build_and_force_rebuild_dispatch(self, task):
+        from apps.flatpak.models import BuildStreamSource
+        source = BuildStreamSource.objects.create(
+            name='BST', repository=self.repo, git_repo_url='https://example.com/source.git', bst_element='app.bst')
+        response = self.client.post(f'/api/bst-sources/{source.pk}/build/', {}, format='json')
+        self.assertEqual(response.status_code, 202, response.content)
+        task.assert_called_once_with(source.pk)
+        task.reset_mock()
+        source.status = 'failed'
+        source.save()
+        response = self.client.post(f'/api/bst-sources/{source.pk}/force-rebuild/', {}, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        task.assert_called_once_with(source.pk, force_rebuild=True)
+
+    @patch('apps.flatpak.tasks.promote_bst_task.delay')
+    def test_bst_promotion(self, task):
+        from apps.flatpak.models import BuildStreamSource, BstPromotion
+        source = BuildStreamSource.objects.create(name='BST', repository=self.repo)
+        build = Build.objects.create(bst_source=source, build_number=1, status='published')
+        target = Repository.objects.create(name='target')
+        target.parent_repos.add(self.repo)
+        response = self.client.post(f'/api/builds/{build.pk}/bst-promote/', {
+            'target_repo_id': target.pk,
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        promotion = BstPromotion.objects.get(pk=response.json()['promotion_id'])
+        task.assert_called_once_with(promotion.pk)
+
+    @patch('apps.flatpak.tasks.commit_package_task.delay')
+    @patch('apps.flatpak.utils.ostree.update_repo_metadata')
+    @patch('apps.flatpak.views.subprocess.run')
+    def test_build_unpublish_and_recommit(self, run, metadata, task):
+        package = Package.objects.create(repository=self.repo, package_id='org.example.App', package_name='App')
+        build = Build.objects.create(package=package, build_number=1, status='published')
+        response = self.client.post(f'/api/builds/{build.pk}/unpublish/', {}, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        build.refresh_from_db()
+        self.assertEqual(build.status, 'committed')
+        metadata.assert_called_once()
+        response = self.client.post(f'/api/builds/{build.pk}/recommit/', {}, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        task.assert_called_once_with(package.pk)
+
+    @patch('apps.flatpak.views._delete_promotion_from_repo')
+    def test_promotion_delete_invokes_content_cleanup(self, cleanup):
+        package = Package.objects.create(repository=self.repo, package_id='org.example.App', package_name='App')
+        build = Build.objects.create(package=package, build_number=1, status='published')
+        promotion = Promotion.objects.create(build=build, package=package, target_repo=self.repo, status='promoted')
+        response = self.client.post(f'/api/promotions/{promotion.pk}/delete/', {}, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(cleanup.called)
+
+    def test_ldap_source_and_mapping_crud(self):
+        response = self.client.post('/api/ldap-sources/', {
+            'name': 'LDAP', 'hostname': 'ldap.example.com', 'port': 389, 'protocol': 'ldap',
+            'base_dn': 'dc=example,dc=com', 'attr_username': 'uid', 'attr_email': 'mail',
+            'attr_first_name': 'givenName', 'attr_last_name': 'sn',
+            'server_type': 'posix', 'group_membership': 'posix',
+            'bind_dn': 'cn=bind,dc=example,dc=com',
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        response = self.client.post('/api/ldap-group-mappings/', {
+            'source': response.json()['id'], 'ldap_group_dn': 'cn=users,dc=example,dc=com', 'role': 'view',
+        }, format='json')
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(self.client.delete(f"/api/ldap-group-mappings/{response.json()['id']}/").status_code, 204)
+
+    def test_user_roles_and_permission_grants(self):
+        response = self.client.post('/api/user-roles/', {'user': self.admin.pk, 'role': 'view'}, format='json')
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(self.client.delete(f"/api/user-roles/{response.json()['id']}/").status_code, 204)
+        response = self.client.post('/api/permission-grants/', {
+            'user': self.admin.pk, 'resource': 'externals', 'action': 'sync', 'granted': True,
+        }, format='json')
+        self.assertEqual(response.status_code, 201, response.content)
+
+    def test_rpm_repository_signing_and_destination_assignments(self):
+        from apps.rpm.models import (
+            RpmPackage, RpmDistribution, RpmRepository, RpmPackageSigningKey,
+            SatelliteServer, SatelliteRepository, RpmPackageDistributionDestination,
+        )
+        package = RpmPackage.objects.create(name='test', git_repo_url='https://example.com/source.git')
+        distribution = RpmDistribution.objects.create(name='dist', display_name='Dist', mock_config='dist')
+        repo = RpmRepository.objects.create(distribution=distribution, repo_id='repo', name='Repo')
+        response = self.client.post(f'/api/rpm-packages/{package.pk}/toggle-repository/', {'repo_pk': repo.pk}, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(package.default_repos.filter(pk=repo.pk).exists())
+        key = GPGKey.objects.create(name='key', email='test@example.com', key_id='1234', fingerprint='abc')
+        response = self.client.post(f'/api/rpm-packages/{package.pk}/signing-key/', {
+            'dist_pk': distribution.pk, 'signing_key_id': key.pk,
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(RpmPackageSigningKey.objects.get(package=package).signing_key, key)
+        server = SatelliteServer.objects.create(name='sat', url='https://example.com', login='svc')
+        satellite_repo = SatelliteRepository.objects.create(server=server, name='repo', repository_id=1)
+        response = self.client.post(f'/api/rpm-packages/{package.pk}/assign-destination/', {
+            'distribution_id': distribution.pk, 'repository_id': satellite_repo.pk,
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(RpmPackageDistributionDestination.objects.filter(package=package).exists())
+
+    def test_site_config_patch_keeps_unspecified_fields(self):
+        from apps.flatpak.models import SiteConfig
+        config = SiteConfig.get_solo()
+        before = config.failed_builds_to_keep
+        response = self.client.patch(f'/api/site-config/{config.pk}/', {'timezone': 'UTC'}, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        config.refresh_from_db()
+        self.assertEqual(config.failed_builds_to_keep, before)
+
+    def test_new_object_routes_respect_organisation_scope(self):
+        from apps.flatpak.models import BuildStreamSource
+        from apps.rpm.models import RpmPackage
+        allowed = Organisation.objects.create(name='Allowed')
+        denied = Organisation.objects.create(name='Denied')
+        user = User.objects.create_user(username='scoped')
+        for resource in ('clients', 'buildstreams', 'rpms'):
+            for permission in ('read', 'delete', 'build', 'update'):
+                PermissionGrant.objects.create(user=user, resource=resource, action=permission,
+                                               organisation=allowed, granted=True)
+        client = Client.objects.create(hostname='restricted')
+        source = BuildStreamSource.objects.create(name='Restricted', repository=self.repo)
+        package = RpmPackage.objects.create(name='restricted')
+        for instance in (client, source, package):
+            instance.organisations.add(denied)
+        self.client.credentials(HTTP_AUTHORIZATION='Token ' + AuthToken.objects.create(user=user).key)
+        for path in (f'/api/clients/{client.pk}/', f'/api/bst-sources/{source.pk}/',
+                     f'/api/rpm-packages/{package.pk}/'):
+            with self.subTest(path=path):
+                self.assertEqual(self.client.get(path).status_code, 404)
+                self.assertEqual(self.client.delete(path).status_code, 404)
+
+    @patch('apps.flatpak.tasks.pull_external_ref_task.delay')
+    def test_bulk_import_validates_all_refs_before_queuing(self, task):
+        remote = FlatpakRemote.objects.create(name='upstream', url='https://example.com/repo')
+        for refs in ([], ['not-a-flatpak-ref'], ['app/org.example.Valid/x86_64/stable', {}]):
+            response = self.client.post('/api/external-refs/bulk-import/', {
+                'repository_id': self.repo.pk, 'remote_id': remote.pk, 'refs': refs,
+            }, format='json')
+            self.assertEqual(response.status_code, 400, response.content)
+        task.assert_not_called()
+        self.assertFalse(ExternalRef.objects.exists())
+
+    def test_workflow_rejects_non_object_json(self):
+        response = self.client.post('/api/organisations/', ['not', 'an', 'object'], format='json')
+        self.assertEqual(response.status_code, 400, response.content)
 

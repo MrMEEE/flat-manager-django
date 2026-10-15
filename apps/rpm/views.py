@@ -16,7 +16,8 @@ from django.views import View
 from django.http import FileResponse, Http404, JsonResponse
 from django.urls import reverse_lazy, reverse
 from django.contrib import messages
-from django.shortcuts import get_object_or_404, redirect, render
+from django.shortcuts import get_object_or_404, redirect
+from apps.api.adapters import render_workflow as render
 from django.utils import timezone
 
 from .models import (

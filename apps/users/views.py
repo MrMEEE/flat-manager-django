@@ -2,7 +2,8 @@ from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.mixins import LoginRequiredMixin
 from .mixins import AdminRequiredMixin, scope_queryset_for_user
 from django.http import JsonResponse
-from django.shortcuts import render, redirect, get_object_or_404
+from django.shortcuts import redirect, get_object_or_404
+from apps.api.adapters import render_workflow as render
 from django.views import View
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView
 from django.urls import reverse_lazy, reverse

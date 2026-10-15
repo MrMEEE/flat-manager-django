@@ -196,7 +196,22 @@ class ExternalRefSerializer(serializers.ModelSerializer):
         model = ExternalRef
         fields = ['id', 'repository', 'remote', 'ref', 'display_name', 'commit_hash',
                   'status', 'error_message', 'log', 'last_pulled_at', 'versions']
-        read_only_fields = fields
+        read_only_fields = ['id', 'commit_hash', 'status', 'error_message', 'log', 'last_pulled_at', 'versions']
+
+    def validate(self, attrs):
+        request = self.context['request']
+        from apps.users.mixins import scope_queryset_for_user
+        repository = attrs.get('repository')
+        if repository and not scope_queryset_for_user(
+            Repository.objects.filter(pk=repository.pk), request.user, 'repositories'
+        ).exists():
+            raise serializers.ValidationError({'repository': 'Repository is outside your organisation scope.'})
+        if repository and (not repository.is_active or repository.parent_repos.exists()):
+            raise serializers.ValidationError({'repository': 'Choose an active top-level repository.'})
+        remote = attrs.get('remote')
+        if remote and not remote.is_active:
+            raise serializers.ValidationError({'remote': 'Remote is disabled.'})
+        return attrs
 
 
 class PromotionSerializer(serializers.ModelSerializer):

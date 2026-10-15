@@ -12,7 +12,8 @@ from django.views import View
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
 from django.urls import reverse_lazy, reverse
 from django.contrib import messages
-from django.shortcuts import render, redirect, get_object_or_404
+from django.shortcuts import redirect, get_object_or_404
+from apps.api.adapters import render_workflow as render
 from django.conf import settings
 from apps.users.mixins import (
     BuildAdminRequiredMixin, ResourceActionRequiredMixin, scope_queryset_for_user,
