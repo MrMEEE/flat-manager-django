@@ -13,6 +13,9 @@ router.register(r'packages', views.PackageViewSet)
 router.register(r'builds', views.BuildViewSet, basename='build')  # Build history
 router.register(r'artifacts', views.BuildArtifactViewSet)
 router.register(r'tokens', views.TokenViewSet)
+router.register(r'external-refs', views.ExternalRefViewSet, basename='external-ref')
+router.register(r'promotions', views.PromotionViewSet, basename='promotion')
+router.register(r'external-ref-promotions', views.ExternalRefPromotionViewSet, basename='external-ref-promotion')
 
 app_name = 'api'
 

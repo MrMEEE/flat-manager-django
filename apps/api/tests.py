@@ -6,9 +6,10 @@ from rest_framework.test import APIClient
 
 from apps.flatpak.models import (
     AppMetadata, AppUsageObservation, Build, Client, GPGKey, Package, Repository,
+    ExternalRef, ExternalRefVersion, ExternalRefPromotion, FlatpakRemote, Promotion, Organisation,
 )
 from apps.users.models import (
-    PermissionGroup, PermissionGroupPermission, User, UserProfile,
+    PermissionGrant, PermissionGroup, PermissionGroupPermission, User, UserProfile,
 )
 
 
@@ -343,4 +344,264 @@ class APIRegressionTests(TestCase):
                               public_key='p', private_key='s')
         r = self.client.get('/api/gpg-keys/')
         self.assertEqual(r.status_code, 200, r.content)
+
+
+class TokenWorkflowTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_superuser(username='workflow', password='test')
+        self.client = APIClient()
+        self.client.credentials(
+            HTTP_AUTHORIZATION='Token ' + AuthToken.objects.create(user=self.user).key)
+        self.source = Repository.objects.create(name='source')
+        self.target = Repository.objects.create(name='target')
+        self.target.parent_repos.add(self.source)
+        self.package = Package.objects.create(
+            repository=self.source, package_id='org.example.App', package_name='App')
+        self.build = Build.objects.create(package=self.package, build_number=1, status='published')
+        self.remote = FlatpakRemote.objects.create(name='upstream', url='https://example.com/repo')
+        self.external = ExternalRef.objects.create(
+            repository=self.source, remote=self.remote,
+            ref='app/org.example.External/x86_64/stable', status='published')
+        self.version = ExternalRefVersion.objects.create(
+            external_ref=self.external, ref=self.external.ref,
+            commit_hash='a' * 64, status='published')
+
+    @patch('apps.flatpak.tasks.pull_external_ref_task.delay')
+    def test_pull_external_with_token(self, task):
+        response = self.client.post(f'/api/external-refs/{self.external.pk}/pull/', {}, format='json')
+        self.assertEqual(response.status_code, 202, response.content)
+        task.assert_called_once_with(self.external.pk)
+        self.external.refresh_from_db()
+        self.assertEqual(self.external.status, 'pending')
+
+    @patch('apps.flatpak.tasks.publish_external_ref_task.delay')
+    def test_publish_external_with_token(self, task):
+        self.external.status = 'pulled'
+        self.external.save()
+        response = self.client.post(f'/api/external-refs/{self.external.pk}/publish/', {}, format='json')
+        self.assertEqual(response.status_code, 202, response.content)
+        task.assert_called_once_with(self.external.pk)
+
+    @patch('apps.flatpak.tasks.promote_build_task.delay')
+    def test_promote_build_with_token(self, task):
+        response = self.client.post(
+            f'/api/builds/{self.build.pk}/promote/',
+            {'target_repo_id': self.target.pk}, format='json')
+        self.assertEqual(response.status_code, 202, response.content)
+        promotion = Promotion.objects.get(pk=response.json()['promotion_id'])
+        self.assertEqual(promotion.build, self.build)
+        self.assertEqual(promotion.target_repo, self.target)
+        self.assertEqual(promotion.promoted_by, self.user)
+        task.assert_called_once_with(promotion.pk)
+
+    @patch('apps.flatpak.tasks.promote_external_ref_task.delay')
+    def test_promote_external_version_with_token(self, task):
+        response = self.client.post(
+            f'/api/external-refs/{self.external.pk}/promote/',
+            {'target_repo_id': self.target.pk, 'external_ref_version_id': self.version.pk},
+            format='json')
+        self.assertEqual(response.status_code, 202, response.content)
+        promotion = ExternalRefPromotion.objects.get(pk=response.json()['promotion_id'])
+        self.assertEqual(promotion.external_ref_version, self.version)
+        self.assertEqual(promotion.promoted_by, self.user)
+        task.assert_called_once_with(promotion.pk)
+
+    def test_anonymous_requests_require_token(self):
+        self.client.credentials()
+        for path in (
+            f'/api/external-refs/{self.external.pk}/pull/',
+            f'/api/external-refs/{self.external.pk}/publish/',
+            f'/api/external-refs/{self.external.pk}/promote/',
+            f'/api/builds/{self.build.pk}/promote/',
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(self.client.post(path, {}, format='json').status_code, 401)
+
+    def test_read_only_token_cannot_dispatch_workflows(self):
+        user = User.objects.create_user(username='viewer')
+        self.client.credentials(
+            HTTP_AUTHORIZATION='Token ' + AuthToken.objects.create(user=user).key)
+        with patch('apps.flatpak.tasks.pull_external_ref_task.delay') as pull, \
+                patch('apps.flatpak.tasks.publish_external_ref_task.delay') as publish, \
+                patch('apps.flatpak.tasks.promote_build_task.delay') as promote, \
+                patch('apps.flatpak.tasks.promote_external_ref_task.delay') as promote_external:
+            for path in (
+                f'/api/external-refs/{self.external.pk}/pull/',
+                f'/api/external-refs/{self.external.pk}/publish/',
+                f'/api/external-refs/{self.external.pk}/promote/',
+                f'/api/builds/{self.build.pk}/promote/',
+            ):
+                with self.subTest(path=path):
+                    response = self.client.post(path, {'target_repo_id': self.target.pk}, format='json')
+                    self.assertEqual(response.status_code, 403, response.content)
+            for task in (pull, publish, promote, promote_external):
+                task.assert_not_called()
+        self.assertFalse(Promotion.objects.exists())
+        self.assertFalse(ExternalRefPromotion.objects.exists())
+
+    @patch('apps.flatpak.tasks.promote_build_task.delay')
+    def test_build_promotion_validates_state_target_and_duplicates(self, task):
+        path = f'/api/builds/{self.build.pk}/promote/'
+        for payload in ({}, {'target_repo_id': 'bad'}, {'target_repo_id': []},
+                        {'target_repo_id': self.source.pk}):
+            with self.subTest(payload=payload):
+                self.assertEqual(self.client.post(path, payload, format='json').status_code, 400)
+        self.build.status = 'built'
+        self.build.save()
+        self.assertEqual(self.client.post(
+            path, {'target_repo_id': self.target.pk}, format='json').status_code, 400)
+        self.assertFalse(Promotion.objects.exists())
+        task.assert_not_called()
+        self.build.status = 'published'
+        self.build.save()
+        self.assertEqual(self.client.post(
+            path, {'target_repo_id': self.target.pk}, format='json').status_code, 202)
+        self.assertEqual(self.client.post(
+            path, {'target_repo_id': self.target.pk}, format='json').status_code, 400)
+        self.assertEqual(Promotion.objects.count(), 1)
+        self.assertEqual(task.call_count, 1)
+
+    @patch('apps.flatpak.tasks.promote_build_task.delay')
+    def test_build_promotion_enforces_parent_chain(self, task):
+        downstream = Repository.objects.create(name='downstream')
+        downstream.parent_repos.add(self.target)
+        path = f'/api/builds/{self.build.pk}/promote/'
+        self.assertEqual(self.client.post(
+            path, {'target_repo_id': downstream.pk}, format='json').status_code, 400)
+        task.assert_not_called()
+        Promotion.objects.create(
+            build=self.build, package=self.package, target_repo=self.target, status='promoted')
+        self.assertEqual(self.client.post(
+            path, {'target_repo_id': downstream.pk}, format='json').status_code, 202)
+
+    @patch('apps.flatpak.tasks.promote_build_task.delay')
+    def test_failed_build_promotion_can_be_queued_again(self, task):
+        promotion = Promotion.objects.create(
+            build=self.build, package=self.package, target_repo=self.target,
+            status='failed', error_message='Previous attempt failed')
+        response = self.client.post(
+            f'/api/builds/{self.build.pk}/promote/',
+            {'target_repo_id': self.target.pk}, format='json')
+        self.assertEqual(response.status_code, 202, response.content)
+        self.assertEqual(response.json()['promotion_id'], promotion.pk)
+        promotion.refresh_from_db()
+        self.assertEqual(promotion.status, 'pending')
+        self.assertEqual(promotion.error_message, '')
+        task.assert_called_once_with(promotion.pk)
+
+    @patch('apps.flatpak.tasks.promote_external_ref_task.delay')
+    def test_external_promotion_requires_published_version_of_same_ref(self, task):
+        other = ExternalRef.objects.create(repository=self.source, ref='app/other/x86_64/stable')
+        other_version = ExternalRefVersion.objects.create(
+            external_ref=other, ref=other.ref, commit_hash='b' * 64, status='published')
+        path = f'/api/external-refs/{self.external.pk}/promote/'
+        for version_id in ('bad', [], other_version.pk):
+            with self.subTest(version_id=version_id):
+                response = self.client.post(path, {
+                    'target_repo_id': self.target.pk, 'external_ref_version_id': version_id,
+                }, format='json')
+                self.assertIn(response.status_code, (400, 404), response.content)
+        self.version.status = 'pulled'
+        self.version.save()
+        self.assertEqual(self.client.post(path, {
+            'target_repo_id': self.target.pk, 'external_ref_version_id': self.version.pk,
+        }, format='json').status_code, 404)
+        self.assertEqual(self.client.post(
+            path, {'target_repo_id': self.target.pk}, format='json').status_code, 400)
+        task.assert_not_called()
+        self.assertFalse(ExternalRefPromotion.objects.exists())
+
+    @patch('apps.flatpak.tasks.promote_external_ref_task.delay')
+    def test_external_promotion_defaults_to_latest_published_version(self, task):
+        latest = ExternalRefVersion.objects.create(
+            external_ref=self.external, ref=self.external.ref,
+            commit_hash='b' * 64, status='published')
+        ExternalRefVersion.objects.create(
+            external_ref=self.external, ref=self.external.ref, commit_hash='c' * 64)
+        ExternalRefPromotion.objects.create(
+            external_ref=self.external, external_ref_version=self.version,
+            target_repo=self.target, status='promoted')
+        path = f'/api/external-refs/{self.external.pk}/promote/'
+        response = self.client.post(path, {'target_repo_id': self.target.pk}, format='json')
+        self.assertEqual(response.status_code, 202, response.content)
+        promotion = ExternalRefPromotion.objects.get(pk=response.json()['promotion_id'])
+        self.assertEqual(promotion.external_ref_version, latest)
+        self.assertEqual(self.client.post(
+            path, {'target_repo_id': self.target.pk}, format='json').status_code, 400)
+        self.assertEqual(task.call_count, 1)
+
+    @patch('apps.flatpak.tasks.pull_external_ref_task.delay')
+    @patch('apps.flatpak.tasks.publish_external_ref_task.delay')
+    def test_external_pull_publish_reject_invalid_states(self, publish, pull):
+        for state in ('pulling', 'publishing'):
+            self.external.status = state
+            self.external.save()
+            for action_name in ('pull', 'publish'):
+                with self.subTest(state=state, action=action_name):
+                    response = self.client.post(
+                        f'/api/external-refs/{self.external.pk}/{action_name}/', {}, format='json')
+                    self.assertEqual(response.status_code, 400, response.content)
+        self.external.status = 'pending'
+        self.external.remote = None
+        self.external.save()
+        self.assertEqual(self.client.post(
+            f'/api/external-refs/{self.external.pk}/pull/', {}, format='json').status_code, 400)
+        pull.assert_not_called()
+        publish.assert_not_called()
+
+    @patch('apps.flatpak.tasks.promote_build_task.delay')
+    @patch('apps.flatpak.tasks.promote_external_ref_task.delay')
+    def test_promotion_status_can_be_polled(self, promote_external, promote):
+        for path, detail_path in (
+            (f'/api/builds/{self.build.pk}/promote/', '/api/promotions/'),
+            (f'/api/external-refs/{self.external.pk}/promote/', '/api/external-ref-promotions/'),
+        ):
+            with self.subTest(path=path):
+                response = self.client.post(path, {'target_repo_id': self.target.pk}, format='json')
+                self.assertEqual(response.status_code, 202, response.content)
+                polled = self.client.get(f"{detail_path}{response.json()['promotion_id']}/")
+                self.assertEqual(polled.status_code, 200, polled.content)
+                self.assertEqual(polled.json()['status'], 'pending')
+        external = self.client.get(f'/api/external-refs/{self.external.pk}/')
+        self.assertEqual(external.status_code, 200, external.content)
+        self.assertEqual(external.json()['versions'][0]['id'], self.version.pk)
+
+    @patch('apps.flatpak.tasks.promote_build_task.delay')
+    @patch('apps.flatpak.tasks.promote_external_ref_task.delay')
+    @patch('apps.flatpak.tasks.pull_external_ref_task.delay')
+    @patch('apps.flatpak.tasks.publish_external_ref_task.delay')
+    def test_organisation_grants_cannot_modify_other_organisations(self, publish, pull, promote_external, promote):
+        organisation = Organisation.objects.create(name='Allowed')
+        other = Organisation.objects.create(name='Other')
+        user = User.objects.create_user(username='scoped')
+        for resource, action_name in (
+            ('externals', 'sync'), ('published_builds', 'externals'),
+            ('published_builds', 'promotion'),
+        ):
+            PermissionGrant.objects.create(
+                user=user, resource=resource, action=action_name,
+                granted=True, organisation=organisation)
+        self.package.organisations.add(other)
+        self.external.organisations.add(other)
+        self.client.credentials(
+            HTTP_AUTHORIZATION='Token ' + AuthToken.objects.create(user=user).key)
+        for path in (
+            f'/api/external-refs/{self.external.pk}/pull/',
+            f'/api/external-refs/{self.external.pk}/publish/',
+            f'/api/external-refs/{self.external.pk}/promote/',
+            f'/api/builds/{self.build.pk}/promote/',
+        ):
+            with self.subTest(path=path):
+                response = self.client.post(path, {'target_repo_id': self.target.pk}, format='json')
+                self.assertEqual(response.status_code, 404, response.content)
+        for task in (publish, pull, promote_external, promote):
+            task.assert_not_called()
+        self.package.organisations.add(organisation)
+        self.external.organisations.add(organisation)
+        response = self.client.post(
+            f'/api/builds/{self.build.pk}/promote/', {'target_repo_id': self.target.pk}, format='json')
+        self.assertEqual(response.status_code, 202, response.content)
+        response = self.client.post(
+            f'/api/external-refs/{self.external.pk}/pull/', {}, format='json')
+        self.assertEqual(response.status_code, 202, response.content)
 

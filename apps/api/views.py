@@ -6,15 +6,27 @@ from .permissions import IsAdmin, CanBuild, CanRepoAdmin
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters
 from django.db.models import Q
+from django.db import transaction
+from django.shortcuts import get_object_or_404
+from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from apps.users.models import User, UserProfile, APIToken
 from apps.users.mixins import scope_queryset_for_user, apply_default_organisation
 from apps.flatpak.models import GPGKey, Repository, RepositorySubset, Package, Build, BuildArtifact, BuildLog, Token
+from apps.flatpak.models import ExternalRef, ExternalRefPromotion, Promotion
+from apps.flatpak.views import (
+    _has_scoped_permission, _scope_published_queryset,
+    get_available_promotion_targets, get_available_external_ref_promotion_targets,
+)
 from apps.flatpak.utils.gpg import generate_gpg_key, import_gpg_key
 from .serializers import (
     UserSerializer, UserProfileSerializer, APITokenSerializer,
     GPGKeySerializer, GPGKeyListSerializer, RepositorySerializer, RepositorySubsetSerializer,
     PackageSerializer, BuildSerializer, BuildArtifactSerializer, BuildLogSerializer, TokenSerializer
+)
+from .serializers import (
+    PromotionRequestSerializer, ExternalRefSerializer, PromotionSerializer,
+    ExternalRefPromotionSerializer,
 )
 
 
@@ -440,6 +452,11 @@ class BuildViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
+        if self.action == 'promote':
+            return _scope_published_queryset(
+                qs.filter(package__isnull=False), self.request.user,
+                'promotion', 'builds', 'promote', relation='package__organisations',
+            )
         organisation_ids = self.request.user.permission_organisation_ids('builds', 'read')
         if organisation_ids is None:
             return qs
@@ -449,6 +466,41 @@ class BuildViewSet(viewsets.ReadOnlyModelViewSet):
             Q(package__organisations__in=organisation_ids)
             | Q(bst_source__organisations__in=organisation_ids)
         ).distinct()
+
+    @action(detail=True, methods=['post'])
+    def promote(self, request, pk=None):
+        """Queue a published build's promotion using target_repo_id; returns promotion_id."""
+        if not _has_scoped_permission(request.user, 'published_builds', 'promotion', 'builds', 'promote'):
+            raise PermissionDenied()
+        data = PromotionRequestSerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        scoped_build = self.get_object()
+        with transaction.atomic():
+            build = Build.objects.select_for_update().get(pk=scoped_build.pk)
+            if build.status != 'published':
+                raise ValidationError({'detail': 'Build must be published before promoting.'})
+            target = next((repo for repo in get_available_promotion_targets(build)
+                           if repo.pk == data.validated_data['target_repo_id']), None)
+            if target is None:
+                raise ValidationError({'target_repo_id': 'Prerequisites not met or already promoted.'})
+            promotion, created = Promotion.objects.get_or_create(
+                build=build, target_repo=target,
+                defaults={'package': build.package, 'status': 'pending', 'promoted_by': request.user},
+            )
+            if not created:
+                if promotion.status != 'failed':
+                    raise ValidationError({'target_repo_id': 'Promotion already exists.'})
+                promotion.status = 'pending'
+                promotion.error_message = ''
+                promotion.completed_at = None
+                promotion.promoted_by = request.user
+                promotion.save(update_fields=['status', 'error_message', 'completed_at', 'promoted_by'])
+        from apps.flatpak.tasks import promote_build_task
+        promote_build_task.delay(promotion.pk)
+        return Response(
+            {'promotion_id': promotion.pk, 'status': promotion.status},
+            status=status.HTTP_202_ACCEPTED,
+        )
     
     @action(detail=True, methods=['get'], authentication_classes=[], permission_classes=[AllowAny])
     def logs(self, request, pk=None):
@@ -474,6 +526,122 @@ class BuildViewSet(viewsets.ReadOnlyModelViewSet):
             'logs': log_data,
             'total_logs': len(log_data)
         })
+
+
+class ExternalRefViewSet(viewsets.ReadOnlyModelViewSet):
+    """List External refs and their versions, inspect logs, or queue pull/publish/promote tasks."""
+    queryset = ExternalRef.objects.select_related('repository', 'remote').prefetch_related('versions')
+    serializer_class = ExternalRefSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filterset_fields = ['repository', 'remote', 'status', 'ref']
+    search_fields = ['ref', 'display_name']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.action == 'pull':
+            return scope_queryset_for_user(queryset, self.request.user, 'externals', 'sync')
+        if self.action in ('publish', 'promote'):
+            permission = 'externals' if self.action == 'publish' else 'promotion'
+            return _scope_published_queryset(
+                queryset, self.request.user, permission, 'externals', self.action,
+            )
+        return scope_queryset_for_user(queryset, self.request.user, 'externals')
+
+    @action(detail=True, methods=['post'])
+    def pull(self, request, pk=None):
+        """Queue a pull from the configured remote followed by publication to the source repository."""
+        if not _has_scoped_permission(request.user, 'externals', 'sync'):
+            raise PermissionDenied()
+        scoped_external = self.get_object()
+        with transaction.atomic():
+            external = ExternalRef.objects.select_for_update().get(pk=scoped_external.pk)
+            if external.status in ('pulling', 'publishing'):
+                raise ValidationError({'detail': 'Pull or publish already in progress.'})
+            if external.remote_id is None:
+                raise ValidationError({'detail': 'No remote configured for this External ref.'})
+            external.status = 'pending'
+            external.log = ''
+            external.error_message = ''
+            external.save(update_fields=['status', 'log', 'error_message', 'updated_at'])
+        from apps.flatpak.tasks import pull_external_ref_task
+        pull_external_ref_task.delay(external.pk)
+        return Response({'id': external.pk, 'status': external.status}, status=status.HTTP_202_ACCEPTED)
+
+    @action(detail=True, methods=['post'])
+    def publish(self, request, pk=None):
+        """Queue publication of an already-pulled External ref."""
+        if not _has_scoped_permission(request.user, 'published_builds', 'externals', 'externals', 'publish'):
+            raise PermissionDenied()
+        external = self.get_object()
+        if external.status != 'pulled':
+            raise ValidationError({'detail': 'External ref must be in pulled state.'})
+        from apps.flatpak.tasks import publish_external_ref_task
+        publish_external_ref_task.delay(external.pk)
+        return Response({'id': external.pk, 'status': 'queued'}, status=status.HTTP_202_ACCEPTED)
+
+    @action(detail=True, methods=['post'])
+    def promote(self, request, pk=None):
+        """Promote to target_repo_id using external_ref_version_id or the latest published version."""
+        if not _has_scoped_permission(request.user, 'published_builds', 'promotion', 'externals', 'promote'):
+            raise PermissionDenied()
+        data = PromotionRequestSerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        scoped_external = self.get_object()
+        with transaction.atomic():
+            external = ExternalRef.objects.select_for_update().get(pk=scoped_external.pk)
+            versions = external.versions.filter(status='published')
+            version_id = data.validated_data.get('external_ref_version_id')
+            if version_id is not None:
+                version = get_object_or_404(versions, pk=version_id)
+            else:
+                version = versions.order_by('-pulled_at', '-pk').first()
+            if version is None:
+                raise ValidationError({'detail': 'No published External ref version available.'})
+            target = next((repo for repo in get_available_external_ref_promotion_targets(external, version)
+                           if repo.pk == data.validated_data['target_repo_id']), None)
+            if target is None:
+                raise ValidationError({'target_repo_id': 'Prerequisites not met or already promoted.'})
+            promotion = ExternalRefPromotion.objects.create(
+                external_ref=external, external_ref_version=version, target_repo=target,
+                status='pending', promoted_by=request.user,
+            )
+        from apps.flatpak.tasks import promote_external_ref_task
+        promote_external_ref_task.delay(promotion.pk)
+        return Response(
+            {'promotion_id': promotion.pk, 'external_ref_version_id': version.pk, 'status': promotion.status},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class PromotionViewSet(viewsets.ReadOnlyModelViewSet):
+    """Poll Flatpak build promotions by ID, build, target repository, or status."""
+    queryset = Promotion.objects.all()
+    serializer_class = PromotionSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['build', 'target_repo', 'status']
+
+    def get_queryset(self):
+        return _scope_published_queryset(
+            super().get_queryset(), self.request.user,
+            'promotion', 'builds', 'promote', relation='package__organisations',
+        )
+
+
+class ExternalRefPromotionViewSet(viewsets.ReadOnlyModelViewSet):
+    """Poll External version promotions by ID, ref, version, target repository, or status."""
+    queryset = ExternalRefPromotion.objects.all()
+    serializer_class = ExternalRefPromotionSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['external_ref', 'external_ref_version', 'target_repo', 'status']
+
+    def get_queryset(self):
+        return _scope_published_queryset(
+            super().get_queryset(), self.request.user,
+            'promotion', 'externals', 'promote', relation='external_ref__organisations',
+        )
 
 
 class BuildArtifactViewSet(viewsets.ModelViewSet):

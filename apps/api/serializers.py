@@ -3,6 +3,7 @@ from rest_framework.validators import UniqueValidator
 from django.db.models import Q
 from apps.users.models import User, UserProfile, APIToken
 from apps.flatpak.models import GPGKey, Repository, RepositorySubset, Package, Build, BuildArtifact, BuildLog, Token
+from apps.flatpak.models import ExternalRef, ExternalRefVersion, ExternalRefPromotion, Promotion
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -173,3 +174,42 @@ class TokenSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'token', 'token_type', 'repository', 'repository_id',
                   'created_at', 'expires_at', 'is_active']
         read_only_fields = ['id', 'token', 'created_at']
+
+
+class PromotionRequestSerializer(serializers.Serializer):
+    target_repo_id = serializers.IntegerField(min_value=1)
+    external_ref_version_id = serializers.IntegerField(min_value=1, required=False)
+
+
+class ExternalRefVersionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ExternalRefVersion
+        fields = ['id', 'ref', 'commit_hash', 'status', 'pulled_at',
+                  'source_published_at', 'error_message']
+        read_only_fields = fields
+
+
+class ExternalRefSerializer(serializers.ModelSerializer):
+    versions = ExternalRefVersionSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = ExternalRef
+        fields = ['id', 'repository', 'remote', 'ref', 'display_name', 'commit_hash',
+                  'status', 'error_message', 'log', 'last_pulled_at', 'versions']
+        read_only_fields = fields
+
+
+class PromotionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Promotion
+        fields = ['id', 'build', 'package', 'target_repo', 'status', 'error_message',
+                  'promoted_by', 'created_at', 'completed_at']
+        read_only_fields = fields
+
+
+class ExternalRefPromotionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ExternalRefPromotion
+        fields = ['id', 'external_ref', 'external_ref_version', 'target_repo', 'status',
+                  'error_message', 'promoted_by', 'created_at', 'completed_at']
+        read_only_fields = fields
