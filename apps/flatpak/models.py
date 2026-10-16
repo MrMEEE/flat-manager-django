@@ -1107,6 +1107,76 @@ class Client(models.Model):
         return self.hostname
 
 
+class VirtualMachine(models.Model):
+    """
+    Snapshot of a libvirt VM reported by a client's check-in agent.
+    Rows are replaced wholesale on each check-in (stale rows for VMs no
+    longer reported by the client are deleted by ClientCheckinView).
+    """
+    STATUS_CHOICES = [
+        ('running', 'Running'),
+        ('stopped', 'Stopped'),
+    ]
+
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='virtual_machines')
+    username = models.CharField(
+        max_length=255,
+        default='system',
+        help_text="Owning account: 'system' for qemu:///system VMs, else the Linux username (qemu:///session).",
+    )
+    name = models.CharField(max_length=255)
+    os_name = models.CharField(
+        max_length=255, blank=True, default='',
+        help_text="Selected OS, derived from libosinfo metadata in the domain XML.",
+    )
+    memory_mb = models.IntegerField(default=0)
+    disks = models.JSONField(
+        default=list,
+        help_text="[{target, source, capacity_bytes}, ...] — provisioned (virtual) size per disk.",
+    )
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='stopped')
+    uptime_seconds = models.IntegerField(
+        null=True, blank=True,
+        help_text="Seconds since the VM's qemu process started; null when stopped.",
+    )
+    state_changed_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="When this VM's running/stopped status last changed, as first observed by the server.",
+    )
+    last_seen_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['username', 'name']
+        unique_together = [['client', 'username', 'name']]
+        verbose_name = 'Virtual Machine'
+        verbose_name_plural = 'Virtual Machines'
+
+    def __str__(self):
+        return f"{self.name} ({self.client.hostname})"
+
+    @property
+    def total_disk_bytes(self):
+        return sum(d.get('capacity_bytes') or 0 for d in (self.disks or []))
+
+    @property
+    def memory_display(self):
+        if self.memory_mb and self.memory_mb >= 1024:
+            gb = self.memory_mb / 1024
+            return f"{gb:.0f} GB" if gb == int(gb) else f"{gb:.1f} GB"
+        return f"{self.memory_mb} MB"
+
+    @property
+    def uptime_display(self):
+        if self.status != 'running' or not self.uptime_seconds:
+            return ''
+        days, rem = divmod(self.uptime_seconds, 86400)
+        hours, rem = divmod(rem, 3600)
+        minutes, _ = divmod(rem, 60)
+        parts = [p for p in (f"{days}d" if days else '', f"{hours}h" if hours else '',
+                             f"{minutes}m" if not days and minutes else '') if p]
+        return ' '.join(parts) or '<1m'
+
+
 class AppUsageObservation(models.Model):
     """A client's observed installed Flatpak during a check-in."""
 

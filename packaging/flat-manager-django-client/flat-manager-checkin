@@ -20,6 +20,7 @@ import grp
 import json
 import os
 import pwd
+import re
 import shutil
 import socket
 import subprocess
@@ -731,6 +732,158 @@ def collect_user_flatpaks(users=None):
     return result
 
 
+def _virsh(args, scope_uri, username=None):
+    """Run virsh against *scope_uri* ('qemu:///system' or 'qemu:///session'),
+    optionally as *username* via runuser.  Returns stdout, or '' on failure.
+    """
+    cmd = ['virsh', '-c', scope_uri] + args
+    if username:
+        return run_as_user(username, cmd)
+    return run(cmd)
+
+
+def _parse_vm_memory_mb(xml_text):
+    """Extract the configured (max) memory from a libvirt domain XML dump."""
+    m = re.search(r"<memory unit=['\"](\w+)['\"]>(\d+)</memory>", xml_text)
+    if not m:
+        return 0
+    unit, value = m.group(1).lower(), int(m.group(2))
+    factors = {'b': 1, 'bytes': 1, 'kib': 1024, 'k': 1024,
+               'mib': 1024 ** 2, 'm': 1024 ** 2, 'gib': 1024 ** 3, 'g': 1024 ** 3}
+    return (value * factors.get(unit, 1024)) // (1024 * 1024)
+
+
+def _parse_vm_os(xml_text):
+    """Derive a human-readable OS name from libosinfo metadata, if present
+    (set by virt-manager/virt-install's 'Choose Operating System' step)."""
+    m = re.search(r'libosinfo:os\s+id=["\']([^"\']+)["\']', xml_text)
+    if not m:
+        return ''
+    segments = [s for s in m.group(1).rstrip('/').split('/') if s]
+    tail = segments[-2:] if len(segments) >= 2 else segments[-1:]
+    return ' '.join(part.capitalize() for part in tail)
+
+
+def _qemu_img_capacity(path):
+    """Return the provisioned (virtual) size of a disk image in bytes, or None."""
+    if not command_exists('qemu-img'):
+        return None
+    result = subprocess.run(
+        ['qemu-img', 'info', '--output=json', path],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        return json.loads(result.stdout).get('virtual-size')
+    except (ValueError, TypeError):
+        return None
+
+
+def _collect_vm_disks(name, scope_uri, username=None):
+    """Return [{target, source, capacity_bytes}, ...] for a VM's disk devices
+    (cdrom/removable devices are skipped)."""
+    out = _virsh(['domblklist', name, '--details'], scope_uri, username)
+    disks = []
+    for line in out.splitlines():
+        line = line.strip()
+        if not line or line.startswith('Type') or set(line) == {'-'}:
+            continue
+        parts = re.split(r'\s{2,}', line)
+        if len(parts) < 4:
+            continue
+        _disk_type, device, target, source = parts[0], parts[1], parts[2], parts[3]
+        if device != 'disk' or source == '-' or not source:
+            continue
+        disks.append({
+            'target': target,
+            'source': source,
+            'capacity_bytes': _qemu_img_capacity(source),
+        })
+    return disks
+
+
+def _get_qemu_uptime_map():
+    """Map qemu domain name -> process uptime in seconds, derived from the
+    '-name guest=<name>,' argument qemu-kvm is launched with.  Version-agnostic
+    alternative to locating libvirt's pidfile (whose path varies by version/scope).
+    """
+    result = subprocess.run(
+        ['ps', '-eo', 'etimes,args'],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+    )
+    uptimes = {}
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        etimes_str, args = parts
+        match = re.search(r'guest=([^,]+),', args)
+        if match:
+            try:
+                uptimes[match.group(1)] = int(etimes_str)
+            except ValueError:
+                pass
+    return uptimes
+
+
+def _collect_vms_for_scope(scope_uri, qemu_uptimes, username=None):
+    out = _virsh(['list', '--all', '--name'], scope_uri, username)
+    names = [n.strip() for n in out.splitlines() if n.strip()]
+    vms = []
+    for name in names:
+        xml = _virsh(['dumpxml', name], scope_uri, username)
+        if not xml:
+            continue
+        state = _virsh(['domstate', name], scope_uri, username).strip()
+        status = 'running' if state == 'running' else 'stopped'
+        vms.append({
+            'name': name,
+            'os': _parse_vm_os(xml),
+            'memory_mb': _parse_vm_memory_mb(xml),
+            'disks': _collect_vm_disks(name, scope_uri, username),
+            'status': status,
+            'uptime_seconds': qemu_uptimes.get(name) if status == 'running' else None,
+        })
+    return vms
+
+
+def collect_virtual_machines(users=None):
+    """
+    Collect libvirt VM inventory from the system-wide (qemu:///system) scope
+    and every human user's session (qemu:///session) scope, tagging each VM
+    with 'username' = 'system' or the owning Linux username — mirrors the
+    per-user tagging convention used for flatpaks.
+
+    Requires root and the virsh binary; returns [] silently otherwise so
+    hosts without libvirt installed are unaffected.
+    """
+    if not command_exists('virsh'):
+        return []
+    if os.geteuid() != 0:
+        print('WARNING: not running as root — VM inventory will not be collected.',
+              file=sys.stderr)
+        return []
+
+    if users is None:
+        users = get_local_users()
+
+    qemu_uptimes = _get_qemu_uptime_map()
+
+    vms = []
+    for vm in _collect_vms_for_scope('qemu:///system', qemu_uptimes):
+        vm['username'] = 'system'
+        vms.append(vm)
+    for username, _home in users:
+        for vm in _collect_vms_for_scope('qemu:///session', qemu_uptimes, username=username):
+            vm['username'] = username
+            vms.append(vm)
+    return vms
+
+
 def identify_managed_remotes(remotes, server_url):
     """Return names of remotes whose URL starts with the server URL."""
     server_url = server_url.rstrip('/')
@@ -975,7 +1128,7 @@ def get_bios_version():
     return ''
 
 
-def checkin(server_url, hostname, serial_number, machine_type, bios_version, remotes, managed_remotes, installed, user_flatpaks, tuxmigrate_facts):
+def checkin(server_url, hostname, serial_number, machine_type, bios_version, remotes, managed_remotes, installed, user_flatpaks, tuxmigrate_facts, virtual_machines):
     """POST the check-in payload to the server."""
     payload = {
         'hostname':          hostname,
@@ -988,6 +1141,7 @@ def checkin(server_url, hostname, serial_number, machine_type, bios_version, rem
         'installed':         installed,
         'user_flatpaks':     user_flatpaks,
         'tuxmigrate_facts':  tuxmigrate_facts,
+        'virtual_machines':  virtual_machines,
     }
     data = json.dumps(payload).encode('utf-8')
     url = server_url.rstrip('/') + '/api/client-checkin/'
@@ -1106,6 +1260,7 @@ def main():
     sys_installed = get_system_installed()
     user_flatpaks = collect_user_flatpaks(users=users)
     tuxmigrate_facts = collect_tuxmigrate_facts()
+    virtual_machines = collect_virtual_machines(users=users)
 
     # Merge user installs into the main list (deduplicate by app_id so runtimes
     # that appear in both system and user scopes are counted only once).
@@ -1123,7 +1278,8 @@ def main():
                 seen_ids.add(pkg['app_id'])
 
     status, body = checkin(server_url, hostname, serial_number, machine_type, bios_version,
-                           remotes, managed_remotes, installed, user_flatpaks, tuxmigrate_facts)
+                           remotes, managed_remotes, installed, user_flatpaks, tuxmigrate_facts,
+                           virtual_machines)
 
     if status == 200:
         print(f'Check-in successful: {hostname} → {server_url}')

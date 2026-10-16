@@ -19,7 +19,7 @@ from apps.users.mixins import (
     BuildAdminRequiredMixin, ResourceActionRequiredMixin, scope_queryset_for_user,
     apply_default_organisation,
 )
-from .models import GPGKey, Repository, RepositorySubset, Package, Build, Promotion, BuildStreamSource, Client, AppUsageObservation, ExternalRef, ExternalRefVersion, ExternalRefPromotion, Organisation, FlatpakRemote
+from .models import GPGKey, Repository, RepositorySubset, Package, Build, Promotion, BuildStreamSource, Client, AppUsageObservation, VirtualMachine, ExternalRef, ExternalRefVersion, ExternalRefPromotion, Organisation, FlatpakRemote
 from .forms import GPGKeyGenerateForm, GPGKeyImportForm, GPGKeyRenewForm
 from .utils.gpg import generate_gpg_key, import_gpg_key, renew_gpg_key
 from .utils.ostree import init_ostree_repo, sign_repo_summary, delete_ostree_repo, temp_gpg_homedir, update_repo_metadata
@@ -3622,11 +3622,14 @@ class ClientListView(LoginRequiredMixin, ListView):
         import json as _json
         from .models import Client, SiteConfig
         from django.utils import timezone
+        from django.db.models import Count
         from datetime import timedelta
         stale_hours = SiteConfig.get_solo().client_stale_hours
         threshold = timezone.now() - timedelta(hours=stale_hours)
         qs = list(scope_queryset_for_user(
-            Client.objects.prefetch_related('organisations').all(),
+            Client.objects.prefetch_related('organisations')
+                .annotate(vm_count=Count('virtual_machines', distinct=True))
+                .all(),
             self.request.user,
             'clients',
         ))
@@ -3652,6 +3655,9 @@ class ClientListView(LoginRequiredMixin, ListView):
         context['any_tuxmigrate'] = any(
             c.tuxmigrate_latest_version for c in context['clients']
         )
+        context['any_vms'] = any(
+            getattr(c, 'vm_count', 0) for c in context['clients']
+        )
         return context
 
 
@@ -3672,6 +3678,7 @@ class ClientDetailView(LoginRequiredMixin, DetailView):
         from django.utils import timezone
         from datetime import timedelta
         client = context['client']
+        context['virtual_machines'] = client.virtual_machines.all()
         stale_hours = SiteConfig.get_solo().client_stale_hours
         threshold = timezone.now() - timedelta(hours=stale_hours)
 
@@ -3874,6 +3881,7 @@ class ClientCheckinView(View):
         installed = data.get('installed', [])
         user_flatpaks = data.get('user_flatpaks', [])
         tuxmigrate_facts = data.get('tuxmigrate_facts', [])
+        virtual_machines = data.get('virtual_machines', [])
 
         # If the client didn't self-report managed_remotes, derive them
         # server-side by matching the client's remote names against known
@@ -4058,6 +4066,43 @@ class ClientCheckinView(View):
             ))
         AppUsageObservation.objects.bulk_create(observations)
 
+        # Upsert VM inventory; status transitions reset state_changed_at so the
+        # UI can show "running Xh" / "stopped Xd ago". Rows for VMs no longer
+        # reported this cycle (destroyed/undefined on the client) are removed.
+        existing_vms = {
+            (vm.username, vm.name): vm
+            for vm in VirtualMachine.objects.filter(client=client)
+        }
+        seen_vm_keys = set()
+        for vm_data in virtual_machines:
+            name = (vm_data.get('name') or '').strip()
+            if not name:
+                continue
+            username = (vm_data.get('username') or 'system').strip() or 'system'
+            status = vm_data.get('status') if vm_data.get('status') in ('running', 'stopped') else 'stopped'
+            key = (username, name)
+            seen_vm_keys.add(key)
+            existing = existing_vms.get(key)
+            if existing and existing.status == status and existing.state_changed_at:
+                state_changed_at = existing.state_changed_at
+            else:
+                state_changed_at = timezone.now()
+            VirtualMachine.objects.update_or_create(
+                client=client, username=username, name=name,
+                defaults={
+                    'os_name': vm_data.get('os', '') or '',
+                    'memory_mb': vm_data.get('memory_mb') or 0,
+                    'disks': vm_data.get('disks') or [],
+                    'status': status,
+                    'uptime_seconds': vm_data.get('uptime_seconds'),
+                    'state_changed_at': state_changed_at,
+                },
+            )
+        stale_keys = set(existing_vms) - seen_vm_keys
+        if stale_keys:
+            VirtualMachine.objects.filter(pk__in=[existing_vms[k].pk for k in stale_keys]).delete()
+        vm_count = len(seen_vm_keys)
+
         # Notify the clients page in real-time so it can update without reload.
         try:
             from channels.layers import get_channel_layer
@@ -4081,6 +4126,7 @@ class ClientCheckinView(View):
                         'managed_remotes': client.managed_remotes or [],
                         'lockdown': client.lockdown,
                         'bios_version': client.bios_version,
+                        'vm_count': vm_count,
                         'last_checkin': client.last_checkin.strftime('%b %d, %H:%M') if client.last_checkin else '',
                     }
                 )

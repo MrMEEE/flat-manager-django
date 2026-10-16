@@ -48,6 +48,7 @@
                         <th class="text-center">Foreign</th>
                         <th class="text-center">Outdated</th>
                         <th class="text-center">Outdated (commit)</th>
+                        {% if any_vms %}<th class="text-center">VMs</th>{% endif %}
                         <th class="text-center">Lockdown</th>
                     </tr>
                 </thead>
@@ -169,6 +170,17 @@
                             <span class="text-muted">0</span>
                             {% endif %}
                         </td>
+                        {% if any_vms %}
+                        <td class="text-center" id="vm-count-{{ client.pk }}">
+                            {% if client.vm_count %}
+                            <a href="{% url 'flatpak:client_detail' client.pk %}#vms" class="btn btn-sm btn-outline-secondary">
+                                {{ client.vm_count }}
+                            </a>
+                            {% else %}
+                            <span class="text-muted">0</span>
+                            {% endif %}
+                        </td>
+                        {% endif %}
                         <td class="text-center" id="lockdown-cell-{{ client.pk }}">
                             {% if client.lockdown and user.can_update_clients %}
                             <button type="button" class="btn btn-sm btn-outline-success lockdown-toggle"
@@ -199,17 +211,17 @@
                     </tr>
                     <!-- Hidden data rows for JS to read (pre-serialised JSON from view) -->
                     <tr id="data-installed-{{ client.pk }}" style="display:none;">
-                        <td colspan="15">
+                        <td colspan="16">
                             <script type="application/json">{{ client.installed_json|safe }}</script>
                         </td>
                     </tr>
                     <tr id="data-foreign-{{ client.pk }}" style="display:none;">
-                        <td colspan="15">
+                        <td colspan="16">
                             <script type="application/json">{{ client.foreign_json|safe }}</script>
                         </td>
                     </tr>
                     <tr id="data-outdated-{{ client.pk }}" style="display:none;">
-                        <td colspan="15">
+                        <td colspan="16">
                             <script type="application/json">{{ client.outdated_json|safe }}</script>
                         </td>
                     </tr>
@@ -601,6 +613,14 @@ function onWebSocketMessage(data) {
         } else {
             managedCell.innerHTML = '<span class="text-muted">—</span>';
         }
+    }
+
+    // Update VM count cell (column only rendered when any_vms is true server-side).
+    const vmCell = document.getElementById('vm-count-' + pk);
+    if (vmCell && data.vm_count !== undefined) {
+        vmCell.innerHTML = data.vm_count > 0
+            ? `<a href="/flatpak/clients/${pk}/#vms" class="btn btn-sm btn-outline-secondary">${data.vm_count}</a>`
+            : '<span class="text-muted">0</span>';
     }
 }
 
