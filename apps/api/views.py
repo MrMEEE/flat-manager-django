@@ -649,6 +649,34 @@ class PromotionViewSet(viewsets.ReadOnlyModelViewSet):
             'promotion', 'builds', 'promote', relation='package__organisations',
         )
 
+    @action(detail=False, methods=['get'])
+    def available(self, request):
+        """List published Flatpak builds and their currently eligible target repositories."""
+        if not _has_scoped_permission(request.user, 'published_builds', 'promotion', 'builds', 'promote'):
+            raise PermissionDenied()
+        builds = _scope_published_queryset(
+            Build.objects.select_related('package', 'package__repository')
+            .filter(status='published', package__isnull=False),
+            request.user, 'promotion', 'builds', 'promote', relation='package__organisations',
+        )
+        ready = []
+        for build in builds:
+            for target in get_available_promotion_targets(build):
+                ready.append({
+                    'kind': 'build',
+                    'build_id': build.pk,
+                    'build_number': build.build_number,
+                    'package_id': build.package_id,
+                    'package_identifier': build.package.package_id,
+                    'package_name': build.package.package_name,
+                    'source_repo_id': build.package.repository_id,
+                    'source_repo_name': build.package.repository.name,
+                    'target_repo_id': target.pk,
+                    'target_repo_name': target.name,
+                })
+        page = self.paginate_queryset(ready)
+        return self.get_paginated_response(page) if page is not None else Response(ready)
+
 
 class ExternalRefPromotionViewSet(viewsets.ReadOnlyModelViewSet):
     """Poll External version promotions by ID, ref, version, target repository, or status."""
@@ -663,6 +691,35 @@ class ExternalRefPromotionViewSet(viewsets.ReadOnlyModelViewSet):
             super().get_queryset(), self.request.user,
             'promotion', 'externals', 'promote', relation='external_ref__organisations',
         )
+
+    @action(detail=False, methods=['get'])
+    def available(self, request):
+        """List published External versions and their currently eligible target repositories."""
+        if not _has_scoped_permission(request.user, 'published_builds', 'promotion', 'externals', 'promote'):
+            raise PermissionDenied()
+        externals = _scope_published_queryset(
+            ExternalRef.objects.select_related('repository').prefetch_related('versions', 'promotions')
+            .filter(status='published'),
+            request.user, 'promotion', 'externals', 'promote', relation='organisations',
+        )
+        ready = []
+        for external in externals:
+            for version in external.versions.filter(status='published').order_by('-pulled_at', '-pk'):
+                for target in get_available_external_ref_promotion_targets(external, version):
+                    ready.append({
+                        'kind': 'external',
+                        'external_ref_id': external.pk,
+                        'external_ref_name': external.display_name or external.ref,
+                        'ref': version.ref,
+                        'external_ref_version_id': version.pk,
+                        'commit_hash': version.commit_hash,
+                        'source_repo_id': external.repository_id,
+                        'source_repo_name': external.repository.name,
+                        'target_repo_id': target.pk,
+                        'target_repo_name': target.name,
+                    })
+        page = self.paginate_queryset(ready)
+        return self.get_paginated_response(page) if page is not None else Response(ready)
 
 
 class BuildArtifactViewSet(viewsets.ModelViewSet):

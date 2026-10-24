@@ -420,6 +420,54 @@ class TokenWorkflowTests(TestCase):
         self.assertEqual(promotion.promoted_by, self.user)
         task.assert_called_once_with(promotion.pk)
 
+    def test_available_promotions_list_only_currently_eligible_items(self):
+        response = self.client.get('/api/promotions/available/')
+        self.assertEqual(response.status_code, 200, response.content)
+        builds = response.json().get('results', response.json())
+        own_builds = [item for item in builds if item['build_id'] == self.build.pk]
+        self.assertEqual(len(own_builds), 1)
+        self.assertEqual(own_builds[0]['package_name'], self.package.package_name)
+        self.assertEqual(own_builds[0]['target_repo_name'], self.target.name)
+
+        response = self.client.get('/api/external-ref-promotions/available/')
+        self.assertEqual(response.status_code, 200, response.content)
+        externals = response.json().get('results', response.json())
+        own_externals = [item for item in externals if item['external_ref_id'] == self.external.pk]
+        self.assertEqual(len(own_externals), 1)
+        self.assertEqual(own_externals[0]['external_ref_version_id'], self.version.pk)
+        self.assertEqual(own_externals[0]['external_ref_name'], self.external.display_name)
+        self.assertEqual(own_externals[0]['target_repo_name'], self.target.name)
+
+        self.version.status = 'pulled'
+        self.version.save()
+        self.build.status = 'built'
+        self.build.save()
+        response = self.client.get('/api/promotions/available/')
+        builds = response.json().get('results', response.json())
+        self.assertFalse(any(item['build_id'] == self.build.pk for item in builds))
+        response = self.client.get('/api/external-ref-promotions/available/')
+        externals = response.json().get('results', response.json())
+        self.assertFalse(any(item['external_ref_id'] == self.external.pk for item in externals))
+
+    def test_available_promotion_lists_enforce_permissions_and_org_scope(self):
+        self.client.credentials()
+        self.assertEqual(self.client.get('/api/promotions/available/').status_code, 401)
+        self.assertEqual(self.client.get('/api/external-ref-promotions/available/').status_code, 401)
+
+        organisation = Organisation.objects.create(name='Other')
+        user = User.objects.create_user(username='promotion-reader')
+        PermissionGrant.objects.create(user=user, resource='published_builds', action='promotion',
+                                       organisation=organisation, granted=True)
+        self.package.organisations.add(organisation)
+        self.external.organisations.add(organisation)
+        self.client.credentials(HTTP_AUTHORIZATION='Token ' + AuthToken.objects.create(user=user).key)
+        response = self.client.get('/api/promotions/available/')
+        builds = response.json().get('results', response.json())
+        self.assertTrue(any(item['build_id'] == self.build.pk for item in builds))
+        response = self.client.get('/api/external-ref-promotions/available/')
+        externals = response.json().get('results', response.json())
+        self.assertTrue(any(item['external_ref_id'] == self.external.pk for item in externals))
+
     def test_anonymous_requests_require_token(self):
         self.client.credentials()
         for path in (
