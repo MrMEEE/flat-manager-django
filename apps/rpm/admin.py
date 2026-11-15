@@ -1,4 +1,5 @@
 from django.contrib import admin
+from apps.users.admin import DefaultOrganisationAdminMixin
 from .models import RpmDistribution, RpmPackage, RpmBuild, RpmBuildLog, RpmRepository
 
 
@@ -18,7 +19,7 @@ class RpmRepositoryAdmin(admin.ModelAdmin):
 
 
 @admin.register(RpmPackage)
-class RpmPackageAdmin(admin.ModelAdmin):
+class RpmPackageAdmin(DefaultOrganisationAdminMixin, admin.ModelAdmin):
     list_display = ['name', 'git_repo_url', 'git_branch', 'spec_file', 'allow_internet_access', 'cleanup_on_success', 'status', 'created_at']
     list_filter = ['status', 'allow_internet_access', 'cleanup_on_success']
     search_fields = ['name', 'git_repo_url']

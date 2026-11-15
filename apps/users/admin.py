@@ -1,6 +1,19 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from .mixins import apply_default_organisation
 from .models import User, UserProfile, APIToken, LDAPSource, LDAPGroupMapping
+
+
+class DefaultOrganisationAdminMixin:
+    def save_model(self, request, obj, form, change):
+        if not change and hasattr(obj, 'created_by_id'):
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+
+    def save_related(self, request, form, formsets, change):
+        super().save_related(request, form, formsets, change)
+        if not change:
+            apply_default_organisation(form.instance, request.user)
 
 
 @admin.register(User)

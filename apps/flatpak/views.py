@@ -3418,10 +3418,19 @@ class ExternalRefUpdateView(ResourceActionRequiredMixin, UpdateView):
     template_name = 'flatpak/external_form.html'
     fields = ['organisations']
 
+    def get_queryset(self):
+        return scope_queryset_for_user(
+            super().get_queryset(), self.request.user, 'externals', 'update',
+        )
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['edit_mode'] = True
-        context['all_organisations'] = Organisation.objects.all()
+        organisation_ids = self.request.user.permission_organisation_ids('externals', 'update')
+        organisations = Organisation.objects.all()
+        if organisation_ids is not None:
+            organisations = organisations.filter(pk__in=organisation_ids)
+        context['all_organisations'] = organisations
         if self.request.method == 'POST':
             context['selected_org_pks'] = set(self.request.POST.getlist('organisations'))
         else:

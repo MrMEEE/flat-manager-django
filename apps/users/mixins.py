@@ -38,6 +38,15 @@ class ResourceActionRequiredMixin(LoginRequiredMixin, UserPassesTestMixin):
     resource = None
     action = None
 
+    def form_valid(self, form):
+        creating = getattr(self, 'object', None) is None
+        if creating and hasattr(form.instance, 'created_by_id'):
+            form.instance.created_by = self.request.user
+        response = super().form_valid(form)
+        if creating:
+            apply_default_organisation(self.object, self.request.user)
+        return response
+
     def test_func(self):
         if not self.request.user.is_authenticated:
             return False

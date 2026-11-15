@@ -1,9 +1,10 @@
 from django.contrib import admin
+from apps.users.admin import DefaultOrganisationAdminMixin
 from .models import GPGKey, Repository, RepositorySubset, Package, Build, BuildArtifact, BuildLog, Token, SiteConfig, FlatpakRemote, Client
 
 
 @admin.register(GPGKey)
-class GPGKeyAdmin(admin.ModelAdmin):
+class GPGKeyAdmin(DefaultOrganisationAdminMixin, admin.ModelAdmin):
     list_display = ['name', 'email', 'key_id', 'fingerprint', 'is_active', 'created_by', 'created_at']
     list_filter = ['is_active', 'created_at']
     search_fields = ['name', 'email', 'key_id', 'fingerprint']
@@ -12,7 +13,7 @@ class GPGKeyAdmin(admin.ModelAdmin):
 
 
 @admin.register(Repository)
-class RepositoryAdmin(admin.ModelAdmin):
+class RepositoryAdmin(DefaultOrganisationAdminMixin, admin.ModelAdmin):
     list_display = ['name', 'collection_id', 'gpg_key', 'is_active', 'created_by', 'created_at']
     list_filter = ['is_active', 'created_at', 'gpg_key']
     search_fields = ['name', 'collection_id', 'description']
@@ -28,7 +29,7 @@ class RepositorySubsetAdmin(admin.ModelAdmin):
 
 
 @admin.register(Package)
-class PackageAdmin(admin.ModelAdmin):
+class PackageAdmin(DefaultOrganisationAdminMixin, admin.ModelAdmin):
     list_display = ['package_name', 'package_id', 'repository', 'status', 'build_number', 'created_by', 'created_at']
     list_filter = ['status', 'repository', 'created_at']
     search_fields = ['package_id', 'package_name']
@@ -105,7 +106,7 @@ class FlatpakRemoteAdmin(admin.ModelAdmin):
 
 
 @admin.register(Client)
-class ClientAdmin(admin.ModelAdmin):
+class ClientAdmin(DefaultOrganisationAdminMixin, admin.ModelAdmin):
     list_display = ['hostname', 'serial_number', 'last_checkin', 'lockdown', 'installed_count', 'foreign_count', 'outdated_count', 'updated_at']
     list_editable = ['lockdown']
     readonly_fields = ['created_at', 'updated_at', 'last_checkin',

@@ -380,6 +380,22 @@ class TokenWorkflowTests(TestCase):
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(response.json()['ref'], 'app/org.example.New/x86_64/testing')
 
+    def test_created_package_gets_creator_default_organisation(self):
+        organisation = Organisation.objects.create(name='Creator Org')
+        self.user.default_organisation = organisation
+        self.user.save(update_fields=['default_organisation'])
+
+        response = self.client.post('/api/packages/', {
+            'repository_id': self.source.pk,
+            'package_id': 'org.example.New',
+            'package_name': 'New App',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201, response.content)
+        package = Package.objects.get(pk=response.json()['id'])
+        self.assertEqual(package.created_by, self.user)
+        self.assertEqual(list(package.organisations.all()), [organisation])
+
     @patch('apps.flatpak.tasks.pull_external_ref_task.delay')
     def test_pull_external_with_token(self, task):
         response = self.client.post(f'/api/external-refs/{self.external.pk}/pull/', {}, format='json')

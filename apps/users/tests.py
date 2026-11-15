@@ -1,3 +1,4 @@
+from django.contrib import admin
 from django.contrib.messages.storage.fallback import FallbackStorage
 from django.contrib.sessions.backends.db import SessionStore
 from django.core.exceptions import PermissionDenied
@@ -7,9 +8,9 @@ from rest_framework.test import APIClient
 from rest_framework.authtoken.models import Token as AuthToken
 from rest_framework.test import APIClient
 
-from apps.flatpak.models import Organisation, Repository
+from apps.flatpak.models import ExternalRef, FlatpakRemote, Organisation, Repository
 from apps.flatpak.models import Package
-from apps.flatpak.views import RepositoryUpdateView
+from apps.flatpak.views import ExternalRefUpdateView, RepositoryUpdateView
 from apps.users.views import ProfileView
 from apps.users.models import (
     PermissionGrant,
@@ -23,6 +24,35 @@ from apps.users.models import (
 
 
 class PermissionGrantTests(TestCase):
+    def test_external_ownership_editor_respects_update_organisation_scope(self):
+        allowed_org = Organisation.objects.create(name='Allowed External Org')
+        other_org = Organisation.objects.create(name='Other External Org')
+        user = User.objects.create_user(username='external-owner', password='password')
+        PermissionGrant.objects.create(
+            user=user, organisation=allowed_org, resource='externals',
+            action='update', granted=True,
+        )
+        repository = Repository.objects.create(name='External Ownership Repo')
+        remote = FlatpakRemote.objects.create(name='ownership-remote', url='https://example.com/repo')
+        allowed_external = ExternalRef.objects.create(
+            repository=repository, remote=remote, ref='app/org.example.Allowed/x86_64/stable',
+        )
+        allowed_external.organisations.add(allowed_org)
+        other_external = ExternalRef.objects.create(
+            repository=repository, remote=remote, ref='app/org.example.Other/x86_64/stable',
+        )
+        other_external.organisations.add(other_org)
+
+        request = RequestFactory().get(f'/externals/{allowed_external.pk}/edit/')
+        request.user = user
+        view = ExternalRefUpdateView()
+        view.setup(request, pk=allowed_external.pk)
+        self.assertQuerySetEqual(view.get_queryset(), [allowed_external])
+
+        view.object = allowed_external
+        context = view.get_context_data()
+        self.assertEqual(list(context['all_organisations']), [allowed_org])
+
     def test_permission_grant_allows_org_scoped_access(self):
         org = Organisation.objects.create(
             name='Org A',
@@ -114,6 +144,32 @@ class PermissionGrantTests(TestCase):
         apply_default_organisation(package, user)
 
         self.assertIn(org, package.organisations.all())
+
+    def test_admin_created_repository_gets_creator_default_organisation(self):
+        org = Organisation.objects.create(name='Admin Default Org')
+        user = User.objects.create_superuser(
+            username='admin-default-org', password='password', default_organisation=org,
+        )
+        request = RequestFactory().post('/admin/flatpak/repository/add/')
+        request.user = user
+        model_admin = admin.site._registry[Repository]
+        form_class = model_admin.get_form(request)
+        form = form_class(data={
+            'name': 'Admin Default Repo',
+            'collection_id': '',
+            'description': '',
+            'gpg_key': '',
+            'parent_repos': [],
+            'created_by': user.pk,
+        })
+        self.assertTrue(form.is_valid(), form.errors)
+        repository = form.save(commit=False)
+        model_admin.save_model(request, repository, form, change=False)
+        model_admin.save_related(request, form, [], change=False)
+
+        repository = Repository.objects.get(name='Admin Default Repo')
+        self.assertEqual(repository.created_by, user)
+        self.assertEqual(list(repository.organisations.all()), [org])
 
 
 class PermissionGroupTests(TestCase):
