@@ -723,6 +723,9 @@ class ExpandedTokenAPITests(TestCase):
     @patch('apps.flatpak.tasks.pull_external_ref_task.delay')
     def test_external_bulk_import(self, task):
         remote = FlatpakRemote.objects.create(name='upstream', url='https://example.com/repo')
+        organisation = Organisation.objects.create(name='Bulk Import Org')
+        self.admin.default_organisation = organisation
+        self.admin.save(update_fields=['default_organisation'])
         response = self.client.post('/api/external-refs/bulk-import/', {
             'repository_id': self.repo.pk, 'remote_id': remote.pk,
             'refs': ['app/org.example.New/x86_64/stable'],
@@ -730,6 +733,19 @@ class ExpandedTokenAPITests(TestCase):
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(response.json()['created'], 1)
         self.assertEqual(task.call_count, 1)
+        external = ExternalRef.objects.get(repository=self.repo, ref='app/org.example.New/x86_64/stable')
+        self.assertEqual(external.created_by, self.admin)
+        self.assertEqual(list(external.organisations.all()), [organisation])
+
+        other_organisation = Organisation.objects.create(name='Existing External Org')
+        external.organisations.set([other_organisation])
+        response = self.client.post('/api/external-refs/bulk-import/', {
+            'repository_id': self.repo.pk, 'remote_id': remote.pk,
+            'refs': ['app/org.example.New/x86_64/stable'],
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()['created'], 0)
+        self.assertEqual(list(external.organisations.all()), [other_organisation])
 
     def test_package_retry_reuses_existing_workflow(self):
         package = Package.objects.create(repository=self.repo, package_id='org.example.App',

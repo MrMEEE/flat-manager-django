@@ -3,14 +3,31 @@ from django.contrib.messages.storage.fallback import FallbackStorage
 from django.contrib.sessions.backends.db import SessionStore
 from django.core.exceptions import PermissionDenied
 from django.test import RequestFactory, TestCase
+from unittest.mock import patch
 from rest_framework.authtoken.models import Token as AuthToken
 from rest_framework.test import APIClient
 from rest_framework.authtoken.models import Token as AuthToken
 from rest_framework.test import APIClient
 
-from apps.flatpak.models import ExternalRef, FlatpakRemote, Organisation, Repository
+from apps.flatpak.models import (
+    ExternalRef,
+    ExternalRefVersion,
+    FlatpakRemote,
+    Organisation,
+    Promotion,
+    Repository,
+)
 from apps.flatpak.models import Package
-from apps.flatpak.views import ExternalRefUpdateView, RepositoryUpdateView
+from apps.flatpak.views import (
+    ExternalRefPullView,
+    ExternalRefPublishView,
+    ExternalRefPromoteView,
+    ExternalRefUpdateView,
+    PromotionListView,
+    RepositoryCreateView,
+    RepositoryUpdateView,
+    dependencies_list,
+)
 from apps.users.views import ProfileView
 from apps.users.models import (
     PermissionGrant,
@@ -24,6 +41,186 @@ from apps.users.models import (
 
 
 class PermissionGrantTests(TestCase):
+    def test_external_promotion_targets_follow_user_organisation_scope(self):
+        devops_org = Organisation.objects.create(name='Devops Promotion Org')
+        infrastructure_org = Organisation.objects.create(name='Infrastructure Promotion Org')
+        user = User.objects.create_user(username='scoped-promoter', password='password')
+        PermissionGrant.objects.create(
+            user=user, organisation=devops_org, resource='externals',
+            action='read', granted=True,
+        )
+        PermissionGrant.objects.create(
+            user=user, organisation=devops_org, resource='published_builds',
+            action='promotion', granted=True,
+        )
+
+        source = Repository.objects.create(name='External Source')
+        devops_repo = Repository.objects.create(name='Devops Target')
+        devops_repo.organisations.add(devops_org)
+        devops_repo.parent_repos.add(source)
+        infrastructure_repo = Repository.objects.create(name='Infrastructure Target')
+        infrastructure_repo.organisations.add(infrastructure_org)
+        infrastructure_repo.parent_repos.add(source)
+        source.organisations.add(devops_org)
+        remote = FlatpakRemote.objects.create(name='promotion-remote', url='https://example.com/repo')
+        external = ExternalRef.objects.create(
+            repository=source, remote=remote, ref='app/org.example.Promote/x86_64/stable',
+            status='published',
+        )
+        external.organisations.add(devops_org)
+        version = ExternalRefVersion.objects.create(
+            external_ref=external, ref=external.ref, commit_hash='a' * 64, status='published',
+        )
+
+        request = RequestFactory().get('/promotions/')
+        request.user = user
+        list_view = PromotionListView()
+        list_view.setup(request)
+        list_view.object_list = Promotion.objects.none()
+        context = list_view.get_context_data()
+        self.assertEqual(
+            context['ready_to_promote_externals'][0]['targets'], [devops_repo],
+        )
+
+        request = RequestFactory().post(
+            f'/externals/{external.pk}/promote/',
+            data=f'{{"target_repo_id": {infrastructure_repo.pk}, "external_ref_version_id": {version.pk}}}',
+            content_type='application/json',
+        )
+        request.user = user
+        with patch('apps.flatpak.tasks.promote_external_ref_task.delay') as task:
+            response = ExternalRefPromoteView.as_view()(request, pk=external.pk)
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(task.called)
+
+    def test_repository_create_and_edit_forms_include_organisation_choices(self):
+        organisation = Organisation.objects.create(name='Repository Form Org')
+        user = User.objects.create_superuser(username='repository-form-admin', password='password')
+
+        request = RequestFactory().get('/repos/create/')
+        request.user = user
+        create_view = RepositoryCreateView()
+        create_view.setup(request)
+        create_form = create_view.get_form()
+        self.assertIn('organisations', create_form.fields)
+        self.assertIn(organisation, create_form.fields['organisations'].queryset)
+
+        repository = Repository.objects.create(name='Existing Form Repo')
+        request = RequestFactory().get(f'/repos/{repository.pk}/edit/')
+        request.user = user
+        edit_view = RepositoryUpdateView()
+        edit_view.setup(request, pk=repository.pk)
+        edit_view.object = repository
+        edit_form = edit_view.get_form()
+        self.assertIn('organisations', edit_form.fields)
+        self.assertIn(organisation, edit_form.fields['organisations'].queryset)
+
+    def test_scoped_user_can_repull_owned_external_and_denials_are_json(self):
+        organisation = Organisation.objects.create(name='Pull Permission Org')
+        other_organisation = Organisation.objects.create(name='Other Pull Org')
+        user = User.objects.create_user(username='external-sync-user', password='password')
+        PermissionGrant.objects.create(
+            user=user, organisation=organisation, resource='externals',
+            action='sync', granted=True,
+        )
+        repository = Repository.objects.create(name='Pull Permission Repo')
+        remote = FlatpakRemote.objects.create(name='pull-remote', url='https://example.com/repo')
+        visible_external = ExternalRef.objects.create(
+            repository=repository, remote=remote, ref='app/org.example.Visible/x86_64/stable',
+        )
+        visible_external.organisations.add(organisation)
+        hidden_external = ExternalRef.objects.create(
+            repository=repository, remote=remote, ref='app/org.example.Hidden/x86_64/stable',
+        )
+        hidden_external.organisations.add(other_organisation)
+
+        request = RequestFactory().post(f'/externals/{visible_external.pk}/pull/')
+        request.user = user
+        with patch('apps.flatpak.tasks.pull_external_ref_task.delay') as task:
+            response = ExternalRefPullView.as_view()(request, pk=visible_external.pk)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'application/json')
+        task.assert_called_once_with(visible_external.pk)
+
+        request = RequestFactory().post(f'/externals/{hidden_external.pk}/pull/')
+        request.user = user
+        response = ExternalRefPullView.as_view()(request, pk=hidden_external.pk)
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response['Content-Type'], 'application/json')
+
+        request = RequestFactory().post(f'/externals/{visible_external.pk}/pull/')
+        request.user = User.objects.create_user(username='no-sync-user', password='password')
+        response = ExternalRefPullView.as_view()(request, pk=visible_external.pk)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response['Content-Type'], 'application/json')
+
+    def test_scoped_user_can_publish_owned_external(self):
+        organisation = Organisation.objects.create(name='Publish Permission Org')
+        user = User.objects.create_user(username='external-publish-user', password='password')
+        PermissionGrant.objects.create(
+            user=user, organisation=organisation, resource='externals',
+            action='publish', granted=True,
+        )
+        repository = Repository.objects.create(name='Publish Permission Repo')
+        external = ExternalRef.objects.create(
+            repository=repository, ref='app/org.example.Publish/x86_64/stable', status='pulled',
+        )
+        external.organisations.add(organisation)
+
+        request = RequestFactory().post(f'/externals/{external.pk}/publish/')
+        request.user = user
+        with patch('apps.flatpak.tasks.publish_external_ref_task.delay') as task:
+            response = ExternalRefPublishView.as_view()(request, pk=external.pk)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'application/json')
+        task.assert_called_once_with(external.pk)
+
+    def test_dependencies_page_only_uses_visible_packages_and_externals(self):
+        visible_org = Organisation.objects.create(name='Visible Dependency Org')
+        hidden_org = Organisation.objects.create(name='Hidden Dependency Org')
+        user = User.objects.create_user(username='dependency-reader', password='password')
+        for resource in ('flatpaks', 'externals'):
+            PermissionGrant.objects.create(
+                user=user, organisation=visible_org, resource=resource,
+                action='read', granted=True,
+            )
+
+        repository = Repository.objects.create(name='Dependency Scope Repo')
+        visible_package = Package.objects.create(
+            repository=repository, package_id='org.example.Visible', package_name='Visible App',
+            dependencies={'runtime_full': 'runtime/org.example.VisibleRuntime/x86_64/stable'},
+        )
+        visible_package.organisations.add(visible_org)
+        hidden_package = Package.objects.create(
+            repository=repository, package_id='org.example.Hidden', package_name='Hidden App',
+            dependencies={'runtime_full': 'runtime/org.example.HiddenRuntime/x86_64/stable'},
+        )
+        hidden_package.organisations.add(hidden_org)
+
+        visible_external = ExternalRef.objects.create(
+            repository=repository, ref='runtime/org.example.VisibleExternal/x86_64/stable',
+            dependencies={'all': ['runtime/org.example.ExternalDependency/x86_64/stable']},
+        )
+        visible_external.organisations.add(visible_org)
+        hidden_external = ExternalRef.objects.create(
+            repository=repository, ref='runtime/org.example.HiddenExternal/x86_64/stable',
+            dependencies={'all': ['runtime/org.example.HiddenExternalDependency/x86_64/stable']},
+        )
+        hidden_external.organisations.add(hidden_org)
+
+        request = RequestFactory().get('/dependencies/')
+        request.user = user
+        with patch('apps.flatpak.views.render', side_effect=lambda _request, _template, context: context), \
+                patch('subprocess.run', return_value=type('Result', (), {'returncode': 1, 'stdout': ''})()):
+            context = dependencies_list(request)
+
+        missing_refs = {item['full_ref'] for item in context['missing_deps']}
+        self.assertIn('runtime/org.example.VisibleRuntime/x86_64/stable', missing_refs)
+        self.assertIn('runtime/org.example.ExternalDependency/x86_64/stable', missing_refs)
+        self.assertNotIn('runtime/org.example.HiddenRuntime/x86_64/stable', missing_refs)
+        self.assertNotIn('runtime/org.example.HiddenExternalDependency/x86_64/stable', missing_refs)
+
     def test_external_ownership_editor_respects_update_organisation_scope(self):
         allowed_org = Organisation.objects.create(name='Allowed External Org')
         other_org = Organisation.objects.create(name='Other External Org')

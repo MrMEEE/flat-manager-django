@@ -244,7 +244,7 @@ class RepositoryCreateView(ResourceActionRequiredMixin, CreateView):
     action = 'create'
     model = Repository
     template_name = 'flatpak/repository_form.html'
-    fields = ['name', 'collection_id', 'description', 'gpg_key', 'parent_repos']
+    fields = ['name', 'collection_id', 'description', 'gpg_key', 'parent_repos', 'organisations']
     success_url = reverse_lazy('flatpak:repo_list')
     
     def get_context_data(self, **kwargs):
@@ -304,7 +304,7 @@ class RepositoryUpdateView(ResourceActionRequiredMixin, UpdateView):
     action = 'update'
     model = Repository
     template_name = 'flatpak/repository_form.html'
-    fields = ['name', 'collection_id', 'description', 'gpg_key', 'parent_repos']
+    fields = ['name', 'collection_id', 'description', 'gpg_key', 'parent_repos', 'organisations']
     
     def get_form(self, form_class=None):
         form = super().get_form(form_class)
@@ -1233,7 +1233,18 @@ class ExternalRefPromoteView(LoginRequiredMixin, View):
                 .first()
             )
 
-        available_targets = get_available_external_ref_promotion_targets(ext, current_version=current_ver)
+        permitted_target_ids = set(
+            _scope_published_queryset(
+                Repository.objects.all(), request.user,
+                'promotion', 'externals', 'promote',
+            ).values_list('pk', flat=True)
+        )
+        available_targets = [
+            repo for repo in get_available_external_ref_promotion_targets(
+                ext, current_version=current_ver,
+            )
+            if repo.pk in permitted_target_ids
+        ]
         target_repo = next((repo for repo in available_targets if repo.pk == int(target_repo_id)), None)
         if target_repo is None:
             return JsonResponse(
@@ -1886,9 +1897,20 @@ class PromotionListView(LoginRequiredMixin, ListView):
                 seen_packages.add(build.package_id)
         context['ready_to_promote'] = ready_to_promote
         ready_to_promote_externals = []
+        external_target_repo_ids = set(
+            _scope_published_queryset(
+                Repository.objects.all(), self.request.user,
+                'promotion', 'externals', 'promote',
+            ).values_list('pk', flat=True)
+        )
         for ext in _source_externals:
             current_ver = ext._published_versions[0] if ext._published_versions else None
-            targets = get_available_external_ref_promotion_targets(ext, current_version=current_ver)
+            targets = [
+                repo for repo in get_available_external_ref_promotion_targets(
+                    ext, current_version=current_ver,
+                )
+                if repo.pk in external_target_repo_ids
+            ]
             if targets:
                 ready_to_promote_externals.append({
                     'external_ref': ext,
@@ -2780,9 +2802,15 @@ def dependencies_list(request):
         return '/'.join(parts[-3:]) if len(parts) >= 3 else ref_str
 
     # For each known dep, check managed status against flat-manager DB
-    all_bst = list(BuildStreamSource.objects.only('pk', 'name', 'produced_refs'))
-    all_pkg = list(Package.objects.only('pk', 'package_id', 'package_name'))
-    all_ext = list(ExternalRef.objects.only('pk', 'ref', 'display_name', 'status', 'dependencies'))
+    all_bst = list(scope_queryset_for_user(
+        BuildStreamSource.objects.all(), request.user, 'buildstreams',
+    ).only('pk', 'name', 'produced_refs'))
+    all_pkg = list(scope_queryset_for_user(
+        Package.objects.all(), request.user, 'flatpaks',
+    ).only('pk', 'package_id', 'package_name', 'dependencies'))
+    all_ext = list(scope_queryset_for_user(
+        ExternalRef.objects.all(), request.user, 'externals',
+    ).only('pk', 'ref', 'display_name', 'status', 'dependencies'))
 
     # ExternalRef lookup by tail (name/arch/branch, stripping leading type prefix)
     ext_by_tail = {}
@@ -2871,7 +2899,7 @@ def dependencies_list(request):
             if not any(_r['pk'] == required_by_external['pk'] for _r in _re):
                 _re.append(required_by_external)
 
-    for _pkg in Package.objects.only('pk', 'package_id', 'package_name', 'dependencies'):
+    for _pkg in all_pkg:
         _deps = _pkg.dependencies
         if not _deps:
             continue
@@ -3272,6 +3300,7 @@ class ExternalRefBulkImportView(LoginRequiredMixin, View):
                 },
             )
             if was_created:
+                apply_default_organisation(ext, request.user)
                 pull_external_ref_task.delay(ext.pk)
                 created += 1
             else:
@@ -3449,12 +3478,16 @@ class ExternalRefPullView(LoginRequiredMixin, View):
     """Queue a pull (and subsequent publish) task for an ExternalRef."""
 
     def post(self, request, pk):
-        if not request.user.has_permission('externals', 'sync'):
-            raise PermissionDenied()
+        if not _has_scoped_permission(request.user, 'externals', 'sync'):
+            return JsonResponse({'error': 'You do not have permission to sync externals.'}, status=403)
         from .models import ExternalRef
         from apps.flatpak.tasks import pull_external_ref_task
 
-        ext = get_object_or_404(ExternalRef, pk=pk)
+        ext = scope_queryset_for_user(
+            ExternalRef.objects.all(), request.user, 'externals', 'sync',
+        ).filter(pk=pk).first()
+        if ext is None:
+            return JsonResponse({'error': 'External ref not found or not accessible.'}, status=404)
         if ext.status in ('pulling', 'publishing'):
             return JsonResponse({'error': f'Already in progress (status: {ext.status})'}, status=400)
 
@@ -3473,16 +3506,15 @@ class ExternalRefPublishView(LoginRequiredMixin, View):
 
     def post(self, request, pk):
         if not _has_scoped_permission(request.user, 'published_builds', 'externals', 'externals', 'publish'):
-            raise PermissionDenied()
+            return JsonResponse({'error': 'You do not have permission to publish externals.'}, status=403)
         from .models import ExternalRef
         from apps.flatpak.tasks import publish_external_ref_task
 
-        ext = get_object_or_404(
-            _scope_published_queryset(
+        ext = _scope_published_queryset(
                 ExternalRef.objects.all(), request.user, 'externals', 'externals', 'publish'
-            ),
-            pk=pk,
-        )
+            ).filter(pk=pk).first()
+        if ext is None:
+            return JsonResponse({'error': 'External ref not found or not accessible.'}, status=404)
         if ext.status != 'pulled':
             return JsonResponse({'error': f'Ref must be in pulled state (current: {ext.status})'}, status=400)
 
@@ -3579,7 +3611,11 @@ class ExternalRefStatusView(LoginRequiredMixin, View):
 
     def get(self, request, pk):
         from .models import ExternalRef
-        ext = get_object_or_404(ExternalRef, pk=pk)
+        ext = scope_queryset_for_user(
+            ExternalRef.objects.all(), request.user, 'externals', 'read',
+        ).filter(pk=pk).first()
+        if ext is None:
+            return JsonResponse({'error': 'External ref not found or not accessible.'}, status=404)
         return JsonResponse({
             'status': ext.status,
             'log': ext.log,

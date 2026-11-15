@@ -337,13 +337,28 @@ function setButtonsBusy(busy) {
     });
 }
 
+function parseJsonResponse(response) {
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.toLowerCase().includes('application/json')) {
+        throw new Error(`Request failed (HTTP ${response.status}); the server returned an unexpected response.`);
+    }
+    return response.json()
+        .catch(() => { throw new Error(`The server returned invalid JSON (HTTP ${response.status}).`); })
+        .then(data => {
+            if (!response.ok) {
+                throw new Error(data.error || data.detail || `Request failed (HTTP ${response.status}).`);
+            }
+            return data;
+        });
+}
+
 function postAction(url, onSuccess) {
     setButtonsBusy(true);
     fetch(url, {
         method: 'POST',
         headers: {'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json'},
     })
-    .then(r => r.json())
+    .then(parseJsonResponse)
     .then(data => {
         if (data.error) {
             showErrorModal('Error', data.error);
@@ -353,7 +368,7 @@ function postAction(url, onSuccess) {
         }
     })
     .catch(err => {
-        showErrorModal('Error', String(err));
+        showErrorModal('Request Failed', err.message || String(err));
         setButtonsBusy(false);
     });
 }
@@ -402,7 +417,7 @@ function stopPolling() {
 
 function pollStatus() {
     fetch(STATUS_URL)
-    .then(r => r.json())
+    .then(parseJsonResponse)
     .then(data => {
         // Update log
         const logEl = document.getElementById('ext-log');
@@ -436,7 +451,12 @@ function pollStatus() {
             setButtonsBusy(false);
         }
     })
-    .catch(() => { /* network hiccup, keep polling */ });
+    .catch(err => {
+        if (err.name === 'TypeError') return; // Network hiccup; try again next interval.
+        stopPolling();
+        setButtonsBusy(false);
+        showErrorModal('Status Check Failed', err.message || String(err));
+    });
 }
 
 function statusBadgeHTML(status) {
