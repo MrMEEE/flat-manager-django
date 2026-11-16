@@ -32,26 +32,57 @@
             <i class="bi bi-cloud-upload"></i> Publish Only
         </button>
         {% endif %}
-        {% if user.can_delete_externals %}
-        <button type="button" class="btn btn-outline-danger"
-                onclick="showDeleteConfirm(
-                    'Delete External Ref',
-                    'Delete <strong>{{ ext.display_name|default:ext.ref|escapejs }}</strong>? This only removes the record — the ref remains in the repository if already published.',
-                    'Delete',
-                    function() { document.getElementById('form-delete').submit(); }
-                )">
-            <i class="bi bi-trash"></i> Delete
-        </button>
-        {% else %}
-        <button type="button" class="btn btn-outline-danger" disabled title="You do not have permission to delete externals">
+        {% if can_delete_external %}
+        <button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteExternalModal">
             <i class="bi bi-trash"></i> Delete
         </button>
         {% endif %}
-        <form id="form-delete" method="post" action="{% url 'flatpak:external_delete' ext.pk %}" class="d-none">
-            {% csrf_token %}
-        </form>
     </div>
 </div>
+
+{% if can_delete_external %}
+<div class="modal fade" id="deleteExternalModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post" action="{% url 'flatpak:external_delete' ext.pk %}">
+                {% csrf_token %}
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-trash"></i> Remove External ownership</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Choose the organizations from which to remove <strong>{{ ext.display_name|default:ext.ref }}</strong>.</p>
+                    {% for org in deletable_organisations %}
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" name="organisation_ids"
+                               id="delete-external-org-{{ org.pk }}" value="{{ org.pk }}" checked>
+                        <label class="form-check-label" for="delete-external-org-{{ org.pk }}">{{ org.name }}</label>
+                    </div>
+                    {% empty %}
+                    <p class="text-muted">No organization memberships are available to remove.</p>
+                    {% endfor %}
+                    {% if can_delete_all_external %}
+                    <hr>
+                    <div class="form-check text-danger">
+                        <input class="form-check-input" type="checkbox" name="delete_all" value="true" id="delete-external-all">
+                        <label class="form-check-label fw-semibold" for="delete-external-all">Delete the External completely</label>
+                    </div>
+                    <p class="form-text mb-0">This also removes its ref from the repository. Leave unchecked to remove only the selected organization links.</p>
+                    {% else %}
+                    <p class="form-text mb-0">Other organizations will retain access to this External.</p>
+                    {% endif %}
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-danger" id="deleteExternalSubmit">
+                        <i class="bi bi-building-dash"></i> Remove selected ownership
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
 
 <div class="row">
     <div class="col-md-8">
@@ -306,6 +337,16 @@
 
 {% block extra_js %}
 <script>
+const deleteAllExternal = document.getElementById('delete-external-all');
+const deleteExternalSubmit = document.getElementById('deleteExternalSubmit');
+if (deleteAllExternal && deleteExternalSubmit) {
+    deleteAllExternal.addEventListener('change', function () {
+        deleteExternalSubmit.innerHTML = this.checked
+            ? '<i class="bi bi-trash"></i> Delete External completely'
+            : '<i class="bi bi-building-dash"></i> Remove selected ownership';
+    });
+}
+
 const PULL_URL    = "{% url 'flatpak:external_pull' ext.pk %}";
 const PUBLISH_URL = "{% url 'flatpak:external_publish' ext.pk %}";
 const PROMOTE_URL = "{% url 'flatpak:external_promote' ext.pk %}";

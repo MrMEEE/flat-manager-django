@@ -17,6 +17,7 @@ from apps.flatpak.models import ExternalRef, ExternalRefPromotion, Promotion
 from apps.flatpak.views import (
     _has_scoped_permission, _scope_published_queryset,
     get_available_promotion_targets, get_available_external_ref_promotion_targets,
+    add_default_organisation_to_external, delete_external_or_detach_organisations,
 )
 from apps.flatpak.utils.gpg import generate_gpg_key, import_gpg_key
 from .serializers import (
@@ -546,6 +547,19 @@ class ExternalRefViewSet(viewsets.ModelViewSet):
                 raise PermissionDenied()
         return super().get_permissions()
 
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        existing = ExternalRef.objects.filter(
+            repository=serializer.validated_data['repository'],
+            ref=serializer.validated_data['ref'],
+        ).first()
+        if existing is not None:
+            add_default_organisation_to_external(existing, request.user)
+            response_serializer = self.get_serializer(existing)
+            return Response(response_serializer.data, status=status.HTTP_200_OK)
+        return super().create(request, *args, **kwargs)
+
     def perform_create(self, serializer):
         external = serializer.save(created_by=self.request.user)
         apply_default_organisation(external, self.request.user)
@@ -553,9 +567,7 @@ class ExternalRefViewSet(viewsets.ModelViewSet):
         pull_external_ref_task.delay(external.pk)
 
     def perform_destroy(self, instance):
-        from apps.flatpak.tasks import remove_external_ref_from_repos
-        remove_external_ref_from_repos(instance)
-        instance.delete()
+        delete_external_or_detach_organisations(instance, self.request.user)
 
     def get_queryset(self):
         queryset = super().get_queryset()

@@ -32,6 +32,9 @@
                         <td><a href="mailto:{{ org.responsible_email }}">{{ org.responsible_email }}</a></td>
                         <td>{{ org.description|truncatechars:80 }}</td>
                         <td>
+                            {% if org.name == 'Global' %}
+                            <span class="badge bg-secondary">System</span>
+                            {% else %}
                             <a href="{% url 'flatpak:organisation_edit' org.pk %}" class="btn btn-sm btn-outline-primary" title="Edit">
                                 <i class="bi bi-pencil"></i>
                             </a>
@@ -39,6 +42,7 @@
                                     onclick="confirmDelete({{ org.pk }}, '{{ org.name|escapejs }}')">
                                 <i class="bi bi-trash"></i>
                             </button>
+                            {% endif %}
                         </td>
                     </tr>
                     {% endfor %}

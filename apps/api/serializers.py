@@ -197,6 +197,7 @@ class ExternalRefSerializer(serializers.ModelSerializer):
         fields = ['id', 'repository', 'remote', 'ref', 'display_name', 'commit_hash',
                   'status', 'error_message', 'log', 'last_pulled_at', 'versions']
         read_only_fields = ['id', 'commit_hash', 'status', 'error_message', 'log', 'last_pulled_at', 'versions']
+        validators = []
 
     def validate(self, attrs):
         request = self.context['request']

@@ -12,23 +12,48 @@
 
 <div class="card border-danger">
     <div class="card-body">
-        <p>Delete <strong>{{ object.display_name|default:object.ref }}</strong>
-            (<code>{{ object.ref }}</code>) from repository <strong>{{ object.repository.name }}</strong>?</p>
+        <p>Remove organization ownership for <strong>{{ object.display_name|default:object.ref }}</strong>
+            (<code>{{ object.ref }}</code>)?</p>
         <div class="alert alert-warning d-flex align-items-start gap-2">
             <i class="bi bi-exclamation-triangle-fill flex-shrink-0 mt-1"></i>
             <div>
-                This will also <strong>remove the ref from the repository on disk</strong> and regenerate
-                the repository summary. Any clients that have already installed this ref will not be affected,
-                but it will no longer be visible in <code>flatpak remote-ls</code>.
+                Other organizations keep access to this External. The repository ref is removed only if you
+            <button type="submit" class="btn btn-danger" id="deleteExternalConfirmSubmit">
             </div>
         </div>
         <form method="post">
             {% csrf_token %}
+            {% for org in deletable_organisations %}
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="organisation_ids"
+                       id="delete-org-{{ org.pk }}" value="{{ org.pk }}" checked>
+                <label class="form-check-label" for="delete-org-{{ org.pk }}">{{ org.name }}</label>
+            </div>
+            {% endfor %}
+            {% if can_delete_all_external %}
+            <div class="form-check text-danger mt-3">
+                <input class="form-check-input" type="checkbox" name="delete_all" value="true" id="delete-all-external">
+                <label class="form-check-label fw-semibold" for="delete-all-external">Delete External completely and remove its repository ref</label>
+            </div>
+            {% endif %}
+            <div class="mt-3">
             <button type="submit" class="btn btn-danger">
-                <i class="bi bi-trash"></i> Delete and remove from repository
+                <i class="bi bi-building-dash"></i> Remove selected ownership
             </button>
             <a href="{% url 'flatpak:external_detail' object.pk %}" class="btn btn-outline-secondary ms-2">Cancel</a>
+            </div>
         </form>
     </div>
 </div>
+<script>
+const deleteAllExternalConfirm = document.getElementById('delete-all-external');
+const deleteExternalConfirmSubmit = document.getElementById('deleteExternalConfirmSubmit');
+if (deleteAllExternalConfirm && deleteExternalConfirmSubmit) {
+    deleteAllExternalConfirm.addEventListener('change', function () {
+        deleteExternalConfirmSubmit.textContent = this.checked
+            ? 'Delete External completely and remove repository ref'
+            : 'Remove selected ownership';
+    });
+}
+</script>
 {% endblock %}

@@ -187,6 +187,11 @@
                 button.classList.remove('btn-primary');
                 button.classList.add('btn-success');
                 button.innerHTML = '<i class="bi bi-check-circle"></i> Added';
+            } else if (data.associated > 0) {
+                setStatus('ok', item.name + ' was already tracked and is now shared with your organization.');
+                button.classList.remove('btn-primary');
+                button.classList.add('btn-success');
+                button.innerHTML = '<i class="bi bi-people"></i> Added to organization';
             } else {
                 setStatus('info', item.name + ' is already tracked as External ref.');
                 button.classList.remove('btn-primary');

@@ -77,7 +77,10 @@
             <tbody>
             {% for ext in externals %}
                 <tr>
-                    <td><input type="checkbox" class="ext-checkbox" value="{{ ext.pk }}"></td>
+                    <td><input type="checkbox" class="ext-checkbox" value="{{ ext.pk }}"
+                               data-org-pks="{% for org in ext.organisations.all %}{{ org.pk }}{% if not forloop.last %},{% endif %}{% endfor %}"
+                               data-delete-org-pks="{% for org_pk in ext.delete_organisation_ids %}{{ org_pk }}{% if not forloop.last %},{% endif %}{% endfor %}"
+                               data-can-delete-all="{{ ext.can_delete_all|yesno:'true,false' }}"></td>
                     <td>
                         <a href="{% url 'flatpak:external_detail' ext.pk %}">
                             {{ ext.display_name|default:ext.ref }}
@@ -229,6 +232,9 @@
 {% for org in all_organisations %}
 <span class="org-option" data-pk="{{ org.pk }}" data-name="{{ org.name|escapejs }}"></span>
 {% endfor %}
+{% for org in deletable_organisations %}
+<span class="delete-org-option" data-pk="{{ org.pk }}" data-name="{{ org.name|escapejs }}"></span>
+{% endfor %}
 </span>
 {% endblock %}
 
@@ -342,19 +348,66 @@
     });
 
     document.getElementById('bulk-delete-btn').addEventListener('click', function () {
-        var ids = getChecked().map(cb => parseInt(cb.value, 10));
+        var checked = getChecked();
+        var ids = checked.map(cb => parseInt(cb.value, 10));
         if (!ids.length) return;
-        showConfirm(
-            'Delete Selected',
-            '<p>Permanently delete <strong>' + ids.length + ' selected ref' + (ids.length === 1 ? '' : 's') + '</strong>?</p>' +
-            '<p class="text-muted small mb-0">This cannot be undone.</p>',
-            'Delete', 'btn-danger',
-            function () {
-                postBulk({ action: 'delete', ids: ids })
-                    .then(d => { if (d.status === 'success') location.reload(); else showError(d.error || 'Unknown error'); })
-                    .catch(e => showError(e.message));
-            }
-        );
+        var selectedOrgIds = new Set();
+        checked.forEach(function (item) {
+            (item.dataset.deleteOrgPks || '').split(',').filter(Boolean).forEach(id => selectedOrgIds.add(id));
+        });
+        var orgOptions = Array.from(document.querySelectorAll('.delete-org-option'))
+            .filter(option => selectedOrgIds.has(option.dataset.pk));
+        var body = document.getElementById('confirmBody');
+        body.innerHTML = '';
+        var intro = document.createElement('p');
+        intro.textContent = 'Remove ownership for ' + ids.length + ' selected External ref' + (ids.length === 1 ? '' : 's') + ' from:';
+        body.appendChild(intro);
+        var orgList = document.createElement('div');
+        orgList.className = 'd-flex flex-column gap-1';
+        orgOptions.forEach(function (option) {
+            var row = document.createElement('div');
+            row.className = 'form-check';
+            var input = document.createElement('input');
+            input.className = 'form-check-input bulk-delete-org';
+            input.type = 'checkbox';
+            input.value = option.dataset.pk;
+            input.id = 'bulk-delete-org-' + option.dataset.pk;
+            input.checked = true;
+            var label = document.createElement('label');
+            label.className = 'form-check-label';
+            label.htmlFor = input.id;
+            label.textContent = option.dataset.name;
+            row.append(input, label);
+            orgList.appendChild(row);
+        });
+        if (orgOptions.length) body.appendChild(orgList);
+        else {
+            var noOrgs = document.createElement('p');
+            noOrgs.className = 'text-muted';
+            noOrgs.textContent = 'No organization ownership is available to remove.';
+            body.appendChild(noOrgs);
+        }
+        var canDeleteAll = checked.every(item => item.dataset.canDeleteAll === 'true');
+        if (canDeleteAll) {
+            var fullDelete = document.createElement('div');
+            fullDelete.className = 'form-check text-danger mt-3';
+            fullDelete.innerHTML = '<input class="form-check-input" type="checkbox" id="bulk-delete-all">' +
+                '<label class="form-check-label fw-semibold" for="bulk-delete-all">Delete selected Externals completely</label>';
+            body.appendChild(fullDelete);
+        }
+        document.getElementById('confirmTitle').textContent = 'Remove External ownership';
+        var footer = document.getElementById('confirmFooter');
+        footer.innerHTML = '<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>' +
+            '<button type="button" class="btn btn-danger" id="confirmOk">Apply</button>';
+        document.getElementById('confirmOk').onclick = function () {
+            var orgPks = Array.from(document.querySelectorAll('.bulk-delete-org:checked')).map(cb => parseInt(cb.value, 10));
+            var deleteAll = document.getElementById('bulk-delete-all')?.checked || false;
+            bootstrap.Modal.getInstance(document.getElementById('confirmModal')).hide();
+            postBulk({ action: 'delete', ids: ids, org_pks: orgPks, delete_all: deleteAll })
+                .then(d => { if (d.status === 'success') location.reload(); else showError(d.error || 'Unknown error'); })
+                .catch(e => showError(e.message));
+        };
+        new bootstrap.Modal(document.getElementById('confirmModal')).show();
     });
 })();
 

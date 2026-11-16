@@ -1,5 +1,6 @@
 from django.db import models
 from django.conf import settings
+from django.core.exceptions import ValidationError
 import secrets
 import os
 
@@ -91,6 +92,9 @@ class RepositorySubset(models.Model):
         return f"{self.repository.name} - {self.name}"
 
 
+GLOBAL_ORGANISATION_NAME = 'Global'
+
+
 class Organisation(models.Model):
     """
     An organisation that owns or is responsible for one or more packages,
@@ -107,6 +111,24 @@ class Organisation(models.Model):
         ordering = ['name']
         verbose_name = 'Organisation'
         verbose_name_plural = 'Organisations'
+
+    def save(self, *args, **kwargs):
+        if self.pk is None and self.name == GLOBAL_ORGANISATION_NAME:
+            raise ValidationError('The Global organisation is managed by the system.')
+        if self.pk is not None:
+            original = type(self).objects.filter(pk=self.pk).first()
+            if original and original.name == GLOBAL_ORGANISATION_NAME:
+                changed = any(getattr(original, field) != getattr(self, field) for field in (
+                    'name', 'responsible_name', 'responsible_email', 'description',
+                ))
+                if changed:
+                    raise ValidationError('The Global organisation cannot be edited.')
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.name == GLOBAL_ORGANISATION_NAME:
+            raise ValidationError('The Global organisation cannot be deleted.')
+        return super().delete(*args, **kwargs)
 
     def __str__(self):
         return self.name

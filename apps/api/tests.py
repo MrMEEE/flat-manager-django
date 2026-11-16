@@ -380,6 +380,24 @@ class TokenWorkflowTests(TestCase):
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(response.json()['ref'], 'app/org.example.New/x86_64/testing')
 
+    @patch('apps.flatpak.tasks.pull_external_ref_task.delay')
+    def test_existing_external_creation_associates_creator_organisation(self, task):
+        organisation = Organisation.objects.create(name='Existing External Creator Org')
+        self.user.default_organisation = organisation
+        self.user.save(update_fields=['default_organisation'])
+
+        response = self.client.post('/api/external-refs/', {
+            'repository': self.source.pk,
+            'remote': self.remote.pk,
+            'ref': self.external.ref,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()['id'], self.external.pk)
+        self.external.refresh_from_db()
+        self.assertIn(organisation, self.external.organisations.all())
+        task.assert_not_called()
+
     def test_created_package_gets_creator_default_organisation(self):
         organisation = Organisation.objects.create(name='Creator Org')
         self.user.default_organisation = organisation
@@ -735,17 +753,25 @@ class ExpandedTokenAPITests(TestCase):
         self.assertEqual(task.call_count, 1)
         external = ExternalRef.objects.get(repository=self.repo, ref='app/org.example.New/x86_64/stable')
         self.assertEqual(external.created_by, self.admin)
-        self.assertEqual(list(external.organisations.all()), [organisation])
+        self.assertCountEqual(
+            external.organisations.all(),
+            [organisation, Organisation.objects.get(name='Global')],
+        )
 
         other_organisation = Organisation.objects.create(name='Existing External Org')
-        external.organisations.set([other_organisation])
+        self.admin.default_organisation = other_organisation
+        self.admin.save(update_fields=['default_organisation'])
         response = self.client.post('/api/external-refs/bulk-import/', {
             'repository_id': self.repo.pk, 'remote_id': remote.pk,
             'refs': ['app/org.example.New/x86_64/stable'],
         }, format='json')
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(response.json()['created'], 0)
-        self.assertEqual(list(external.organisations.all()), [other_organisation])
+        self.assertEqual(response.json()['associated'], 1)
+        self.assertCountEqual(
+            external.organisations.all(),
+            [organisation, other_organisation, Organisation.objects.get(name='Global')],
+        )
 
     def test_package_retry_reuses_existing_workflow(self):
         package = Package.objects.create(repository=self.repo, package_id='org.example.App',

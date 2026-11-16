@@ -1,7 +1,9 @@
+import json
+
 from django.contrib import admin
 from django.contrib.messages.storage.fallback import FallbackStorage
 from django.contrib.sessions.backends.db import SessionStore
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.test import RequestFactory, TestCase
 from unittest.mock import patch
 from rest_framework.authtoken.models import Token as AuthToken
@@ -19,10 +21,15 @@ from apps.flatpak.models import (
 )
 from apps.flatpak.models import Package
 from apps.flatpak.views import (
+    ExternalRefBulkActionView,
+    ExternalRefDeleteView,
+    ExternalRefCreateView,
     ExternalRefPullView,
     ExternalRefPublishView,
     ExternalRefPromoteView,
     ExternalRefUpdateView,
+    OrganisationDeleteView,
+    OrganisationUpdateView,
     PromotionListView,
     RepositoryCreateView,
     RepositoryUpdateView,
@@ -41,6 +48,159 @@ from apps.users.models import (
 
 
 class PermissionGrantTests(TestCase):
+    def test_global_organisation_is_seeded_and_immutable(self):
+        global_org = Organisation.objects.get(name='Global')
+
+        global_org.description = 'Changed by user'
+        with self.assertRaises(ValidationError):
+            global_org.save()
+        with self.assertRaises(ValidationError):
+            global_org.delete()
+        with self.assertRaises(ValidationError):
+            Organisation.objects.create(
+                name='Global', responsible_name='Other', responsible_email='other@example.com',
+            )
+
+        user = User.objects.create_superuser(username='global-org-admin', password='password')
+        for view_class, path in (
+            (OrganisationUpdateView, f'/organisations/{global_org.pk}/edit/'),
+            (OrganisationDeleteView, f'/organisations/{global_org.pk}/delete/'),
+        ):
+            request = RequestFactory().get(path)
+            request.user = user
+            view = view_class()
+            view.setup(request, pk=global_org.pk)
+            self.assertFalse(view.get_queryset().filter(pk=global_org.pk).exists())
+
+    def test_bulk_delete_removes_only_selected_accessible_ownership(self):
+        allowed_org = Organisation.objects.create(name='Bulk Delete Allowed')
+        hidden_org = Organisation.objects.create(name='Bulk Delete Hidden')
+        user = User.objects.create_user(username='bulk-external-deleter', password='password')
+        PermissionGrant.objects.create(
+            user=user, organisation=allowed_org, resource='externals',
+            action='delete', granted=True,
+        )
+        repository = Repository.objects.create(name='Bulk Delete Repo')
+        external = ExternalRef.objects.create(
+            repository=repository, ref='app/org.example.BulkDelete/x86_64/stable',
+        )
+        external.organisations.add(allowed_org, hidden_org)
+        request = RequestFactory().post(
+            '/externals/bulk-action/',
+            data=json.dumps({
+                'action': 'delete', 'ids': [external.pk],
+                'org_pks': [allowed_org.pk], 'delete_all': False,
+            }),
+            content_type='application/json',
+        )
+        request.user = user
+
+        response = ExternalRefBulkActionView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content), {
+            'status': 'success', 'deleted': 0, 'updated': 1,
+        })
+        external.refresh_from_db()
+        self.assertEqual(list(external.organisations.all()), [hidden_org])
+
+    def test_external_form_duplicate_adds_creator_default_organisation(self):
+        existing_org = Organisation.objects.create(name='Existing Owner Org')
+        creator_org = Organisation.objects.create(name='Form Creator Org')
+        user = User.objects.create_user(
+            username='external-form-creator', password='password', default_organisation=creator_org,
+        )
+        PermissionGrant.objects.create(
+            user=user, organisation=creator_org, resource='externals',
+            action='create', granted=True,
+        )
+        repository = Repository.objects.create(name='Form Duplicate Repo')
+        remote = FlatpakRemote.objects.create(name='form-duplicate-remote', url='https://example.com/repo')
+        external = ExternalRef.objects.create(
+            repository=repository, remote=remote, ref='app/org.example.FormDuplicate/x86_64/stable',
+        )
+        external.organisations.add(existing_org)
+        request = RequestFactory().post('/externals/create/', {
+            'repository': repository.pk,
+            'remote': remote.pk,
+            'ref': external.ref,
+        })
+        request.user = user
+        request.session = SessionStore()
+        request._messages = FallbackStorage(request)
+
+        with patch('apps.flatpak.tasks.pull_external_ref_task.delay') as task:
+            response = ExternalRefCreateView.as_view()(request)
+
+        self.assertEqual(response.status_code, 302)
+        external.refresh_from_db()
+        self.assertCountEqual(external.organisations.all(), [existing_org, creator_org])
+        task.assert_not_called()
+
+    def test_scoped_api_delete_only_removes_accessible_ownership(self):
+        allowed_org = Organisation.objects.create(name='Delete Allowed Org')
+        hidden_org = Organisation.objects.create(name='Delete Hidden Org')
+        user = User.objects.create_user(username='scoped-external-deleter', password='password')
+        PermissionGrant.objects.create(
+            user=user, organisation=allowed_org, resource='externals',
+            action='delete', granted=True,
+        )
+        repository = Repository.objects.create(name='Scoped Delete Repo')
+        external = ExternalRef.objects.create(
+            repository=repository, ref='app/org.example.Shared/x86_64/stable',
+        )
+        external.organisations.add(allowed_org, hidden_org)
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION='Token ' + AuthToken.objects.create(user=user).key)
+
+        with patch('apps.flatpak.tasks.remove_external_ref_from_repos') as remove_ref:
+            response = client.delete(f'/api/external-refs/{external.pk}/')
+
+        self.assertEqual(response.status_code, 204, response.content)
+        external.refresh_from_db()
+        self.assertEqual(list(external.organisations.all()), [hidden_org])
+        remove_ref.assert_not_called()
+
+    def test_detail_delete_can_remove_selected_orgs_or_delete_all(self):
+        first_org = Organisation.objects.create(name='Detail Delete One')
+        second_org = Organisation.objects.create(name='Detail Delete Two')
+        user = User.objects.create_user(username='detail-external-deleter', password='password')
+        for org in (first_org, second_org):
+            PermissionGrant.objects.create(
+                user=user, organisation=org, resource='externals',
+                action='delete', granted=True,
+            )
+        repository = Repository.objects.create(name='Detail Delete Repo')
+        external = ExternalRef.objects.create(
+            repository=repository, ref='app/org.example.DetailDelete/x86_64/stable',
+        )
+        external.organisations.add(first_org, second_org)
+
+        request = RequestFactory().post(
+            f'/externals/{external.pk}/delete/',
+            {'organisation_ids': [str(first_org.pk)]},
+        )
+        request.user = user
+        request.session = SessionStore()
+        request._messages = FallbackStorage(request)
+        response = ExternalRefDeleteView.as_view()(request, pk=external.pk)
+        self.assertEqual(response.status_code, 302)
+        external.refresh_from_db()
+        self.assertEqual(list(external.organisations.all()), [second_org])
+
+        request = RequestFactory().post(
+            f'/externals/{external.pk}/delete/',
+            {'delete_all': 'true'},
+        )
+        request.user = user
+        request.session = SessionStore()
+        request._messages = FallbackStorage(request)
+        with patch('apps.flatpak.tasks.remove_external_ref_from_repos') as remove_ref:
+            response = ExternalRefDeleteView.as_view()(request, pk=external.pk)
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(ExternalRef.objects.filter(pk=external.pk).exists())
+        remove_ref.assert_called_once()
+
     def test_external_promotion_targets_follow_user_organisation_scope(self):
         devops_org = Organisation.objects.create(name='Devops Promotion Org')
         infrastructure_org = Organisation.objects.create(name='Infrastructure Promotion Org')

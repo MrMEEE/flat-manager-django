@@ -3086,6 +3086,51 @@ def serve_repository(request, repo_path):
 # ExternalRef views
 # ---------------------------------------------------------------------------
 
+def add_default_organisation_to_external(external, user):
+    organisation = getattr(user, 'default_organisation', None)
+    if organisation is None:
+        return False
+    added = not external.organisations.filter(pk=organisation.pk).exists()
+    if not external.organisations.exists():
+        global_organisation = Organisation.objects.get(name='Global')
+        external.organisations.add(global_organisation)
+    if added:
+        external.organisations.add(organisation)
+    return added
+
+
+def external_delete_organisations(external, user):
+    organisation_ids = set(external.organisations.values_list('pk', flat=True))
+    allowed_ids = user.permission_organisation_ids('externals', 'delete')
+    manageable_ids = organisation_ids if allowed_ids is None else organisation_ids & allowed_ids
+    can_delete_all = allowed_ids is None or organisation_ids.issubset(allowed_ids)
+    return organisation_ids, manageable_ids, can_delete_all
+
+
+def delete_external_or_detach_organisations(
+    external, user, *, organisation_ids=None, delete_all=None,
+):
+    from apps.flatpak.tasks import remove_external_ref_from_repos
+
+    all_ids, manageable_ids, can_delete_all = external_delete_organisations(external, user)
+    if delete_all is None:
+        delete_all = can_delete_all
+    if delete_all:
+        if not can_delete_all:
+            raise PermissionDenied('You cannot delete this External from all of its organisations.')
+        remove_external_ref_from_repos(external)
+        external.delete()
+        return {'deleted': True, 'removed_organisations': len(all_ids)}
+
+    selected_ids = manageable_ids if organisation_ids is None else set(organisation_ids)
+    if not selected_ids:
+        raise ValidationError('Select at least one organisation to remove.')
+    if not selected_ids.issubset(manageable_ids):
+        raise PermissionDenied('You cannot remove this External from the selected organisations.')
+    external.organisations.remove(*selected_ids)
+    return {'deleted': False, 'removed_organisations': len(selected_ids)}
+
+
 class ExternalRefListView(LoginRequiredMixin, ListView):
     template_name = 'flatpak/external_list.html'
     context_object_name = 'externals'
@@ -3094,7 +3139,8 @@ class ExternalRefListView(LoginRequiredMixin, ListView):
     def get_queryset(self):
         from .models import ExternalRef
         from django.db.models import Q
-        qs = ExternalRef.objects.select_related('repository', 'remote', 'created_by').order_by('-updated_at')
+        qs = ExternalRef.objects.select_related('repository', 'remote', 'created_by')\
+            .prefetch_related('organisations').order_by('-updated_at')
         q = self.request.GET.get('q', '').strip()
         status = self.request.GET.get('status', '').strip()
         repo = self.request.GET.get('repo', '').strip()
@@ -3120,6 +3166,15 @@ class ExternalRefListView(LoginRequiredMixin, ListView):
         get_params.pop('page', None)
         ctx['filter_params'] = get_params.urlencode()
         ctx['all_organisations'] = Organisation.objects.all()
+        delete_org_ids = self.request.user.permission_organisation_ids('externals', 'delete')
+        deletable_organisations = Organisation.objects.all()
+        if delete_org_ids is not None:
+            deletable_organisations = deletable_organisations.filter(pk__in=delete_org_ids)
+        ctx['deletable_organisations'] = deletable_organisations
+        for external in ctx['externals']:
+            _, manageable_ids, can_delete_all = external_delete_organisations(external, self.request.user)
+            external.delete_organisation_ids = manageable_ids
+            external.can_delete_all = can_delete_all
         return ctx
 
 
@@ -3220,9 +3275,43 @@ class ExternalRefBulkActionView(LoginRequiredMixin, View):
         qs = ExternalRef.objects.filter(pk__in=ids)
 
         if action == 'delete':
-            count = qs.count()
-            qs.delete()
-            return JsonResponse({'status': 'success', 'deleted': count})
+            if not _has_scoped_permission(request.user, 'externals', 'delete'):
+                return JsonResponse({'error': 'You do not have permission to delete externals.'}, status=403)
+            qs = scope_queryset_for_user(qs, request.user, 'externals', 'delete')
+            if qs.count() != len(set(ids)):
+                return JsonResponse({'error': 'One or more External refs are not accessible.'}, status=404)
+            raw_org_pks = data.get('org_pks')
+            try:
+                requested_org_ids = {int(value) for value in raw_org_pks} if raw_org_pks is not None else None
+            except (TypeError, ValueError):
+                return JsonResponse({'error': 'Invalid organisation selection.'}, status=400)
+            allowed_org_ids = request.user.permission_organisation_ids('externals', 'delete')
+            if (requested_org_ids is not None and allowed_org_ids is not None
+                    and not requested_org_ids.issubset(allowed_org_ids)):
+                return JsonResponse({'error': 'You cannot remove ownership from the selected organisations.'}, status=403)
+
+            deleted = updated = 0
+            delete_all = bool(data.get('delete_all', False))
+            for ext in qs:
+                _, manageable_ids, can_delete_all = external_delete_organisations(ext, request.user)
+                selected_ids = manageable_ids if requested_org_ids is None else manageable_ids & requested_org_ids
+                if delete_all and can_delete_all:
+                    result = delete_external_or_detach_organisations(
+                        ext, request.user, delete_all=True,
+                    )
+                elif selected_ids:
+                    result = delete_external_or_detach_organisations(
+                        ext, request.user, organisation_ids=selected_ids, delete_all=False,
+                    )
+                else:
+                    continue
+                deleted += int(result['deleted'])
+                updated += int(not result['deleted'])
+            return JsonResponse({
+                'status': 'success',
+                'deleted': deleted,
+                'updated': updated,
+            })
 
         if action == 'pull':
             from .tasks import pull_external_ref_task
@@ -3276,7 +3365,7 @@ class ExternalRefBulkImportView(LoginRequiredMixin, View):
         except FlatpakRemote.DoesNotExist:
             return JsonResponse({'error': 'Invalid remote'}, status=400)
 
-        created = skipped = 0
+        created = associated = skipped = 0
         for ref in refs:
             ref = str(ref).strip()
             if not ref:
@@ -3300,14 +3389,17 @@ class ExternalRefBulkImportView(LoginRequiredMixin, View):
                 },
             )
             if was_created:
-                apply_default_organisation(ext, request.user)
+                add_default_organisation_to_external(ext, request.user)
                 pull_external_ref_task.delay(ext.pk)
                 created += 1
+            elif add_default_organisation_to_external(ext, request.user):
+                associated += 1
             else:
                 skipped += 1
 
         return JsonResponse({
             'created': created,
+            'associated': associated,
             'skipped': skipped,
             'redirect_url': reverse('flatpak:external_list'),
         })
@@ -3328,6 +3420,19 @@ class ExternalRefDetailView(LoginRequiredMixin, DetailView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ext = self.object
+        all_organisation_ids, deletable_organisation_ids, can_delete_all = external_delete_organisations(
+            ext, self.request.user,
+        )
+        ctx['deletable_organisations'] = ext.organisations.filter(
+            pk__in=deletable_organisation_ids,
+        ).order_by('name')
+        ctx['can_delete_all_external'] = can_delete_all
+        ctx['external_organisation_count'] = len(all_organisation_ids)
+        ctx['can_delete_external'] = bool(deletable_organisation_ids) or (
+            not all_organisation_ids
+            and self.request.user.permission_organisation_ids('externals', 'delete') is None
+            and _has_scoped_permission(self.request.user, 'externals', 'delete')
+        )
 
         dep_data = ext.dependencies or {}
         direct_refs = dep_data.get('direct') or []
@@ -3393,6 +3498,13 @@ class ExternalRefCreateView(ResourceActionRequiredMixin, CreateView):
                 )
                 self.fields['remote'].queryset = FlatpakRemote.objects.filter(is_active=True)
 
+            def validate_unique(self):
+                repository = self.cleaned_data.get('repository')
+                ref = self.cleaned_data.get('ref')
+                if repository and ref and ExternalRef.objects.filter(repository=repository, ref=ref).exists():
+                    return
+                super().validate_unique()
+
         return ExternalRefForm
 
     def get_initial(self):
@@ -3403,6 +3515,18 @@ class ExternalRefCreateView(ResourceActionRequiredMixin, CreateView):
         return initial
 
     def form_valid(self, form):
+        existing = ExternalRef.objects.filter(
+            repository=form.cleaned_data['repository'], ref=form.cleaned_data['ref'],
+        ).first()
+        if existing is not None:
+            associated = add_default_organisation_to_external(existing, self.request.user)
+            self.object = existing
+            if associated:
+                messages.success(self.request, 'This External already exists and is now associated with your organisation.')
+            else:
+                messages.info(self.request, 'This External already exists; no ownership changes were needed.')
+            return redirect('flatpak:external_list')
+
         form.instance.created_by = self.request.user
         # Auto-derive display_name from ref
         ref = form.instance.ref
@@ -3430,13 +3554,42 @@ class ExternalRefDeleteView(ResourceActionRequiredMixin, DeleteView):
 
     def get_queryset(self):
         from .models import ExternalRef
-        return ExternalRef.objects.all()
+        return scope_queryset_for_user(
+            ExternalRef.objects.all(), self.request.user, 'externals', 'delete',
+        )
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        external = self.object
+        _, deletable_organisation_ids, can_delete_all = external_delete_organisations(
+            external, self.request.user,
+        )
+        context['deletable_organisations'] = external.organisations.filter(
+            pk__in=deletable_organisation_ids,
+        ).order_by('name')
+        context['can_delete_all_external'] = can_delete_all
+        return context
 
     def form_valid(self, form):
-        """Remove the ref from repos before deleting the DB record."""
-        from apps.flatpak.tasks import remove_external_ref_from_repos
         ext = self.get_object()
-        remove_external_ref_from_repos(ext)
+        raw_ids = self.request.POST.getlist('organisation_ids')
+        try:
+            organisation_ids = {int(value) for value in raw_ids} if raw_ids else None
+        except ValueError:
+            form.add_error(None, 'Invalid organisation selection.')
+            return self.form_invalid(form)
+        try:
+            result = delete_external_or_detach_organisations(
+                ext, self.request.user,
+                organisation_ids=organisation_ids,
+                delete_all=self.request.POST.get('delete_all') == 'true',
+            )
+        except (PermissionDenied, ValidationError) as exc:
+            form.add_error(None, str(exc))
+            return self.form_invalid(form)
+        if not result['deleted']:
+            messages.success(self.request, 'External ownership removed from the selected organisations.')
+            return redirect('flatpak:external_list')
         return super().form_valid(form)
 
 
@@ -3643,11 +3796,17 @@ class OrganisationUpdateView(LoginRequiredMixin, UpdateView):
     fields = ['name', 'responsible_name', 'responsible_email', 'description']
     success_url = reverse_lazy('flatpak:organisation_list')
 
+    def get_queryset(self):
+        return Organisation.objects.exclude(name='Global')
+
 
 class OrganisationDeleteView(LoginRequiredMixin, DeleteView):
     model = Organisation
     template_name = 'flatpak/organisation_confirm_delete.html'
     success_url = reverse_lazy('flatpak:organisation_list')
+
+    def get_queryset(self):
+        return Organisation.objects.exclude(name='Global')
 
 
 class ClientListView(LoginRequiredMixin, ListView):
