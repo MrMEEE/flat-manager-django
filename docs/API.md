@@ -29,26 +29,26 @@ For `CRUD`, the collection URL supports `GET` and `POST`; the detail URL support
 
 | Resource under `/api/` | Effective operations | Fields or purpose |
 | --- | --- | --- |
-| `users/` | CRUD; admin writes | `username`, `email`, `first_name`, `last_name`, `is_local`; `GET users/me/` returns the current user. |
-| `profiles/` | CRUD; admin writes | `user_id` on write; `user`, `bio`, `phone`, `organization` on read. |
-| `gpg-keys/` | CRUD | `name`, `email`, `key_id`, `fingerprint`, `public_key`, `passphrase_hint`, `is_active`; private keys are not returned. |
-| `repositories/` | CRUD | `name`, `collection_id`, `description`, `gpg_key_id`, `parent_repos`, `is_active`; reads also include parent/child names and subsets. |
-| `repository-subsets/` | CRUD | `repository_id`, `name`, `collection_id`, `base_url`. |
+| `users/` | CRUD; admin writes | User accounts used to authenticate and receive permissions. `GET users/me/` returns the current user. |
+| `profiles/` | CRUD; admin writes | Contact and biography information associated with a user; `user_id` is supplied on write. |
+| `gpg-keys/` | CRUD | Signing keys used to sign repositories and RPMs. Reads expose public key details, never private keys. |
+| `repositories/` | CRUD | Managed Flatpak repositories, including signing configuration and parent/child relationships used by promotion chains. |
+| `repository-subsets/` | CRUD | Named configurations for partial mirrors of a repository, with their own collection ID and optional base URL. |
 | `packages/` | CRUD | Flatpak configuration: `repository_id`, `package_id`, `package_name`, `version`, `git_repo_url`, `git_branch`, `branch`, `arch`, `status`; reads include builds and latest build. |
 | `builds/` | Read | Build history, state, logs and artifacts; supports package and BuildStream builds. |
-| `artifacts/` | CRUD | `build_id`, `filename`, `file_path`, `file_size`, `checksum`. |
+| `artifacts/` | CRUD | Uploaded file records associated with a build, including filename, size, path and checksum. |
 | `tokens/` | CRUD | Repository token configuration: `repository_id`, `name`, `token_type`, `expires_at`, `is_active`. These tokens are not DRF login tokens and are not currently enforced by the server. |
-| `external-refs/` | CRUD | `repository`, `remote`, `ref`, `display_name`; read results include state, log, commit and version snapshots. |
+| `external-refs/` | CRUD | Upstream Flatpak refs mirrored from a remote into a managed repository; reads include state, logs, commits and version snapshots. |
 | `promotions/` | Read | Flatpak build promotion records; filters: `build`, `target_repo`, `status`. |
 | `external-ref-promotions/` | Read | External version promotion records; filters: `external_ref`, `external_ref_version`, `target_repo`, `status`. |
-| `flatpak-remotes/` | CRUD; admin | `name`, `url`, `is_active`, `priority`. |
-| `organisations/` | CRUD; admin | `name`, `description`, `responsible_name`, `responsible_email`; Global is system-managed. |
-| `bst-sources/` | CRUD | `name`, `repository`, `git_repo_url`, `git_branch`, `bst_element`, `bst_version`, `organisations`, status and build number. |
+| `flatpak-remotes/` | CRUD; admin | Upstream Flatpak repositories used as sources when importing External refs. |
+| `organisations/` | CRUD; admin | Ownership and permission boundaries for resources and users; Global is system-managed. |
+| `bst-sources/` | CRUD | BuildStream projects and elements that produce Flatpak refs for a managed repository. |
 | `bst-promotions/` | Read | BuildStream promotion history. |
 | `clients/` | Read, DELETE | Machine inventory, organization assignments and lockdown state. |
-| `permission-groups/` | CRUD; admin | Name, description, organization and user membership. |
+| `permission-groups/` | CRUD; admin | Reusable sets of resource permissions that can be assigned to users, optionally scoped to an organization. |
 | `ldap-sources/` | CRUD; admin | Directory connection and search settings; encrypted bind passwords are not returned. |
-| `ldap-group-mappings/` | CRUD; admin | `source`, `ldap_group_dn`, `role`, `organisation`. |
+| `ldap-group-mappings/` | CRUD; admin | Maps a directory group from an LDAP source to an application role and optional organization. |
 | `rpm-packages/` | CRUD | RPM source configuration, build distributions, destinations, status and organizations. |
 | `rpm-builds/` | Read, DELETE | RPM build history, selected repositories, status, files and errors. |
 | `rpm-distributions/` | CRUD; admin | Distribution name, display name, mock configuration, architecture, RHEL version and active state. |
@@ -57,9 +57,9 @@ For `CRUD`, the collection URL supports `GET` and `POST`; the detail URL support
 | `satellite-repositories/` | Read, POST, DELETE; admin | Satellite server, organization, product, repository and numeric repository ID. Creating requires `server_pk`. |
 | `rpm-destinations/` | Read, DELETE; admin | Package/distribution/Satellite repository mappings. |
 | `rpm-signing-keys/` | Read; admin | Package/distribution/GPG key assignments. |
-| `user-roles/` | CRUD; admin | `user`, `role`, `organisation`. |
-| `permission-grants/` | CRUD; admin | `user`, `resource`, `action`, `granted`, `organisation`. |
-| `group-permissions/` | CRUD; admin | `group`, `resource`, `action`, `granted`, `organisation`. |
+| `user-roles/` | CRUD; admin | Legacy user-to-role assignments, optionally scoped to an organization. Current authorization uses explicit and group permission grants. |
+| `permission-grants/` | CRUD; admin | Individual user's resource/action grants, optionally scoped to an organization. |
+| `group-permissions/` | CRUD; admin | Resource/action grants owned by a permission group, optionally scoped to an organization. |
 | `site-config/` | GET collection/detail; PUT/PATCH detail; admin | Singleton site configuration. The collection GET returns a single object, not a paginated array. |
 | `workflows/` | GET collection | Runtime catalog of resource actions, paths, methods, descriptions and declared permission metadata. |
 
