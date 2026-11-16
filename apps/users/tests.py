@@ -13,7 +13,9 @@ from rest_framework.test import APIClient
 
 from apps.flatpak.models import (
     ExternalRef,
+    ExternalRefPromotion,
     ExternalRefVersion,
+    Build,
     FlatpakRemote,
     Organisation,
     Promotion,
@@ -22,6 +24,7 @@ from apps.flatpak.models import (
 from apps.flatpak.models import Package
 from apps.flatpak.views import (
     ExternalRefBulkActionView,
+    ExternalRefBulkImportView,
     ExternalRefDeleteView,
     ExternalRefCreateView,
     ExternalRefPullView,
@@ -48,6 +51,141 @@ from apps.users.models import (
 
 
 class PermissionGrantTests(TestCase):
+    def test_api_repository_create_without_organisation_requires_global_grant(self):
+        user = User.objects.create_user(username='global-api-repository-creator')
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION='Token ' + AuthToken.objects.create(user=user).key)
+        self.assertEqual(client.post('/api/repositories/', {'name': 'Global API Repo'}, format='json').status_code, 403)
+        PermissionGrant.objects.create(user=user, resource='repositories', action='create', granted=True)
+        response = client.post('/api/repositories/', {'name': 'Global API Repo'}, format='json')
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertFalse(Repository.objects.get(pk=response.json()['id']).organisations.exists())
+
+    def test_scoped_api_repository_create_requires_allowed_organisation(self):
+        allowed = Organisation.objects.create(name='API Create Allowed')
+        denied = Organisation.objects.create(name='API Create Denied')
+        user = User.objects.create_user(username='scoped-api-repository-creator')
+        PermissionGrant.objects.create(
+            user=user, organisation=allowed, resource='repositories', action='create', granted=True,
+        )
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION='Token ' + AuthToken.objects.create(user=user).key)
+        self.assertEqual(client.post('/api/repositories/', {'name': 'API Scoped'}, format='json').status_code, 400)
+        self.assertEqual(client.post('/api/repositories/', {
+            'name': 'API Scoped', 'organisation_id': denied.pk,
+        }, format='json').status_code, 403)
+        response = client.post('/api/repositories/', {
+            'name': 'API Scoped', 'organisation_id': allowed.pk,
+        }, format='json')
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(list(Repository.objects.get(pk=response.json()['id']).organisations.all()), [allowed])
+
+    def test_external_bulk_import_requires_authorized_create_organisation(self):
+        allowed = Organisation.objects.create(name='Import Allowed')
+        denied = Organisation.objects.create(name='Import Denied')
+        user = User.objects.create_user(username='scoped-external-importer')
+        repository = Repository.objects.create(name='Import Scope Repo')
+        remote = FlatpakRemote.objects.create(name='import-scope-remote', url='https://example.com/repo')
+        payload = {
+            'repository_id': repository.pk, 'remote_id': remote.pk,
+            'refs': ['app/org.example.Scoped/x86_64/stable'],
+        }
+
+        def submit(data):
+            request = RequestFactory().post(
+                '/externals/bulk-import/', data=json.dumps(data), content_type='application/json',
+            )
+            request.user = user
+            return ExternalRefBulkImportView.as_view()(request)
+
+        with patch('apps.flatpak.tasks.pull_external_ref_task.delay') as task:
+            self.assertEqual(submit(payload).status_code, 403)
+            PermissionGrant.objects.create(
+                user=user, organisation=allowed, resource='externals', action='create', granted=True,
+            )
+            self.assertEqual(submit(payload).status_code, 400)
+            self.assertEqual(submit({**payload, 'organisation_id': denied.pk}).status_code, 403)
+            self.assertEqual(submit({**payload, 'organisation_id': allowed.pk}).status_code, 200)
+            task.assert_called_once()
+        external = ExternalRef.objects.get(repository=repository, ref=payload['refs'][0])
+        self.assertIn(allowed, external.organisations.all())
+        self.assertNotIn(denied, external.organisations.all())
+
+    def test_scoped_repository_create_requires_an_allowed_organisation(self):
+        allowed = Organisation.objects.create(name='Create Allowed')
+        denied = Organisation.objects.create(name='Create Denied')
+        user = User.objects.create_user(username='scoped-repository-creator')
+        PermissionGrant.objects.create(
+            user=user, organisation=allowed, resource='repositories', action='create', granted=True,
+        )
+        for selected, valid in (([], False), ([denied.pk], False), ([allowed.pk], True)):
+            request = RequestFactory().post('/repos/create/', {
+                'name': 'New repository', 'organisations': selected,
+            })
+            request.user = user
+            view = RepositoryCreateView()
+            view.setup(request)
+            view.object = None
+            form = view.get_form()
+            self.assertEqual(form.is_valid(), valid, form.errors)
+            if valid:
+                self.assertEqual(list(form.cleaned_data['organisations']), [allowed])
+
+    def test_published_builds_and_promotions_respect_package_read_scope(self):
+        allowed = Organisation.objects.create(name='Published Allowed')
+        denied = Organisation.objects.create(name='Published Denied')
+        user = User.objects.create_user(username='published-reader')
+        PermissionGrant.objects.create(user=user, resource='builds', action='read', granted=True)
+        PermissionGrant.objects.create(
+            user=user, organisation=allowed, resource='flatpaks', action='read', granted=True,
+        )
+        source = Repository.objects.create(name='Published Source')
+        target = Repository.objects.create(name='Published Target')
+        visible_build = None
+        for organisation, name in ((allowed, 'Allowed'), (denied, 'Denied')):
+            package = Package.objects.create(
+                repository=source, package_id=f'org.example.{name}', package_name=name,
+            )
+            package.organisations.add(organisation)
+            build = Build.objects.create(package=package, build_number=1, status='published')
+            Promotion.objects.create(build=build, package=package, target_repo=target, status='promoted')
+            if organisation == allowed:
+                visible_build = build
+        request = RequestFactory().get('/promotions/')
+        request.user = user
+        view = PromotionListView()
+        view.setup(request)
+        view.object_list = view.get_queryset()
+        context = view.get_context_data()
+        self.assertEqual(list(context['published_builds']), [visible_build])
+        self.assertEqual([promotion.build for promotion in context['promotions']], [visible_build])
+
+    def test_published_external_placements_exclude_other_organisations(self):
+        allowed = Organisation.objects.create(name='Placement Allowed')
+        other = Organisation.objects.create(name='Placement Other')
+        user = User.objects.create_user(username='placement-reader')
+        PermissionGrant.objects.create(
+            user=user, organisation=allowed, resource='externals', action='read', granted=True,
+        )
+        source = Repository.objects.create(name='Placement Source')
+        target = Repository.objects.create(name='Placement Target')
+        for organisation, name in ((allowed, 'Visible'), (other, 'Hidden')):
+            external = ExternalRef.objects.create(
+                repository=source, ref=f'app/org.example.{name}/x86_64/stable', status='published',
+            )
+            external.organisations.add(organisation)
+            ExternalRefPromotion.objects.create(
+                external_ref=external, target_repo=target, status='promoted',
+            )
+        request = RequestFactory().get('/promotions/')
+        request.user = user
+        view = PromotionListView()
+        view.setup(request)
+        view.object_list = Promotion.objects.none()
+        rows = view.get_context_data()['published_externals']
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(all('Visible' in row['external_ref'].ref for row in rows))
+
     def test_global_organisation_is_seeded_and_immutable(self):
         global_org = Organisation.objects.get(name='Global')
 

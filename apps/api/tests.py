@@ -753,10 +753,7 @@ class ExpandedTokenAPITests(TestCase):
         self.assertEqual(task.call_count, 1)
         external = ExternalRef.objects.get(repository=self.repo, ref='app/org.example.New/x86_64/stable')
         self.assertEqual(external.created_by, self.admin)
-        self.assertCountEqual(
-            external.organisations.all(),
-            [organisation, Organisation.objects.get(name='Global')],
-        )
+        self.assertCountEqual(external.organisations.all(), [organisation])
 
         other_organisation = Organisation.objects.create(name='Existing External Org')
         self.admin.default_organisation = other_organisation
@@ -768,10 +765,7 @@ class ExpandedTokenAPITests(TestCase):
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(response.json()['created'], 0)
         self.assertEqual(response.json()['associated'], 1)
-        self.assertCountEqual(
-            external.organisations.all(),
-            [organisation, other_organisation, Organisation.objects.get(name='Global')],
-        )
+        self.assertCountEqual(external.organisations.all(), [organisation, other_organisation])
 
     def test_package_retry_reuses_existing_workflow(self):
         package = Package.objects.create(repository=self.repo, package_id='org.example.App',

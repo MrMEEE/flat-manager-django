@@ -10,6 +10,7 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from apps.users.mixins import (
     AdminRequiredMixin, RepoAdminRequiredMixin,
     BuildAdminRequiredMixin, scope_queryset_for_user, apply_default_organisation,
+    configure_create_organisations,
 )
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView
 from django.views import View
@@ -179,6 +180,11 @@ class RpmPackageCreateView(BuildAdminRequiredMixin, CreateView):
     model = RpmPackage
     form_class = RpmPackageForm
     template_name = 'rpm/package_form.html'
+
+    def get_form(self, form_class=None):
+        form = super().get_form(form_class)
+        configure_create_organisations(form, self.request.user, 'builds', 'build')
+        return form
 
     def form_valid(self, form):
         form.instance.created_by = self.request.user

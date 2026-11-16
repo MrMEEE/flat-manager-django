@@ -276,6 +276,17 @@
                             {% endfor %}
                         </select>
                     </div>
+                    {% if external_create_requires_organisation %}
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold" for="importOrganisation">Organisation</label>
+                        <select id="importOrganisation" class="form-select" required>
+                            <option value="">Select organisation</option>
+                            {% for org in external_create_organisations %}
+                            <option value="{{ org.pk }}" {% if org.pk == external_create_default_organisation_id %}selected{% endif %}>{{ org.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% endif %}
                 </div>
                 <div>
                     <p class="mb-1 text-muted small">Refs to import:</p>
@@ -322,6 +333,7 @@
     const btnConfirm   = document.getElementById('btnConfirmImport');
     const repoSel      = document.getElementById('importRepository');
     const remoteSel    = document.getElementById('importRemote');
+    const orgSel       = document.getElementById('importOrganisation');
     const refList      = document.getElementById('importRefList');
 
     if (!selectAll) return; // no missing deps
@@ -331,7 +343,7 @@
     }
 
     function checkConfirmReady() {
-        btnConfirm.disabled = !(getChecked().length > 0 && repoSel.value && remoteSel.value);
+        btnConfirm.disabled = !(getChecked().length > 0 && repoSel.value && remoteSel.value && (!orgSel || orgSel.value));
     }
 
     function updateUI() {
@@ -356,6 +368,7 @@
     document.querySelectorAll('.missing-dep-check').forEach(cb => cb.addEventListener('change', updateUI));
     repoSel.addEventListener('change', checkConfirmReady);
     remoteSel.addEventListener('change', checkConfirmReady);
+    if (orgSel) orgSel.addEventListener('change', checkConfirmReady);
 
     // Refresh ref list each time the modal opens
     document.getElementById('importSelectedModal').addEventListener('show.bs.modal', updateUI);
@@ -372,7 +385,7 @@
             const r = await fetch(IMPORT_URL, {
                 method: 'POST',
                 headers: { 'X-CSRFToken': _csrf, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ repository_id, remote_id, refs }),
+                body: JSON.stringify({ repository_id, remote_id, refs, organisation_id: orgSel ? Number(orgSel.value) : null }),
                 credentials: 'same-origin',
             });
             const d = await r.json().catch(() => ({}));

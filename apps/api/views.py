@@ -7,17 +7,19 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters
 from django.db.models import Q
 from django.db import transaction
+from django.core.exceptions import PermissionDenied as DjangoPermissionDenied, ValidationError as DjangoValidationError
 from django.shortcuts import get_object_or_404
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from apps.users.models import User, UserProfile, APIToken
-from apps.users.mixins import scope_queryset_for_user, apply_default_organisation
+from apps.users.mixins import scope_queryset_for_user, apply_default_organisation, resolve_create_organisation
 from apps.flatpak.models import GPGKey, Repository, RepositorySubset, Package, Build, BuildArtifact, BuildLog, Token
 from apps.flatpak.models import ExternalRef, ExternalRefPromotion, Promotion
 from apps.flatpak.views import (
     _has_scoped_permission, _scope_published_queryset,
     get_available_promotion_targets, get_available_external_ref_promotion_targets,
     add_default_organisation_to_external, delete_external_or_detach_organisations,
+    external_create_organisation,
 )
 from apps.flatpak.utils.gpg import generate_gpg_key, import_gpg_key
 from .serializers import (
@@ -29,6 +31,15 @@ from .serializers import (
     PromotionRequestSerializer, ExternalRefSerializer, PromotionSerializer,
     ExternalRefPromotionSerializer,
 )
+
+
+def api_create_organisation(request, resource):
+    try:
+        return resolve_create_organisation(request.user, resource, request.data.get('organisation_id'))
+    except DjangoPermissionDenied as exc:
+        raise PermissionDenied(str(exc))
+    except DjangoValidationError as exc:
+        raise ValidationError({'organisation_id': exc.messages})
 
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -77,6 +88,10 @@ class GPGKeyViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_permissions(self):
+        if self.action in ('create', 'generate', 'import_key'):
+            if self.request.user.is_authenticated and not _has_scoped_permission(self.request.user, 'gpg_keys', 'create'):
+                raise PermissionDenied()
+            return [IsAuthenticated()]
         if self.action == 'renew':
             return [IsAuthenticated()]
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
@@ -95,8 +110,10 @@ class GPGKeyViewSet(viewsets.ModelViewSet):
         return GPGKeySerializer
     
     def perform_create(self, serializer):
+        organisation = api_create_organisation(self.request, 'gpg_keys')
         instance = serializer.save(created_by=self.request.user)
-        apply_default_organisation(instance, self.request.user)
+        if organisation:
+            instance.organisations.add(organisation)
     
     @action(detail=True, methods=['get'])
     def public_key(self, request, pk=None):
@@ -112,6 +129,7 @@ class GPGKeyViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def generate(self, request):
         """Generate a new GPG key pair."""
+        organisation = api_create_organisation(request, 'gpg_keys')
         name = request.data.get('name')
         email = request.data.get('email')
         comment = request.data.get('comment', '')
@@ -143,7 +161,8 @@ class GPGKeyViewSet(viewsets.ModelViewSet):
                 passphrase_hint='',
                 created_by=request.user
             )
-            apply_default_organisation(gpg_key, request.user)
+            if organisation:
+                gpg_key.organisations.add(organisation)
             
             serializer = self.get_serializer(gpg_key)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -156,6 +175,7 @@ class GPGKeyViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def import_key(self, request):
         """Import an existing GPG key."""
+        organisation = api_create_organisation(request, 'gpg_keys')
         name = request.data.get('name')
         email = request.data.get('email')
         public_key = request.data.get('public_key')
@@ -182,7 +202,8 @@ class GPGKeyViewSet(viewsets.ModelViewSet):
                 passphrase_hint='',
                 created_by=request.user
             )
-            apply_default_organisation(gpg_key, request.user)
+            if organisation:
+                gpg_key.organisations.add(organisation)
             
             serializer = self.get_serializer(gpg_key)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -202,6 +223,10 @@ class RepositoryViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_permissions(self):
+        if self.action == 'create':
+            if self.request.user.is_authenticated and not _has_scoped_permission(self.request.user, 'repositories', 'create'):
+                raise PermissionDenied()
+            return [IsAuthenticated()]
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
             return [IsAuthenticated()]
         return [CanRepoAdmin()]
@@ -214,8 +239,10 @@ class RepositoryViewSet(viewsets.ModelViewSet):
         return scope_queryset_for_user(super().get_queryset(), self.request.user, 'repositories')
     
     def perform_create(self, serializer):
+        organisation = api_create_organisation(self.request, 'repositories')
         instance = serializer.save(created_by=self.request.user)
-        apply_default_organisation(instance, self.request.user)
+        if organisation:
+            instance.organisations.add(organisation)
     
     @action(detail=True, methods=['get'])
     def builds(self, request, pk=None):
@@ -270,6 +297,10 @@ class PackageViewSet(viewsets.ModelViewSet):
     
     def get_permissions(self):
         """Allow unauthenticated access to logs; read-only for authenticated; write requires CanBuild."""
+        if self.action == 'create':
+            if self.request.user.is_authenticated and not _has_scoped_permission(self.request.user, 'flatpaks', 'create'):
+                raise PermissionDenied()
+            return [IsAuthenticated()]
         if self.action in ['logs']:
             return [AllowAny()]
         if self.request.method in ('GET', 'HEAD', 'OPTIONS'):
@@ -277,8 +308,10 @@ class PackageViewSet(viewsets.ModelViewSet):
         return [CanBuild()]
     
     def perform_create(self, serializer):
+        organisation = api_create_organisation(self.request, 'flatpaks')
         package = serializer.save(created_by=self.request.user)
-        apply_default_organisation(package, self.request.user)
+        if organisation:
+            package.organisations.add(organisation)
         # Package will be automatically picked up by periodic check_pending_builds task
         # No need to manually trigger here
     
@@ -548,6 +581,12 @@ class ExternalRefViewSet(viewsets.ModelViewSet):
         return super().get_permissions()
 
     def create(self, request, *args, **kwargs):
+        try:
+            self.create_organisation = external_create_organisation(request.user, request.data.get('organisation_id'))
+        except DjangoPermissionDenied as exc:
+            raise PermissionDenied(str(exc))
+        except DjangoValidationError as exc:
+            raise ValidationError({'organisation_id': exc.messages})
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         existing = ExternalRef.objects.filter(
@@ -555,14 +594,15 @@ class ExternalRefViewSet(viewsets.ModelViewSet):
             ref=serializer.validated_data['ref'],
         ).first()
         if existing is not None:
-            add_default_organisation_to_external(existing, request.user)
+            add_default_organisation_to_external(existing, request.user, self.create_organisation)
             response_serializer = self.get_serializer(existing)
             return Response(response_serializer.data, status=status.HTTP_200_OK)
         return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         external = serializer.save(created_by=self.request.user)
-        apply_default_organisation(external, self.request.user)
+        if self.create_organisation:
+            external.organisations.add(self.create_organisation)
         from apps.flatpak.tasks import pull_external_ref_task
         pull_external_ref_task.delay(external.pk)
 

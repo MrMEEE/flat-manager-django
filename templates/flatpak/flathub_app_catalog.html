@@ -36,6 +36,17 @@
                     {% endfor %}
                 </select>
             </div>
+            {% if external_create_requires_organisation %}
+            <div class="col-md-4">
+                <label for="organisationSelect" class="form-label fw-semibold">Organisation</label>
+                <select id="organisationSelect" class="form-select" required>
+                    <option value="">Select organisation</option>
+                    {% for org in external_create_organisations %}
+                    <option value="{{ org.pk }}" {% if org.pk == external_create_default_organisation_id %}selected{% endif %}>{{ org.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endif %}
         </div>
     </div>
 </div>
@@ -80,6 +91,7 @@
     const searchInput = document.getElementById('searchInput');
     const repositorySelect = document.getElementById('repositorySelect');
     const remoteSelect = document.getElementById('remoteSelect');
+    const organisationSelect = document.getElementById('organisationSelect');
     const resultCount = document.getElementById('resultCount');
     const resultsBody = document.getElementById('resultsBody');
     const resultsWrap = document.getElementById('resultsWrap');
@@ -159,6 +171,10 @@
             setStatus('error', 'Please select repository and remote first.');
             return;
         }
+        if (organisationSelect && !organisationSelect.value) {
+            setStatus('error', 'Select an organisation where you can create externals.');
+            return;
+        }
 
         button.disabled = true;
         const oldHtml = button.innerHTML;
@@ -174,6 +190,7 @@
             body: JSON.stringify({
                 repository_id: Number(repositoryId),
                 remote_id: Number(remoteId),
+                organisation_id: organisationSelect ? Number(organisationSelect.value) : null,
                 refs: [item.ref],
             }),
         })

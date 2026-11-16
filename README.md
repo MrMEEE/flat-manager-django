@@ -364,6 +364,8 @@ All API endpoints require session or token authentication. Write operations requ
 | Build artifacts | `/api/artifacts/` | Authenticated | Build Admin |
 | Tokens | `/api/tokens/` | Authenticated | Repo Admin |
 
+For organization-scoped creation of GPG keys, repositories, packages, and External refs, pass `organisation_id` in the request body when the user has no permitted default organization. The selected organization must be covered by the user's create permission. A user with global create permission may create an unassigned resource.
+
 ### Notable Actions
 
 | Endpoint | Method | Auth | Description |

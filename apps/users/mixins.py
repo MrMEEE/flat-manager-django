@@ -13,6 +13,7 @@ All write mixins redirect unauthenticated users to the login page and return
 """
 
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
+from django.core.exceptions import PermissionDenied, ValidationError
 
 
 def scope_queryset_for_user(queryset, user, resource, action='read', relation='organisations'):
@@ -33,13 +34,62 @@ def apply_default_organisation(instance, user):
         organisations.add(organisation)
 
 
+def configure_create_organisations(form, user, resource, action='create'):
+    if 'organisations' not in form.fields:
+        return
+    allowed = user.permission_organisation_ids(resource, action)
+    if allowed is not None:
+        field = form.fields['organisations']
+        field.queryset = field.queryset.filter(pk__in=allowed)
+        if user.default_organisation_id in allowed:
+            field.initial = [user.default_organisation_id]
+        else:
+            field.required = True
+
+
+def resolve_create_organisation(user, resource, organisation_id=None):
+    from apps.flatpak.models import Organisation
+
+    allowed = user.permission_organisation_ids(resource, 'create')
+    if allowed is not None and not allowed:
+        raise PermissionDenied('You do not have permission to create this resource.')
+    if organisation_id:
+        try:
+            organisation_id = int(organisation_id)
+        except (TypeError, ValueError):
+            raise ValidationError('Invalid organisation.')
+        if allowed is not None and organisation_id not in allowed:
+            raise PermissionDenied('You cannot create resources for this organisation.')
+        organisation = Organisation.objects.filter(pk=organisation_id).first()
+        if organisation is None:
+            raise ValidationError('Invalid organisation.')
+        return organisation
+    organisation = getattr(user, 'default_organisation', None)
+    if allowed is not None and (organisation is None or organisation.pk not in allowed):
+        raise ValidationError('Select an organisation where you can create this resource.')
+    return organisation
+
+
 class ResourceActionRequiredMixin(LoginRequiredMixin, UserPassesTestMixin):
     """Require an explicit resource/action permission for a protected view."""
     resource = None
     action = None
 
+    def get_form(self, form_class=None):
+        form = super().get_form(form_class)
+        if self.action == 'create' and 'organisations' in form.fields:
+            configure_create_organisations(form, self.request.user, self.resource)
+        return form
+
     def form_valid(self, form):
         creating = getattr(self, 'object', None) is None
+        if creating and self.action == 'create' and 'organisations' in form.fields:
+            allowed = self.request.user.permission_organisation_ids(self.resource, 'create')
+            selected = form.cleaned_data.get('organisations')
+            default_id = self.request.user.default_organisation_id
+            if allowed is not None and not selected and default_id not in allowed:
+                form.add_error('organisations', 'Select an organisation where you can create this resource.')
+                return self.form_invalid(form)
         if creating and hasattr(form.instance, 'created_by_id'):
             form.instance.created_by = self.request.user
         response = super().form_valid(form)

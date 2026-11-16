@@ -6,7 +6,7 @@ from urllib import request as urllib_request
 from urllib import error as urllib_error
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth.decorators import login_required
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView
 from django.views import View
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
@@ -17,7 +17,7 @@ from apps.api.adapters import render_workflow as render
 from django.conf import settings
 from apps.users.mixins import (
     BuildAdminRequiredMixin, ResourceActionRequiredMixin, scope_queryset_for_user,
-    apply_default_organisation,
+    apply_default_organisation, configure_create_organisations,
 )
 from .models import GPGKey, Repository, RepositorySubset, Package, Build, Promotion, BuildStreamSource, Client, AppUsageObservation, VirtualMachine, ExternalRef, ExternalRefVersion, ExternalRefPromotion, Organisation, FlatpakRemote
 from .forms import GPGKeyGenerateForm, GPGKeyImportForm, GPGKeyRenewForm
@@ -70,8 +70,11 @@ class GPGKeyDetailView(LoginRequiredMixin, DetailView):
 @login_required
 def gpgkey_generate(request):
     """Generate a new GPG key."""
+    if not _has_scoped_permission(request.user, 'gpg_keys', 'create'):
+        raise PermissionDenied()
+    form = GPGKeyGenerateForm(request.POST if request.method == 'POST' else None)
+    configure_create_organisations(form, request.user, 'gpg_keys')
     if request.method == 'POST':
-        form = GPGKeyGenerateForm(request.POST)
         if form.is_valid():
             try:
                 # Generate the key (no passphrase - key will be unencrypted)
@@ -96,22 +99,23 @@ def gpgkey_generate(request):
                     expires_at=key_data.get('expires_at'),
                     created_by=request.user
                 )
+                gpgkey.organisations.set(form.cleaned_data['organisations'])
                 apply_default_organisation(gpgkey, request.user)
                 messages.success(request, f'GPG key "{gpgkey.name}" generated successfully.')
                 return redirect('flatpak:gpgkey_detail', pk=gpgkey.pk)
             except Exception as e:
                 messages.error(request, f'Failed to generate GPG key: {str(e)}')
-    else:
-        form = GPGKeyGenerateForm()
-    
     return render(request, 'flatpak/gpgkey_generate.html', {'form': form})
 
 
 @login_required
 def gpgkey_import(request):
     """Import an existing GPG key."""
+    if not _has_scoped_permission(request.user, 'gpg_keys', 'create'):
+        raise PermissionDenied()
+    form = GPGKeyImportForm(request.POST if request.method == 'POST' else None)
+    configure_create_organisations(form, request.user, 'gpg_keys')
     if request.method == 'POST':
-        form = GPGKeyImportForm(request.POST)
         if form.is_valid():
             try:
                 # Validate and import the key (will decrypt if passphrase provided)
@@ -132,14 +136,12 @@ def gpgkey_import(request):
                     passphrase_hint='',
                     created_by=request.user
                 )
+                gpgkey.organisations.set(form.cleaned_data['organisations'])
                 apply_default_organisation(gpgkey, request.user)
                 messages.success(request, f'GPG key "{gpgkey.name}" imported successfully.')
                 return redirect('flatpak:gpgkey_detail', pk=gpgkey.pk)
             except Exception as e:
                 messages.error(request, f'Failed to import GPG key: {str(e)}')
-    else:
-        form = GPGKeyImportForm()
-    
     return render(request, 'flatpak/gpgkey_import.html', {'form': form})
 
 
@@ -1731,12 +1733,8 @@ class PromotionListView(LoginRequiredMixin, ListView):
             qs = qs.filter(status=status)
         if repo:
             qs = qs.filter(target_repo_id=repo)
-        organisation_ids = self.request.user.permission_organisation_ids('builds', 'read')
-        if organisation_ids is not None:
-            if not organisation_ids:
-                return qs.none()
-            qs = qs.filter(package__organisations__in=organisation_ids).distinct()
-        return qs
+        qs = scope_queryset_for_user(qs, self.request.user, 'builds', relation='package__organisations')
+        return scope_queryset_for_user(qs, self.request.user, 'flatpaks', relation='package__organisations')
 
     def get_context_data(self, **kwargs):
         from django.db.models import Q
@@ -1764,9 +1762,12 @@ class PromotionListView(LoginRequiredMixin, ListView):
             .select_related('package', 'package__repository', 'package__created_by')
             .order_by('-completed_at')
         )
-        organisation_ids = self.request.user.permission_organisation_ids('builds', 'read')
-        if organisation_ids is not None:
-            pub_qs = pub_qs.filter(package__organisations__in=organisation_ids).distinct()
+        pub_qs = scope_queryset_for_user(
+            pub_qs, self.request.user, 'builds', relation='package__organisations',
+        )
+        pub_qs = scope_queryset_for_user(
+            pub_qs, self.request.user, 'flatpaks', relation='package__organisations',
+        )
         q = self.request.GET.get('q', '').strip()
         pub_repo = self.request.GET.get('pub_repo', '').strip()
         if q:
@@ -1819,8 +1820,10 @@ class PromotionListView(LoginRequiredMixin, ListView):
             })
         # Add promoted ExternalRef rows (promotions to child repos).
         for _promo in (
-            ExternalRefPromotion.objects
-            .filter(status='promoted')
+            scope_queryset_for_user(
+                ExternalRefPromotion.objects.filter(status='promoted'),
+                self.request.user, 'externals', relation='external_ref__organisations',
+            )
             .select_related(
                 'external_ref', 'external_ref__remote', 'external_ref__repository',
                 'external_ref_version', 'target_repo',
@@ -1879,6 +1882,9 @@ class PromotionListView(LoginRequiredMixin, ListView):
             promote_builds = promote_builds.filter(
                 package__organisations__in=build_org_ids
             ).distinct() if build_org_ids else promote_builds.none()
+        promote_builds = scope_queryset_for_user(
+            promote_builds, self.request.user, 'flatpaks', relation='package__organisations',
+        )
         seen_packages = set()
         for build in promote_builds:
             # Only show the latest published build per package
@@ -1935,7 +1941,7 @@ class PromotionListView(LoginRequiredMixin, ListView):
         if page_promos:
             build_ids = list({p.build_id for p in page_promos})
             all_build_promos = (
-                Promotion.objects
+                self.get_queryset()
                 .filter(build_id__in=build_ids)
                 .values('build_id', 'target_repo_id', 'target_repo__name')
             )
@@ -1957,12 +1963,18 @@ class PromotionListView(LoginRequiredMixin, ListView):
         # BST promotions for the promotions page
         from apps.flatpak.models import BstPromotion
         context['bst_promotions'] = (
-            BstPromotion.objects
+            scope_queryset_for_user(
+                BstPromotion.objects.all(), self.request.user, 'buildstreams',
+                relation='bst_source__organisations',
+            )
             .select_related('build', 'bst_source', 'target_repo', 'promoted_by')
             .order_by('-created_at')[:50]
         )
         context['external_ref_promotions'] = (
-            ExternalRefPromotion.objects
+            scope_queryset_for_user(
+                ExternalRefPromotion.objects.all(), self.request.user, 'externals',
+                relation='external_ref__organisations',
+            )
             .select_related('external_ref', 'target_repo', 'promoted_by', 'external_ref__repository')
             .order_by('-created_at')[:50]
         )
@@ -2020,7 +2032,7 @@ class PackageCreateView(ResourceActionRequiredMixin, CreateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['repositories'] = Repository.objects.filter(parent_repos__isnull=True)
-        context['all_organisations'] = Organisation.objects.all()
+        context['all_organisations'] = context['form'].fields['organisations'].queryset
         context['selected_org_pks'] = set(self.request.POST.getlist('organisations')) if self.request.method == 'POST' else set()
         return context
     
@@ -3022,6 +3034,7 @@ def dependencies_list(request):
         'repositories': Repository.objects.filter(parent_repos__isnull=True, is_active=True).order_by('name'),
         'remotes': _FR.objects.filter(is_active=True).order_by('priority', 'name'),
     }
+    context.update(external_create_organisation_context(request.user))
     return render(request, 'flatpak/dependencies_list.html', context)
 
 
@@ -3086,8 +3099,40 @@ def serve_repository(request, repo_path):
 # ExternalRef views
 # ---------------------------------------------------------------------------
 
-def add_default_organisation_to_external(external, user):
+def external_create_organisation_context(user):
+    allowed = user.permission_organisation_ids('externals', 'create')
+    if allowed is None:
+        return {'external_create_requires_organisation': False}
+    return {
+        'external_create_requires_organisation': True,
+        'external_create_organisations': Organisation.objects.filter(pk__in=allowed),
+        'external_create_default_organisation_id': user.default_organisation_id,
+    }
+
+
+def external_create_organisation(user, organisation_id=None):
+    allowed = user.permission_organisation_ids('externals', 'create')
+    if allowed is not None and not allowed:
+        raise PermissionDenied('You do not have permission to create externals.')
+    if organisation_id:
+        try:
+            organisation_id = int(organisation_id)
+        except (TypeError, ValueError):
+            raise ValidationError('Invalid organisation.')
+        if allowed is not None and organisation_id not in allowed:
+            raise PermissionDenied('You cannot create externals for this organisation.')
+        organisation = Organisation.objects.filter(pk=organisation_id).first()
+        if organisation is None:
+            raise ValidationError('Invalid organisation.')
+        return organisation
     organisation = getattr(user, 'default_organisation', None)
+    if allowed is not None and (organisation is None or organisation.pk not in allowed):
+        raise ValidationError('Select an organisation where you can create externals.')
+    return organisation
+
+
+def add_default_organisation_to_external(external, user, organisation=None):
+    organisation = organisation or getattr(user, 'default_organisation', None)
     if organisation is None:
         return False
     added = not external.organisations.filter(pk=organisation.pk).exists()
@@ -3196,6 +3241,7 @@ class FlathubAppCatalogView(LoginRequiredMixin, View):
                 'remotes': remotes,
                 'default_repo': default_repo,
                 'default_remote': default_remote,
+                **external_create_organisation_context(request.user),
             },
         )
 
@@ -3346,6 +3392,13 @@ class ExternalRefBulkImportView(LoginRequiredMixin, View):
         except (json.JSONDecodeError, ValueError):
             return JsonResponse({'error': 'Invalid JSON'}, status=400)
 
+        try:
+            organisation = external_create_organisation(request.user, data.get('organisation_id'))
+        except PermissionDenied as exc:
+            return JsonResponse({'error': str(exc)}, status=403)
+        except ValidationError as exc:
+            return JsonResponse({'error': '; '.join(exc.messages)}, status=400)
+
         repository_id = data.get('repository_id')
         remote_id = data.get('remote_id')
         refs = data.get('refs', [])
@@ -3389,10 +3442,11 @@ class ExternalRefBulkImportView(LoginRequiredMixin, View):
                 },
             )
             if was_created:
-                add_default_organisation_to_external(ext, request.user)
+                if organisation:
+                    ext.organisations.add(organisation)
                 pull_external_ref_task.delay(ext.pk)
                 created += 1
-            elif add_default_organisation_to_external(ext, request.user):
+            elif add_default_organisation_to_external(ext, request.user, organisation):
                 associated += 1
             else:
                 skipped += 1
@@ -3482,7 +3536,7 @@ class ExternalRefCreateView(ResourceActionRequiredMixin, CreateView):
         class ExternalRefForm(forms.ModelForm):
             class Meta:
                 model = ExternalRef
-                fields = ['repository', 'remote', 'ref']
+                fields = ['repository', 'remote', 'ref', 'organisations']
                 widgets = {
                     'ref': forms.TextInput(attrs={
                         'placeholder': 'e.g. runtime/org.kde.Platform/x86_64/5.15',
@@ -3519,7 +3573,14 @@ class ExternalRefCreateView(ResourceActionRequiredMixin, CreateView):
             repository=form.cleaned_data['repository'], ref=form.cleaned_data['ref'],
         ).first()
         if existing is not None:
-            associated = add_default_organisation_to_external(existing, self.request.user)
+            selected = form.cleaned_data.get('organisations')
+            if selected:
+                associated = any([
+                    add_default_organisation_to_external(existing, self.request.user, organisation)
+                    for organisation in selected
+                ])
+            else:
+                associated = add_default_organisation_to_external(existing, self.request.user)
             self.object = existing
             if associated:
                 messages.success(self.request, 'This External already exists and is now associated with your organisation.')
@@ -4433,7 +4494,7 @@ class BuildStreamSourceCreateView(ResourceActionRequiredMixin, CreateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context['all_organisations'] = Organisation.objects.all()
+        context['all_organisations'] = context['form'].fields['organisations'].queryset
         context['selected_org_pks'] = set(self.request.POST.getlist('organisations')) if self.request.method == 'POST' else set()
         return context
 
