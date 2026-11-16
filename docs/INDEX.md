@@ -39,6 +39,8 @@ Welcome to the Flat Manager Django documentation! This file helps you find what 
 
 ## 🔧 Daily Usage
 
+**[API.md](API.md)** - REST, workflow, Flathub-compatible and client check-in API reference.
+
 6. **[QUICKREF.md](QUICKREF.md)** - Quick reference guide
    - Common commands
    - API examples
