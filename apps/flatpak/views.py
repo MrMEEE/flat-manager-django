@@ -325,8 +325,15 @@ class RepositoryUpdateView(ResourceActionRequiredMixin, UpdateView):
         return context
     
     def form_valid(self, form):
-        # Capture old key before saving so we can detect a change
-        old_key_id = self.object.gpg_key_id
+        # Capture the old key from the database so we can detect a change.
+        # self.object cannot be used here: ModelForm validation
+        # (construct_instance in _post_clean) has already copied the submitted
+        # values onto it, so it would always report the *new* key.
+        old_key_id = (
+            Repository.objects.filter(pk=self.object.pk)
+            .values_list('gpg_key_id', flat=True)
+            .first()
+        )
         response = super().form_valid(form)
         new_key_id = self.object.gpg_key_id
 
